@@ -1,0 +1,7 @@
+allowBuilds:
+  core-js: true
+
+publicHoistPattern:
+  - '@vue/*'
+  - csstype
+  - vue-types

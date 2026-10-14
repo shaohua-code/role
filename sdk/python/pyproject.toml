@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iam-authorization-client"
+version = "0.1.0"
+description = "Dependency-free Python client for the IAM authorization decision API"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+# 只有运行 OIDC RP 客户端时才需要 RSA/JWT 验签依赖；基础授权 SDK 仍保持零依赖。
+oidc = ["PyJWT[crypto]>=2.10,<3.0"]
+
+[tool.setuptools]
+py-modules = ["iam_authorization", "iam_oidc", "iam_deerflow", "iam_token_vault"]

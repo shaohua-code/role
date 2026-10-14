@@ -1,0 +1,12 @@
+# 生产 OIDC 密钥轮换重叠期覆盖文件；仅当备用 PEM 已由 Secret Manager 挂载时使用。
+services:
+  api:
+    environment:
+      OIDC_PREVIOUS_SIGNING_KEY_PATH: /run/iam-secrets/oidc-previous-signing-key.pem
+    volumes:
+      - type: bind
+        source: ${IAM_OIDC_PREVIOUS_SIGNING_KEY_FILE:?Set the managed previous or prepublished RSA key file}
+        target: /run/iam-secrets/oidc-previous-signing-key.pem
+        read_only: true
+        bind:
+          create_host_path: false

@@ -1,0 +1,9 @@
+# 复制本文件到 deploy/caddy/trusted-proxies/edge.caddy 后再修改。
+# 仅填写实际连接 Caddy 的 CDN/LB 出口 CIDR；不要填浏览器网段或整个私有网段。
+# 下方 CIDR 仅为示例，启用前必须替换成代理服务商公布的实际出口范围。
+servers {
+    trusted_proxies static 203.0.113.0/24
+
+    # 仅当上游代理把真实客户端 IP 追加在 X-Forwarded-For 最右侧时启用：
+    # trusted_proxies_strict
+}

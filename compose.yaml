@@ -1,0 +1,158 @@
+name: iam-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iam
+      POSTGRES_USER: iam
+      POSTGRES_PASSWORD: ${IAM_POSTGRES_PASSWORD:?Set IAM_POSTGRES_PASSWORD in the root .env file}
+    volumes:
+      - iam-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iam -d iam"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # 一次性迁移仅在显式执行 `docker compose --profile migrate run --build --rm migrate` 时启动。
+  # 普通 `docker compose up` 不会应用数据库 schema 变更。
+  migrate:
+    image: iam-platform-api:dev-oidc-consent-v1
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: [migrate]
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://iam:${IAM_POSTGRES_PASSWORD}@postgres:5432/iam
+      IAM_MIGRATE_ONLY: "true"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/migrations:/app/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # 管理员引导是独立的一次性数据库写操作；必须在显式迁移完成后执行。
+  bootstrap-admin:
+    image: iam-platform-api:dev-oidc-consent-v1
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: [bootstrap]
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://iam:${IAM_POSTGRES_PASSWORD}@postgres:5432/iam
+      BOOTSTRAP_ADMIN_EMAIL: ${IAM_ADMIN_EMAIL:?Set IAM_ADMIN_EMAIL in the root .env file}
+      BOOTSTRAP_ADMIN_PASSWORD: ${IAM_ADMIN_PASSWORD:?Set IAM_ADMIN_PASSWORD in the root .env file}
+      IAM_RUN_MIGRATIONS: "false"
+      IAM_BOOTSTRAP_ADMIN: "false"
+      IAM_ENSURE_OIDC_KEY: "false"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/manage.py:/app/manage.py:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "manage.py", "bootstrap-admin"]
+    restart: "no"
+
+  api:
+    image: iam-platform-api:dev-oidc-consent-v1
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      APP_NAME: iam-api
+      APP_ENV: development
+      API_V1_PREFIX: /api/v1
+      DATABASE_URL: postgresql+psycopg://iam:${IAM_POSTGRES_PASSWORD}@postgres:5432/iam
+      JWT_SECRET: ${IAM_JWT_SECRET:?Set IAM_JWT_SECRET in the root .env file}
+      ACCESS_TOKEN_MINUTES: 30
+      REFRESH_TOKEN_DAYS: 14
+      OIDC_ISSUER: ${IAM_OIDC_ISSUER:-http://localhost:${IAM_API_PORT:-8002}}
+      OIDC_SIGNING_KEY_PATH: /run/iam-secrets/oidc-signing-key.pem
+      CONSOLE_PUBLIC_URL: ${IAM_CONSOLE_PUBLIC_URL:-http://localhost:${IAM_CONSOLE_PORT:-5175}}
+      ALLOW_PUBLIC_REGISTRATION: ${IAM_ALLOW_PUBLIC_REGISTRATION:-false}
+      PUBLIC_REGISTRATION_SECRET: ${IAM_PUBLIC_REGISTRATION_SECRET:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${IAM_ADMIN_EMAIL:?Set IAM_ADMIN_EMAIL in the root .env file}
+      BOOTSTRAP_ADMIN_PASSWORD: ${IAM_ADMIN_PASSWORD:?Set IAM_ADMIN_PASSWORD in the root .env file}
+      MODEL_USAGE_API_KEY: ${IAM_MODEL_USAGE_API_KEY:-}
+      MODEL_QUOTA_ENFORCEMENT_ENABLED: ${IAM_MODEL_QUOTA_ENFORCEMENT_ENABLED:-false}
+      SMTP_HOST: ${IAM_SMTP_HOST:-}
+      INVITATION_EMAIL_ENABLED: ${IAM_INVITATION_EMAIL_ENABLED:-false}
+      SMTP_PORT: ${IAM_SMTP_PORT:-587}
+      SMTP_USERNAME: ${IAM_SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${IAM_SMTP_PASSWORD:-}
+      SMTP_FROM: ${IAM_SMTP_FROM:-}
+      SMTP_STARTTLS: ${IAM_SMTP_STARTTLS:-true}
+      SMTP_SSL: ${IAM_SMTP_SSL:-false}
+      SMTP_TIMEOUT_SECONDS: ${IAM_SMTP_TIMEOUT_SECONDS:-10}
+      PASSWORD_RESET_TOKEN_MINUTES: ${IAM_PASSWORD_RESET_TOKEN_MINUTES:-30}
+      PASSWORD_RESET_COOLDOWN_SECONDS: ${IAM_PASSWORD_RESET_COOLDOWN_SECONDS:-60}
+      PUBLIC_REGISTRATION_CODE_MINUTES: ${IAM_PUBLIC_REGISTRATION_CODE_MINUTES:-10}
+      PUBLIC_REGISTRATION_MAX_ATTEMPTS: ${IAM_PUBLIC_REGISTRATION_MAX_ATTEMPTS:-5}
+      PUBLIC_REGISTRATION_COOLDOWN_SECONDS: ${IAM_PUBLIC_REGISTRATION_COOLDOWN_SECONDS:-60}
+      PUBLIC_REGISTRATION_DELIVERY_INTERVAL_SECONDS: ${IAM_PUBLIC_REGISTRATION_DELIVERY_INTERVAL_SECONDS:-5}
+      LOGIN_ATTEMPT_WINDOW_SECONDS: ${IAM_LOGIN_ATTEMPT_WINDOW_SECONDS:-900}
+      LOGIN_IDENTIFIER_MAX_FAILURES: ${IAM_LOGIN_IDENTIFIER_MAX_FAILURES:-8}
+      LOGIN_IP_MAX_FAILURES: ${IAM_LOGIN_IP_MAX_FAILURES:-60}
+      LOGIN_BLOCK_SECONDS: ${IAM_LOGIN_BLOCK_SECONDS:-900}
+      TRUST_PROXY_CLIENT_IP: "false"
+      CREDENTIAL_CLEANUP_INTERVAL_SECONDS: ${IAM_CREDENTIAL_CLEANUP_INTERVAL_SECONDS:-3600}
+      CREDENTIAL_CLEANUP_BATCH_SIZE: ${IAM_CREDENTIAL_CLEANUP_BATCH_SIZE:-1000}
+      CORS_ORIGINS: "[\"http://localhost:${IAM_CONSOLE_PORT:-5175}\"]"
+      # API 重启只启动服务，不隐式升级 schema 或创建首个管理员。
+      IAM_RUN_MIGRATIONS: "false"
+      IAM_BOOTSTRAP_ADMIN: "false"
+    ports:
+      - "${IAM_API_PORT:-8002}:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/migrations:/app/migrations:ro
+      - ./backend/tests:/app/tests:ro
+      - iam-oidc-signing-data:/run/iam-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 25s
+    restart: unless-stopped
+
+  console:
+    image: iam-platform-console:dev-oidc-consent-v2
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    ports:
+      - "${IAM_CONSOLE_PORT:-5175}:5173"
+    volumes:
+      - ./frontend/src:/app/src:ro
+      - ./frontend/index.html:/app/index.html:ro
+      - ./frontend/vite.config.ts:/app/vite.config.ts:ro
+      - ./frontend/tsconfig.json:/app/tsconfig.json:ro
+      - ./sdk/typescript:/app/sdk-typescript:ro
+    depends_on:
+      api:
+        # Vite 负责提供静态开发 UI；DB/schema 未就绪时也应能打开登录页查看诊断提示。
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  iam-postgres-data:
+  iam-oidc-signing-data:
