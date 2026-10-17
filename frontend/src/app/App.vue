@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, type Component } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message, theme as antTheme } from 'ant-design-vue'
 import { ApiRequestError, api, getToken, setToken, type AdminOverview } from '../shared/services/api'
 import { getReadiness, ReadinessError } from '../shared/services/health'
@@ -8,41 +9,39 @@ import FeatureLoadError from '../shared/components/FeatureLoadError.vue'
 import FeatureLoading from '../shared/components/FeatureLoading.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AuthEntry from './auth/AuthEntry.vue'
-import { NAV_ITEMS, PAGE_INFO as pageInfo, TENANT_NAV_ITEMS, type PageKey } from './navigation'
-
-// 按管理领域拆分异步模块：首屏先加载工作台，导航到其他功能时再下载对应页面。
-// 加载状态组件共用一份，失败时提示用户刷新以读取当前部署的静态资源清单。
-type FeatureLoader = () => Promise<{ default: Component }>
-const loadFeature = (loader: FeatureLoader) => defineAsyncComponent({
-  loader,
-  loadingComponent: FeatureLoading,
-  errorComponent: FeatureLoadError,
-  delay: 120,
-  timeout: 30_000,
-})
-const AuthorizationSimulator = loadFeature(() => import('../features/access-control/AuthorizationSimulator.vue'))
-const GroupManagement = loadFeature(() => import('../features/groups/GroupManagement.vue'))
-const LoginThemeManagement = loadFeature(() => import('../features/themes/LoginThemeManagement.vue'))
-const OverviewPage = loadFeature(() => import('../features/overview/OverviewPage.vue'))
-const ModelGovernancePage = loadFeature(() => import('../features/models/ModelGovernancePage.vue'))
-const TenantManagement = loadFeature(() => import('../features/tenants/TenantManagement.vue'))
-const ApplicationManagement = loadFeature(() => import('../features/applications/ApplicationManagement.vue'))
-const ApplicationRoleManagement = loadFeature(() => import('../features/application-roles/ApplicationRoleManagement.vue'))
-const AuditLogPage = loadFeature(() => import('../features/audit/AuditLogPage.vue'))
-const InvitationManagement = loadFeature(() => import('../features/invitations/InvitationManagement.vue'))
-const RoleManagement = loadFeature(() => import('../features/roles/RoleManagement.vue'))
-const PermissionCatalog = loadFeature(() => import('../features/permissions/PermissionCatalog.vue'))
-const UserManagement = loadFeature(() => import('../features/users/UserManagement.vue'))
-const OrganizationManagement = loadFeature(() => import('../features/organizations/OrganizationManagement.vue'))
-const TenantAccessManagement = loadFeature(() => import('../features/tenant-admin/TenantAccessManagement.vue'))
+import { NAV_ITEMS, PAGE_INFO as pageInfo, PAGE_PATHS, TENANT_NAV_ITEMS, type PageKey } from './navigation'
+import {
+  ApplicationManagement,
+  ApplicationRoleManagement,
+  AuditLogPage,
+  AuthorizationSimulator,
+  GroupManagement,
+  InvitationManagement,
+  LoginThemeManagement,
+  ModelGovernancePage,
+  OrganizationManagement,
+  OverviewPage,
+  PermissionCatalog,
+  RoleManagement,
+  TenantAccessManagement,
+  TenantManagement,
+  UserManagement,
+  ProjectIntegrationPage,
+} from './featureLoaders'
 
 type Row = Record<string, unknown>
 type ConsoleMode = 'platform' | 'tenant' | 'no_access'
 type TenantMembership = { tenant_id: string; tenant_name: string; tenant_kind: 'organization' | 'consumer'; membership_status: string; tenant_status: string }
-const page = ref<PageKey>('overview')
+const route = useRoute()
+const router = useRouter()
+// 当前页由 URL 决定，便于刷新与深链；非法路由会在 visibleNavigation 变化时被纠正。
+const page = computed(() => {
+  const name = route.name
+  if (typeof name === 'string' && name in pageInfo) return name as PageKey
+  return 'overview'
+})
 // 未访问页面不创建 DOM；访问过的页面在导航切换后保留，避免丢失草稿和筛选状态。
-// 开发容器启用 Vite polling，Windows bind mount 更新后会重新编译本模块。
-const visitedPages = ref(new Set<PageKey>(['overview']))
+const visitedPages = ref(new Set<PageKey>())
 const currentUser = ref<{ id?: string; email?: string; display_name?: string } | null>(null)
 const consoleMode = ref<ConsoleMode>('platform')
 const loading = ref(false)
@@ -92,10 +91,16 @@ if (['invite', 'consent', 'password-reset'].some((key) => authFragment.has(key))
   window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`)
 }
 const token = ref(loginReturnTo || invitationToken || consentTicket || passwordResetToken ? null : getToken())
+// 恢复已有 token 时先展示加载态，等管理组件注册与会话探测并行完成后再渲染控制台表格。
+const sessionBootstrapping = ref(Boolean(token.value))
 const tenants = ref<Row[]>([])
 const applications = ref<Row[]>([])
 const roleOptions = ref<Row[]>([])
 const themeAppId = ref('')
+const platformTenantOptions = computed(() => tenants.value.map(tenant => ({
+  id: String(tenant.id),
+  name: String(tenant.name),
+})))
 const visibleNavigation = computed(() => consoleMode.value === 'platform'
   ? NAV_ITEMS
   : consoleMode.value === 'tenant'
@@ -108,11 +113,30 @@ const visibleNavigation = computed(() => consoleMode.value === 'platform'
     : [])
 let pageRequestSequence = 0
 
-const themeMode = ref(localStorage.getItem('iam-theme') === 'dark' ? 'dark' : 'light')
+type ThemePreference = 'light' | 'dark' | 'system'
+function readThemePreference(): ThemePreference {
+  const stored = localStorage.getItem('iam-theme')
+  if (stored === 'dark' || stored === 'light' || stored === 'system') return stored
+  return 'light'
+}
+const themePreference = ref<ThemePreference>(readThemePreference())
+const systemPrefersDark = ref(window.matchMedia('(prefers-color-scheme: dark)').matches)
+// 跟随系统时用操作系统配色，已保存的浅色/深色选择保持不变。
+const themeMode = computed(() => themePreference.value === 'system' ? (systemPrefersDark.value ? 'dark' : 'light') : themePreference.value)
 const primaryColor = ref(/^#[\da-f]{6}$/i.test(localStorage.getItem('iam-primary-color') || '') ? localStorage.getItem('iam-primary-color')! : '#756df2')
 const density = ref(localStorage.getItem('iam-density') === 'compact' ? 'compact' : 'comfortable')
+// 桌面侧栏折叠只记在当前浏览器。缺省或无法识别的值保持展开，不改浅色/深色/跟随系统。
+const sidebarCollapsed = ref(localStorage.getItem('iam-sidebar-collapsed') === 'collapsed')
+function toggleSidebar(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem('iam-sidebar-collapsed', sidebarCollapsed.value ? 'collapsed' : 'expanded')
+}
 const antdTheme = computed(() => ({ algorithm: themeMode.value === 'dark' ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
   token: { colorPrimary: primaryColor.value, borderRadius: 8 } }))
+let systemThemeQuery: MediaQueryList | null = null
+function onSystemThemeChange(event: MediaQueryListEvent): void {
+  systemPrefersDark.value = event.matches
+}
 async function loadPage(): Promise<void> {
   if (!token.value || consoleMode.value !== 'platform' || page.value !== 'overview') return
   const requestSequence = ++pageRequestSequence
@@ -181,8 +205,8 @@ async function loadTenantConsole(userId: string): Promise<void> {
   tenants.value = scopedTenants.filter((tenant): tenant is NonNullable<typeof tenant> => tenant !== null)
   consoleMode.value = tenants.value.length ? 'tenant' : 'no_access'
   const firstPage = visibleNavigation.value[0]?.key || 'organizations'
-  page.value = firstPage
   visitedPages.value = new Set<PageKey>([firstPage])
+  await router.replace(PAGE_PATHS[firstPage])
 }
 
 async function initializeConsole(user: { id?: string }): Promise<void> {
@@ -190,29 +214,31 @@ async function initializeConsole(user: { id?: string }): Promise<void> {
     // `/admin/overview` is server-protected and serves as the platform-admin capability check.
     overview.value = await api<AdminOverview>('/admin/overview')
     consoleMode.value = 'platform'
-    page.value = 'overview'
-    visitedPages.value = new Set<PageKey>(['overview'])
-    await loadDictionaries()
+    // 登录后保留浏览器当前 path（若属于平台菜单），支持刷新与深链。
+    const entryPage = NAV_ITEMS.some(item => item.key === page.value) ? page.value : 'overview'
+    visitedPages.value = new Set<PageKey>([entryPage])
+    if (page.value !== entryPage) await router.replace(PAGE_PATHS[entryPage])
+    void loadDictionaries()
     return
   } catch (error) {
     if (!(error instanceof ApiRequestError) || error.status !== 403) {
       message.error(error instanceof Error ? error.message : '无法初始化管理台')
       consoleMode.value = 'no_access'
-      page.value = 'organizations'
+      await router.replace(PAGE_PATHS.organizations)
       return
     }
   }
 
   if (!user.id) {
     consoleMode.value = 'no_access'
-    page.value = 'organizations'
+    await router.replace(PAGE_PATHS.organizations)
     return
   }
   try { await loadTenantConsole(user.id) }
   catch {
     consoleMode.value = 'no_access'
-    page.value = 'organizations'
     tenants.value = []
+    await router.replace(PAGE_PATHS.organizations)
   }
 }
 
@@ -244,17 +270,43 @@ async function signOut(): Promise<void> {
 
 function setPage(next: PageKey): void {
   if (!visibleNavigation.value.some(item => item.key === next)) return
-  page.value = next
+  void router.push(PAGE_PATHS[next])
+  if (dictionariesNeedRetry.value) void loadDictionaries()
+}
+
+// 路由变化时维护 visitedPages、概览刷新与导航纠正。
+function syncRoutePage(next: PageKey, previous?: PageKey): void {
+  if (!token.value || sessionBootstrapping.value) return
+  if (consoleMode.value !== 'no_access' && !visibleNavigation.value.some(item => item.key === next)) {
+    const fallback = visibleNavigation.value[0]?.key || 'overview'
+    void router.replace(PAGE_PATHS[fallback])
+    return
+  }
   visitedPages.value.add(next)
   void loadPage()
-  if (dictionariesNeedRetry.value) void loadDictionaries()
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  if (previous && previous !== next) window.scrollTo({ top: 0, behavior: 'smooth' })
 }
+
+watch(page, (next, previous) => { syncRoutePage(next, previous) }, { immediate: true })
+watch(sessionBootstrapping, (booting) => {
+  if (!booting) syncRoutePage(page.value)
+})
+
+watch(visibleNavigation, () => {
+  if (!token.value || sessionBootstrapping.value || consoleMode.value === 'no_access') return
+  if (!visibleNavigation.value.some(item => item.key === page.value)) {
+    const fallback = visibleNavigation.value[0]?.key || 'overview'
+    void router.replace(PAGE_PATHS[fallback])
+  }
+})
 function onThemePreferenceChange(): void {
-  localStorage.setItem('iam-theme', themeMode.value); localStorage.setItem('iam-primary-color', primaryColor.value); localStorage.setItem('iam-density', density.value)
+  localStorage.setItem('iam-theme', themePreference.value); localStorage.setItem('iam-primary-color', primaryColor.value); localStorage.setItem('iam-density', density.value)
 }
 
 onMounted(async () => {
+  systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
+  systemPrefersDark.value = systemThemeQuery.matches
+  systemThemeQuery.addEventListener('change', onSystemThemeChange)
   // api.ts 已清除本标签页 token 并广播其他标签页；此处只更新 Vue 状态，避免收到远端事件后再次广播。
   window.addEventListener('iam:unauthorized', () => { token.value = null; currentUser.value = null })
   // 状态探测与认证会话恢复并行，探针慢或失败不阻塞后台登录。
@@ -262,15 +314,24 @@ onMounted(async () => {
   // 运行期间可能发生数据库/迁移状态变化；定时重查并避免保留过时的绿色状态。
   readinessTimer = window.setInterval(() => { void refreshReadiness() }, 30_000)
   if (token.value) {
+    sessionBootstrapping.value = true
     try {
-      currentUser.value = await api<{ id?: string; email?: string; display_name?: string }>('/auth/me')
-      await initializeConsole(currentUser.value)
+      const user = await Promise.all([
+        api<{ id?: string; email?: string; display_name?: string }>('/auth/me'),
+        ensureManagementUi(),
+      ]).then(([me]) => {
+        currentUser.value = me
+        return me
+      })
+      await initializeConsole(user)
     }
     catch { setToken(null); token.value = null }
+    finally { sessionBootstrapping.value = false }
   }
 })
 
 onUnmounted(() => {
+  systemThemeQuery?.removeEventListener('change', onSystemThemeChange)
   if (readinessTimer !== undefined) window.clearInterval(readinessTimer)
 })
 </script>
@@ -287,15 +348,18 @@ onUnmounted(() => {
         @authenticated="onAuthenticated"
         @refresh-readiness="refreshReadiness"
       />
-    <div v-else class="admin-shell" :data-theme="themeMode" :data-density="density" :style="{ '--accent': primaryColor }">
-      <AppSidebar :page="page" :health-state="healthState" :items="visibleNavigation"
-        :mode-label="consoleMode === 'platform' ? '平台管理' : consoleMode === 'tenant' ? '租户管理' : '访问受限'" @navigate="setPage" />
+    <div v-else-if="sessionBootstrapping" class="admin-shell session-bootstrap" :data-theme="themeMode">
+      <FeatureLoading />
+    </div>
+    <div v-else class="admin-shell" :data-theme="themeMode" :data-density="density" :data-sidebar="sidebarCollapsed ? 'collapsed' : 'expanded'" :style="{ '--accent': primaryColor }">
+      <AppSidebar :health-state="healthState" :items="visibleNavigation"
+        :mode-label="consoleMode === 'platform' ? '平台管理' : consoleMode === 'tenant' ? '租户管理' : '访问受限'" :collapsed="sidebarCollapsed" @toggle-sidebar="toggleSidebar" />
       <main class="main">
         <header class="topbar">
           <div class="breadcrumbs">{{ consoleMode === 'tenant' ? '租户工作台' : consoleMode === 'platform' ? '平台' : '访问受限' }} <span>/</span> {{ pageInfo[page].title }}</div>
           <div class="profile">
             <a-popover trigger="click" placement="bottomRight"><template #content><div class="appearance-panel">
-              <label>界面主题</label><a-radio-group v-model:value="themeMode" button-style="solid" @change="onThemePreferenceChange"><a-radio-button value="light">浅色</a-radio-button><a-radio-button value="dark">深色</a-radio-button></a-radio-group>
+              <label>界面主题</label><a-radio-group v-model:value="themePreference" button-style="solid" @change="onThemePreferenceChange"><a-radio-button value="light">浅色</a-radio-button><a-radio-button value="dark">深色</a-radio-button><a-radio-button value="system">跟随系统</a-radio-button></a-radio-group>
               <label>界面密度</label><a-radio-group v-model:value="density" button-style="solid" @change="onThemePreferenceChange"><a-radio-button value="comfortable">舒适</a-radio-button><a-radio-button value="compact">紧凑</a-radio-button></a-radio-group>
               <label>品牌主色</label><input v-model="primaryColor" class="color-input" type="color" @change="onThemePreferenceChange" />
               <small>外观偏好保存在当前会话浏览器</small></div></template><a-button>◐ 外观</a-button></a-popover>
@@ -304,6 +368,10 @@ onUnmounted(() => {
         </header>
 
         <section class="content">
+          <router-view aria-hidden="true" class="hidden" />
+          <div v-if="visitedPages.has('project_integration')" v-show="page === 'project_integration'">
+            <ProjectIntegrationPage :active="page === 'project_integration'" />
+          </div>
           <div v-if="visitedPages.has('themes')" v-show="page === 'themes'">
             <LoginThemeManagement
               :active="page === 'themes'"
@@ -407,14 +475,20 @@ onUnmounted(() => {
           <template v-else-if="page === 'tenant_access'">
             <!-- 租户成员组织归属和角色数据范围由租户权限 feature 管理。 -->
           </template>
-          <template v-else-if="page === 'groups'">
-            <GroupManagement />
-          </template>
-
-          <template v-else-if="page === 'authorization_simulation'">
+          <div v-if="visitedPages.has('groups')" v-show="page === 'groups'">
+            <GroupManagement
+              :active="page === 'groups'"
+              :tenants="consoleMode === 'platform' ? platformTenantOptions : []"
+            />
+          </div>
+          <div v-if="visitedPages.has('authorization_simulation')" v-show="page === 'authorization_simulation'">
             <div class="page-heading"><div><p class="eyebrow">ACCESS POLICY PREVIEW</p><h1>授权模拟</h1><p class="subtitle">用当前生效的成员、角色和数据范围规则预演一次请求，不会修改授权配置。</p></div></div>
-            <AuthorizationSimulator />
-          </template>
+            <AuthorizationSimulator
+              :active="page === 'authorization_simulation'"
+              :seed-tenants="consoleMode === 'platform' ? tenants : []"
+              :seed-applications="consoleMode === 'platform' ? applications : []"
+            />
+          </div>
           <template v-else-if="page === 'models' || page === 'model_usage'">
             <!-- 模型目录与用量界面由保持挂载的模型治理 feature 负责。 -->
           </template>

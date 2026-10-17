@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter()]
     [string]$ComposeFile = 'compose.yaml',
@@ -95,8 +95,12 @@ result=$(psql --no-password --no-psqlrc --host=127.0.0.1 --port="${PGPORT:-5432}
 pg_dump --version >/dev/null
 pg_restore --version >/dev/null
 '@
+# Windows PowerShell 5.1 的 here-string 保留 CRLF，且传参时不转义内嵌双引号；
+# 因此先统一为 LF，再经 base64 编码，在容器内解码后交给 sh 执行。
+$connectionCheckScript = $connectionCheckScript -replace "`r`n", "`n"
+$encodedCheckScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($connectionCheckScript))
 Invoke-IamCompose -Step '数据库连接、凭据和归档工具检查' -CommandArgs @(
-    'exec', '-T', $PostgresService, 'sh', '-ec', $connectionCheckScript, 'iam-backup-check'
+    'exec', '-T', $PostgresService, 'sh', '-ec', "echo $encodedCheckScript | base64 -d | sh"
 )
 
 if ($ValidateOnly) {
@@ -133,13 +137,16 @@ export PGPASSWORD="$POSTGRES_PASSWORD"
 pg_dump --no-password --host=127.0.0.1 --port="${PGPORT:-5432}" --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom --file="$1"
 pg_restore --list "$1" >/dev/null
 '@
+# 同上：先转 LF，再把 $1 替换为实际归档路径，经 base64 编码后在容器内解码执行。
+$backupScript = ($backupScript -replace "`r`n", "`n").Replace('$1', $remoteArchivePath)
+$encodedBackupScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($backupScript))
 
 $remoteArchiveCreated = $false
 try {
     # 先标记，失败时也尝试清掉可能留下的半成品归档。
     $remoteArchiveCreated = $true
     Invoke-IamCompose -Step '生成并检查 PostgreSQL custom archive' -CommandArgs @(
-        'exec', '-T', $PostgresService, 'sh', '-ec', $backupScript, 'iam-backup', $remoteArchivePath
+        'exec', '-T', $PostgresService, 'sh', '-ec', "echo $encodedBackupScript | base64 -d | sh"
     )
 
     Invoke-IamCompose -Step '复制归档到受保护的主机目录' -CommandArgs @(

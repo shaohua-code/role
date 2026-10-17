@@ -8,11 +8,12 @@
 /* 管理工作区：以 Ant Design Vue 承担表单和数据操作，CSS 只负责产品布局。 */
 body{background:#f4f6fa;color:#202a3b}
 .admin-shell{min-height:100vh;background:#f4f6fa;color:#202a3b;--surface:#fff;--line:#e6eaf0;--text:#202a3b;--subtle:#8490a3;--soft:#f5f6fa}
+.admin-shell.session-bootstrap{display:grid;place-items:center;min-height:100vh}
 .admin-shell[data-theme='dark']{background:#0b101b;color:#e7ebf4;--surface:#111927;--line:#202a3b;--text:#e7ebf4;--subtle:#8994a8;--soft:#151e2b}
 .admin-shell .sidebar{background:var(--surface);border-color:var(--line)}
 .admin-shell .brand strong,.admin-shell .page-heading h1,.admin-shell .section-heading h2{color:var(--text)}
 .admin-shell .brand small,.admin-shell .nav-caption,.admin-shell .sidebar-footer,.admin-shell .breadcrumbs,.admin-shell .subtitle{color:var(--subtle)}
-.admin-shell .nav-item{width:100%;border:0;background:transparent;text-align:left;cursor:pointer;color:var(--subtle)}
+.admin-shell .nav-item{width:100%;border:0;background:transparent;text-align:left;cursor:pointer;color:var(--subtle);text-decoration:none;display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px}
 .admin-shell .nav-item:hover{background:var(--soft);color:var(--text)}
 .admin-shell .nav-item.active{background:color-mix(in srgb,var(--accent) 11%,var(--surface));color:var(--accent);box-shadow:inset 2px 0 var(--accent)}
 .admin-shell .main{background:transparent}.admin-shell .topbar{position:sticky;top:0;z-index:1;background:color-mix(in srgb,var(--surface) 93%,transparent);border-color:var(--line);backdrop-filter:blur(12px)}
@@ -147,6 +148,24 @@ body{background:#f4f6fa;color:#202a3b}
   .admin-shell .sidebar{gap:7px;padding-inline:9px}
   .admin-shell .brand-mark{flex:0 0 34px;width:34px;height:34px}
   .admin-shell .mobile-nav-select{flex-basis:52vw;min-width:120px}
+}
+
+/* 桌面侧栏可折叠。650px 及以下仍用全页选择器，不套用图标栏宽度。 */
+.sidebar-toggle{display:none}
+@media(min-width:651px){
+  .admin-shell .sidebar-toggle{display:grid;place-items:center;width:32px;height:32px;margin:0 0 12px auto;padding:0;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--subtle);font-size:14px;line-height:1;cursor:pointer}
+  .admin-shell .sidebar-toggle:hover{background:var(--soft);color:var(--text)}
+  .admin-shell[data-sidebar='collapsed'] .sidebar{width:76px;padding-inline:8px}
+  .admin-shell[data-sidebar='collapsed'] .main{margin-left:76px}
+  .admin-shell[data-sidebar='collapsed'] .brand{justify-content:center;padding:0 0 12px}
+  .admin-shell[data-sidebar='collapsed'] .brand-copy,
+  .admin-shell[data-sidebar='collapsed'] .nav-caption,
+  .admin-shell[data-sidebar='collapsed'] .nav-label,
+  .admin-shell[data-sidebar='collapsed'] .sidebar-footer-text{display:none}
+  .admin-shell[data-sidebar='collapsed'] .sidebar-toggle{margin-inline:auto}
+  .admin-shell[data-sidebar='collapsed'] .nav-item{justify-content:center;gap:0;padding-inline:0}
+  .admin-shell[data-sidebar='collapsed'] .sidebar-footer{text-align:center}
+  .admin-shell[data-sidebar='collapsed'] .status-dot{margin-right:0}
 }
 
 .permission-grant-editor{display:grid;gap:16px}

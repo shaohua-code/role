@@ -7,4 +7,4 @@
 3. 保留任务 ID，避免换模型后丢失跟踪关系。将源码完成、隔离/mock 验证、目标环境验收分别记录；不得仅凭历史测试或局部通过标记端到端完成。
 4. 按 IAM Skill 同步根目录与前后端 README、PRD，向 `CHANGELOG.md` 添加本次事实记录。日常交接更新不自动触发 `--更新` 全项目审计，也不创建后台自动任务。
 5. 当前唯一业务试点是 DeerFlow，首阶段数据 owner-only，登出只清理本地 session。数据库迁移需要受保护备份和明确授权；配额 enforcement、公开注册继续遵守交接文件的上线门禁。
-6. DeerFlow 位于独立工作区 `D:\project\deer-flow`。修改前读取该项目的 `AGENTS.md` 与相关 Skill，并核对写权限；保留已有未提交改动。当前 IAM 目录没有 Git 仓库，不假设可直接提交。
+6. DeerFlow 位于独立工作区 `D:\project\deer-flow`。修改前读取该项目的 `AGENTS.md` 与相关 Skill，并核对写权限；保留已有未提交改动。当前 IAM 目录实查存在 Git 仓库且有未提交改动，不假设可直接提交。

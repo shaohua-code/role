@@ -35,8 +35,8 @@ const emit = defineEmits<{
     <div class="orbit orbit-two"></div>
     <div class="orbit-core">ID</div>
     <div class="welcome-foot">
-      <span>首批接入</span><strong>AI 简历</strong><span class="foot-divider"></span>
-      <span>后续接入</span><strong>DeerFlow · 知识库</strong>
+      <span>当前试点</span><strong>DeerFlow</strong><span class="foot-divider"></span>
+      <span>本阶段</span><strong>仅本人数据</strong>
     </div>
   </div>
 

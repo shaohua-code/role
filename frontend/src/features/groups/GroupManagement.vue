@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
 
 interface Tenant { id: string; name: string }
+
+const props = withDefaults(defineProps<{
+  active?: boolean
+  tenants?: Tenant[]
+}>(), {
+  active: false,
+  tenants: () => [],
+})
 interface Group {
   id: string; tenant_id: string; key: string; name: string; description?: string | null
   status: 'active' | 'disabled'; member_count: number; role_count: number; created_at?: string
@@ -15,7 +23,8 @@ interface Member {
 interface GroupRole { id: string; key: string; name: string; status: string; assigned: boolean }
 
 const groups = ref<Group[]>([])
-const tenants = ref<Tenant[]>([])
+const localTenants = ref<Tenant[]>([])
+const tenants = computed(() => (props.tenants.length ? props.tenants : localTenants.value))
 const tenantId = ref('')
 const loading = ref(false)
 const saving = ref(false)
@@ -168,13 +177,25 @@ function toggleStatus(group: Group): void {
   else void update()
 }
 
-onMounted(async () => {
+async function ensureTenantOptions(): Promise<void> {
+  if (props.tenants.length || localTenants.value.length) {
+    if (!tenantId.value) tenantId.value = tenants.value[0]?.id || ''
+    return
+  }
   try {
-    tenants.value = await api<Tenant[]>('/admin/tenants')
+    localTenants.value = await api<Tenant[]>('/admin/tenants')
     if (!tenantId.value) tenantId.value = tenants.value[0]?.id || ''
   } catch (error) { message.error(error instanceof Error ? error.message : '读取租户失败') }
-  await loadGroups()
-})
+}
+
+// 仅在用户组页激活时加载数据；平台壳已注入租户目录时复用，避免重复请求 /admin/tenants。
+watch(() => props.active, active => {
+  if (!active) return
+  void (async () => {
+    await ensureTenantOptions()
+    await loadGroups()
+  })()
+}, { immediate: true })
 </script>
 
 <template>

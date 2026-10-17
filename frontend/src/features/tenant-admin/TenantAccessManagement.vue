@@ -275,7 +275,7 @@ watch(() => [props.active, tenantId.value] as const, ([active, selectedTenant]) 
         <a-tab-pane key="scopes" tab="角色数据范围">
           <a-alert class="scope-notice" type="info" show-icon
             message="数据范围按角色和已授予权限配置。未配置有效范围时，业务端请求 include_data_scope 会默认拒绝。"
-            description="配置只描述过滤条件；AI 简历、知识库、DeerFlow 等业务服务仍须映射本地字段并在查询时执行。" />
+            description="配置只描述过滤条件。业务服务必须映射本地字段并在查询时执行。当前试点 DeerFlow 的项目、线程、运行和文档按本人过滤。" />
           <a-table :data-source="roles" :columns="roleColumns" :loading="rolesLoading" row-key="id"
             :scroll="{ x: 820 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
             <template #bodyCell="{ column, record }">

@@ -31,8 +31,22 @@ interface UsageSummary {
 }
 
 const props = defineProps<{ active: boolean; view: View }>()
+const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const OUTCOME_FILTER_OPTIONS = [
+  { value: 'succeeded', label: '成功' },
+  { value: 'failed', label: '失败' },
+]
+
 const tenants = ref<Tenant[]>([])
-const tenantId = ref('')
+const tenantId = ref<string>()
+const outcomeFilter = ref<'succeeded' | 'failed'>()
+const modelFilter = ref<string>()
+const createdFrom = ref('')
+const createdTo = ref('')
+const appliedCreatedFrom = ref('')
+const appliedCreatedTo = ref('')
+const usageDateError = ref('')
+const catalogModels = ref<ModelRecord[]>([])
 const models = ref<ModelRecord[]>([])
 const events = ref<UsageEvent[]>([])
 const usageEventTotal = ref(0)
@@ -42,7 +56,9 @@ const reviews = ref<UsageReview[]>([])
 const reviewTotal = ref(0)
 const reviewPage = ref(1)
 const reviewPageSize = ref(10)
-const summary = ref<UsageSummary>({ requests: 0, succeeded: 0, failed: 0, input_tokens: 0, output_tokens: 0, estimated_cost: null, unknown_cost_requests: 0, estimated_usage_requests: 0 })
+const summary = ref<UsageSummary>(emptyUsageSummary())
+const usageDataLoaded = ref(false)
+const usageLoadError = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const modalOpen = ref(false)
@@ -63,17 +79,35 @@ const form = reactive({
   input_cost_per_million: null as number | null, output_cost_per_million: null as number | null,
 })
 
+function emptyUsageSummary(): UsageSummary {
+  return { requests: 0, succeeded: 0, failed: 0, input_tokens: 0, output_tokens: 0, estimated_cost: null, unknown_cost_requests: 0, estimated_usage_requests: 0 }
+}
+
 const title = computed(() => props.view === 'catalog' ? '模型管理' : '模型用量')
+const modelFilterOptions = computed(() => catalogModels.value.map(model => ({
+  value: model.id,
+  label: model.display_name,
+})))
+const estimatedCostSummary = computed(() => {
+  if (summary.value.requests === 0) return '暂无用量'
+  return summary.value.estimated_cost ?? '费用未知'
+})
 const summaryMetrics = computed(() => [
   { label: '请求总数', value: summary.value.requests },
   { label: '成功', value: summary.value.succeeded },
   { label: '失败', value: summary.value.failed },
+  { label: '成功率', value: summary.value.requests > 0 ? (summary.value.succeeded / summary.value.requests * 100).toFixed(1) + '%' : '—' },
   { label: '输入 Token', value: summary.value.input_tokens },
   { label: '输出 Token', value: summary.value.output_tokens },
-  { label: '估算费用', value: summary.value.estimated_cost ?? '未配置价格' },
+  { label: '估算费用', value: estimatedCostSummary.value },
   { label: '估算用量请求', value: summary.value.estimated_usage_requests },
   { label: '未知费用请求', value: summary.value.unknown_cost_requests },
 ])
+const displayedSummaryMetrics = computed(() => summaryMetrics.value.map(metric => ({
+  ...metric,
+  value: usageDataLoaded.value ? metric.value : '—',
+})))
+
 const modelColumns = [
   { title: '模型', dataIndex: 'display_name', key: 'display_name', width: 180 },
   { title: '租户', dataIndex: 'tenant_id', key: 'tenant_id', width: 180 },
@@ -116,6 +150,10 @@ const reviewColumns = [
   { title: '请求 ID', dataIndex: 'request_id', key: 'request_id', width: 210 },
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 110, fixed: 'right' as const },
 ]
+// Keep each table viewport at least as wide as the sum of its configured columns.
+const modelTableScrollWidth = modelColumns.reduce((width, column) => width + column.width, 0)
+const usageTableScrollWidth = usageColumns.reduce((width, column) => width + column.width, 0)
+const reviewTableScrollWidth = reviewColumns.reduce((width, column) => width + column.width, 0)
 
 function tenantName(id: string): string {
   return tenants.value.find(tenant => tenant.id === id)?.name || '未知租户'
@@ -129,6 +167,8 @@ function changeReviewPage(pagination: { current?: number; pageSize?: number }): 
   } else {
     reviewPage.value = pagination.current ?? 1
   }
+  reviews.value = []
+  reviewTotal.value = 0
   void load()
 }
 
@@ -140,6 +180,46 @@ function usageEventTotalText(total: number): string {
   return `共 ${total} 条模型调用账目`
 }
 
+function appendLedgerFilters(params: URLSearchParams): void {
+  if (tenantId.value) params.set('tenant_id', tenantId.value)
+  if (modelFilter.value) params.set('model_id', modelFilter.value)
+  if (outcomeFilter.value === 'succeeded' || outcomeFilter.value === 'failed') {
+    params.set('outcome', outcomeFilter.value)
+  }
+  if (appliedCreatedFrom.value) params.set('created_from', appliedCreatedFrom.value)
+  if (appliedCreatedTo.value) params.set('created_to', appliedCreatedTo.value)
+}
+
+function isCompleteUtcDate(value: string): boolean {
+  if (!USAGE_DATE_PATTERN.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
+}
+
+function commitUsageDates(): void {
+  const from = (createdFrom.value || '').trim()
+  const to = (createdTo.value || '').trim()
+  const drafts = [from, to]
+  // 未输完时不请求，也不把半截日期当成错误。
+  if (drafts.some(value => value && (value.length < 10 || !USAGE_DATE_PATTERN.test(value)))) {
+    usageDateError.value = ''
+    return
+  }
+  if (drafts.some(value => value && !isCompleteUtcDate(value))) {
+    usageDateError.value = '日期请使用有效的 YYYY-MM-DD'
+    return
+  }
+  if (from && to && from > to) {
+    usageDateError.value = '开始日期不能晚于结束日期'
+    return
+  }
+  usageDateError.value = ''
+  if (from === appliedCreatedFrom.value && to === appliedCreatedTo.value) return
+  appliedCreatedFrom.value = from
+  appliedCreatedTo.value = to
+}
+
 function changeUsageEventPage(pagination: { current?: number; pageSize?: number }): void {
   const nextPageSize = Math.min(Math.max(pagination.pageSize ?? usageEventPageSize.value, 1), 200)
   if (nextPageSize !== usageEventPageSize.value) {
@@ -148,12 +228,15 @@ function changeUsageEventPage(pagination: { current?: number; pageSize?: number 
   } else {
     usageEventPage.value = pagination.current ?? 1
   }
+  events.value = []
+  usageEventTotal.value = 0
   void load()
 }
 
 async function load(): Promise<void> {
   const sequence = ++requestSequence.value
   loading.value = true
+  if (props.view === 'usage') usageLoadError.value = ''
   const tenantQuery = tenantId.value ? `?tenant_id=${encodeURIComponent(tenantId.value)}` : ''
   try {
     if (props.view === 'catalog') {
@@ -169,28 +252,45 @@ async function load(): Promise<void> {
       reviewParams.set('limit', String(reviewPageSize.value))
       reviewParams.set('offset', String((reviewPage.value - 1) * reviewPageSize.value))
       const eventParams = new URLSearchParams()
-      if (tenantId.value) eventParams.set('tenant_id', tenantId.value)
+      appendLedgerFilters(eventParams)
       eventParams.set('limit', String(usageEventPageSize.value))
       eventParams.set('offset', String((usageEventPage.value - 1) * usageEventPageSize.value))
-      const [tenantRows, eventRows, usageSummary, reviewRows] = await Promise.all([
+      const summaryParams = new URLSearchParams()
+      appendLedgerFilters(summaryParams)
+      const summaryQuery = summaryParams.toString()
+      // 模型目录失败不影响账目；保留上一次模型列表，避免筛选框被清空。
+      const modelRowsPromise = api<ModelRecord[]>(`/admin/models${tenantQuery}`).catch(() => null)
+      const [tenantRows, eventRows, usageSummary, reviewRows, modelRows] = await Promise.all([
         tenants.value.length ? Promise.resolve(tenants.value) : api<Tenant[]>('/admin/tenants'),
         api<UsageEventPage>(`/admin/model-usage/events?${eventParams.toString()}`),
-        api<UsageSummary>(`/admin/model-usage/summary${tenantQuery}`),
+        api<UsageSummary>(`/admin/model-usage/summary${summaryQuery ? `?${summaryQuery}` : ''}`),
         api<UsageReviewPage>(`/admin/model-usage/reviews?${reviewParams.toString()}`),
+        modelRowsPromise,
       ])
       if (sequence !== requestSequence.value) return
       tenants.value = tenantRows
+      if (modelRows) {
+        catalogModels.value = modelRows
+        if (modelFilter.value && !modelRows.some(model => model.id === modelFilter.value)) modelFilter.value = undefined
+      }
       events.value = eventRows.items
       usageEventTotal.value = eventRows.total
       summary.value = usageSummary
       reviews.value = reviewRows.items
       reviewTotal.value = reviewRows.total
+      usageDataLoaded.value = true
     }
   } catch (error) {
     if (sequence === requestSequence.value) {
-      if (props.view === 'catalog') models.value = []
-      else { events.value = []; usageEventTotal.value = 0; reviews.value = []; reviewTotal.value = 0; summary.value = { requests: 0, succeeded: 0, failed: 0, input_tokens: 0, output_tokens: 0, estimated_cost: null, unknown_cost_requests: 0, estimated_usage_requests: 0 } }
-      message.error(error instanceof Error ? error.message : '读取模型治理数据失败')
+      if (props.view === 'catalog') {
+        models.value = []
+        message.error(error instanceof Error ? error.message : '读取模型治理数据失败')
+      } else {
+        // 筛选或租户切换已清掉旧账本时，不能再声称画面上仍是上次成功结果。
+        usageLoadError.value = usageDataLoaded.value
+          ? '模型用量读取失败。当前数据可能是上次成功结果；请刷新重试。'
+          : '模型用量读取失败，请刷新重试。'
+      }
     }
   } finally {
     if (sequence === requestSequence.value) loading.value = false
@@ -318,10 +418,35 @@ function changeStatus(record: ModelRecord): void {
   else void update()
 }
 
-watch([() => props.active, () => props.view, tenantId], ([active], previous) => {
-  if (previous && tenantId.value !== previous[2]) {
+watch([
+  () => props.active, () => props.view, tenantId, outcomeFilter, modelFilter, appliedCreatedFrom, appliedCreatedTo,
+], ([active], previous) => {
+  const tenantChanged = Boolean(previous && tenantId.value !== previous[2])
+  const ledgerFilterChanged = Boolean(previous && (
+    outcomeFilter.value !== previous[3]
+    || modelFilter.value !== previous[4]
+    || appliedCreatedFrom.value !== previous[5]
+    || appliedCreatedTo.value !== previous[6]
+  ))
+  if (tenantChanged || ledgerFilterChanged) usageEventPage.value = 1
+  if (tenantChanged) {
     reviewPage.value = 1
-    usageEventPage.value = 1
+    // 模型属于租户，切换租户后丢掉上一租户的模型条件。
+    if (modelFilter.value) modelFilter.value = undefined
+  }
+  if (props.view === 'usage' && tenantChanged) {
+    events.value = []
+    usageEventTotal.value = 0
+    reviews.value = []
+    reviewTotal.value = 0
+    summary.value = emptyUsageSummary()
+    usageDataLoaded.value = false
+    catalogModels.value = []
+  } else if (props.view === 'usage' && ledgerFilterChanged) {
+    events.value = []
+    usageEventTotal.value = 0
+    summary.value = emptyUsageSummary()
+    usageDataLoaded.value = false
   }
   if (active) void load()
 }, { immediate: true })
@@ -331,12 +456,14 @@ watch([() => props.active, () => props.view, tenantId], ([active], previous) => 
   <section class="model-governance-page">
     <header class="page-heading">
       <div><p class="eyebrow">MODEL GOVERNANCE</p><h1>{{ title }}</h1>
-        <p class="subtitle">{{ view === 'catalog' ? '维护租户模型目录、外部凭证引用、价格与调用限额。' : '查看可信网关报告的请求量、Token 消耗和费用估算。' }}</p></div>
+        <p class="subtitle">{{ view === 'catalog' ? '维护租户模型目录、外部凭证引用、价格与调用限额。' : '查看可信网关报告的请求量、Token 消耗和费用估算。可按模型、结果和 UTC 日期筛选。' }}</p></div>
       <a-button v-if="view === 'catalog'" type="primary" :disabled="!tenants.length" @click="createModel">＋ 新建模型</a-button>
     </header>
 
+    <a-alert v-if="view === 'usage' && usageLoadError" type="error" show-icon :message="usageLoadError" role="alert" />
+
     <div v-if="view === 'usage'" class="status-grid usage-summary">
-      <article v-for="metric in summaryMetrics" :key="metric.label" class="status-card"><h3>{{ metric.label }}</h3><div class="metric number">{{ metric.value }}</div></article>
+      <article v-for="metric in displayedSummaryMetrics" :key="metric.label" class="status-card"><h3>{{ metric.label }}</h3><div class="metric number">{{ metric.value }}</div></article>
     </div>
 
     <a-card v-if="view === 'usage'" class="data-card review-card" :bordered="false">
@@ -344,27 +471,53 @@ watch([() => props.active, () => props.view, tenantId], ([active], previous) => 
         <p>超过 10 分钟仍未结算的预留会列在此处，不会自动按上限收费或释放额度；待核对期间仍占用保守 TPM 额度。</p></div>
         <a-button :loading="loading" @click="load">刷新核对队列</a-button></div>
       <a-alert message="请先对照 Provider 用量日志。只有确认 Provider 从未被调用，才能释放预留；无法还原用量时请按可核实依据结算并标记为估算。" type="warning" show-icon />
-      <a-table class="review-table" :data-source="reviews" :columns="reviewColumns" :loading="loading" row-key="request_id"
-        :scroll="{ x: 1450 }"
+      <a-table v-if="reviews.length > 0" class="review-table" :data-source="reviews" :columns="reviewColumns" :loading="loading" row-key="request_id"
+        :scroll="{ x: reviewTableScrollWidth }"
         :pagination="{ current: reviewPage, pageSize: reviewPageSize, total: reviewTotal, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: reviewTotalText }"
         @change="changeReviewPage">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'expires_at'">{{ new Date(record.expires_at).toLocaleString() }}</template>
           <template v-else-if="column.key === 'actions'"><a-button type="primary" size="small" @click="openReview(record)">核对</a-button></template>
         </template>
-        <template #emptyText><a-empty description="没有待核对调用" /></template>
       </a-table>
+      <div v-else-if="loading" class="table-empty-state" role="status">正在加载待核对调用…</div>
+      <div v-else-if="usageLoadError" class="table-empty-state" role="alert">暂时无法读取待核对调用，请刷新重试。</div>
+      <a-empty v-else class="table-empty-state" description="没有待核对调用" />
     </a-card>
 
     <a-card class="data-card" :bordered="false">
       <div class="table-toolbar">
-        <a-select v-model:value="tenantId" class="tenant-filter" placeholder="全部租户" allow-clear
-          :options="tenants.map(tenant => ({ value: tenant.id, label: tenant.name }))" />
-        <span class="table-hint">{{ view === 'catalog' ? '凭证仅保存外部 Secret Manager 引用；RPM/TPM 是否拦截由服务端开关控制。' : `共 ${usageEventTotal} 条模型调用账目，按时间倒序分页；记录不含 Prompt、响应内容或凭证引用。` }}</span>
+        <div class="tenant-filter-control">
+          <span class="tenant-filter-label">租户</span>
+          <a-select v-model:value="tenantId" class="tenant-filter" aria-label="按租户筛选" placeholder="全部租户" allow-clear
+            :options="tenants.map(tenant => ({ value: tenant.id, label: tenant.name }))" />
+        </div>
+        <template v-if="view === 'usage'">
+          <div class="tenant-filter-control">
+            <span class="tenant-filter-label">结果</span>
+            <a-select v-model:value="outcomeFilter" class="tenant-filter" aria-label="按调用结果筛选" placeholder="全部结果" allow-clear
+              :options="OUTCOME_FILTER_OPTIONS" />
+          </div>
+          <div class="tenant-filter-control">
+            <span class="tenant-filter-label">模型</span>
+            <a-select v-model:value="modelFilter" class="tenant-filter" aria-label="按模型筛选" placeholder="全部模型" allow-clear
+              :options="modelFilterOptions" />
+          </div>
+          <div class="tenant-filter-control">
+            <span class="tenant-filter-label">开始日期</span>
+            <a-input v-model:value="createdFrom" class="tenant-filter" :maxlength="10" allow-clear placeholder="YYYY-MM-DD" aria-label="开始日期，UTC" @blur="commitUsageDates" @change="commitUsageDates" />
+          </div>
+          <div class="tenant-filter-control">
+            <span class="tenant-filter-label">结束日期</span>
+            <a-input v-model:value="createdTo" class="tenant-filter" :maxlength="10" allow-clear placeholder="YYYY-MM-DD" aria-label="结束日期，UTC" @blur="commitUsageDates" @change="commitUsageDates" />
+          </div>
+        </template>
+        <span class="table-hint">{{ view === 'catalog' ? '凭证仅保存外部 Secret Manager 引用；RPM/TPM 是否拦截由服务端开关控制。' : `共 ${usageEventTotal} 条模型调用账目，按时间倒序分页。结果、模型和 UTC 日期同时作用于汇总与账目，不筛选待核对队列。记录不含 Prompt、响应内容、失败原因或凭证引用。表格可横向滚动查看完整列。` }}</span>
         <a-button :loading="loading" @click="load">刷新</a-button>
       </div>
+      <p v-if="view === 'usage' && usageDateError" class="m-0 mb-3 text-xs text-red-400" role="alert">{{ usageDateError }}</p>
       <a-table v-if="view === 'catalog'" :data-source="models" :columns="modelColumns" :loading="loading" row-key="id"
-        :scroll="{ x: 2050 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
+        :scroll="{ x: modelTableScrollWidth }" :pagination="{ pageSize: 10, showSizeChanger: true }">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'tenant_id'">{{ tenantName(record.tenant_id) }}</template>
           <template v-else-if="column.key === 'capabilities'">{{ record.capabilities.join('、') || '—' }}</template>
@@ -375,8 +528,8 @@ watch([() => props.active, () => props.view, tenantId], ([active], previous) => 
         </template>
         <template #emptyText><a-empty description="暂无模型目录项，可创建模型" /></template>
       </a-table>
-      <a-table v-else :data-source="events" :columns="usageColumns" :loading="loading" row-key="id"
-        :scroll="{ x: 1550 }"
+      <a-table v-else-if="events.length > 0" :data-source="events" :columns="usageColumns" :loading="loading" row-key="id"
+        :scroll="{ x: usageTableScrollWidth }"
         :pagination="{ current: usageEventPage, pageSize: usageEventPageSize, total: usageEventTotal, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: usageEventTotalText }"
         @change="changeUsageEventPage">
         <template #bodyCell="{ column, record }">
@@ -386,8 +539,10 @@ watch([() => props.active, () => props.view, tenantId], ([active], previous) => 
           <template v-else-if="column.key === 'usage_is_estimated'"><a-tag :color="record.usage_is_estimated ? 'orange' : 'green'">{{ record.usage_is_estimated ? '估算' : '实测' }}</a-tag></template>
           <template v-else-if="column.key === 'outcome'"><a-tag :color="record.outcome === 'succeeded' ? 'green' : 'red'">{{ record.outcome === 'succeeded' ? '成功' : '失败' }}</a-tag></template>
         </template>
-        <template #emptyText><a-empty description="暂无模型调用记录" /></template>
       </a-table>
+      <div v-else-if="loading" class="table-empty-state" role="status">正在加载模型用量…</div>
+      <div v-else-if="usageLoadError" class="table-empty-state" role="alert">暂时无法读取模型调用记录，请刷新重试。</div>
+      <a-empty v-else class="table-empty-state" description="暂无模型调用记录" />
     </a-card>
 
     <a-modal v-model:open="modalOpen" :title="editingId ? `编辑模型：${form.display_name}` : '新建模型'"
@@ -438,26 +593,34 @@ watch([() => props.active, () => props.view, tenantId], ([active], previous) => 
 </template>
 
 <style scoped>
-.model-governance-page { display: grid; gap: 20px; }
+.model-governance-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; min-width: 0; max-width: 100%; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
 .page-heading .subtitle { max-width: 760px; margin: 0; color: #7c8798; line-height: 1.65; }
 .eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
-.data-card { border-radius: 16px; }
-.review-card { display: grid; gap: 16px; }
+.data-card { min-width: 0; max-width: 100%; border-radius: 16px; }
+.review-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.model-governance-page :deep(.ant-card-body) { min-width: 0; max-width: 100%; }
+.model-governance-page :deep(.ant-table-wrapper) { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
+.model-governance-page :deep(.ant-table-content) { max-width: 100%; }
 .review-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .review-heading h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 17px; }
 .review-heading p { margin: 5px 0 0; color: #7c8798; font-size: 12px; }
 .review-table { min-width: 0; }
+.table-empty-state { padding: 24px 0; }
+div.table-empty-state { display: grid; place-items: center; min-height: 140px; color: var(--subtle); font-size: 13px; }
 .review-warning { margin-bottom: 14px; }
 .review-request { overflow-wrap: anywhere; color: #697586; font-size: 12px; }
-.table-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.table-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }
+.tenant-filter-control { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.tenant-filter-label { color: var(--subtle); font-size: 12px; white-space: nowrap; }
 .tenant-filter { width: 250px; flex: 0 0 auto; }
-.table-hint { flex: 1; color: #7c8798; font-size: 12px; }
-.usage-summary { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
+.table-hint { flex: 1; min-width: 0; color: #7c8798; font-size: 12px; }
+.usage-summary { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 @media (max-width: 700px) {
   .page-heading { align-items: flex-start; flex-direction: column; }
   .table-toolbar { align-items: stretch; flex-direction: column; }
+  .tenant-filter-control { align-items: stretch; flex-direction: column; gap: 6px; }
   .tenant-filter { width: 100%; }
   .review-heading { align-items: flex-start; flex-direction: column; }
 }

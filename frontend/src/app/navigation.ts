@@ -1,5 +1,26 @@
 /** 管理台的页面白名单和展示标题；按钮与窄屏选择器共用同一数据源。 */
-export type PageKey = 'overview' | 'tenants' | 'applications' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'tenant_access' | 'roles' | 'permissions' | 'authorization_simulation' | 'models' | 'model_usage' | 'themes' | 'audit'
+export type PageKey = 'overview' | 'tenants' | 'applications' | 'project_integration' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'tenant_access' | 'roles' | 'permissions' | 'authorization_simulation' | 'models' | 'model_usage' | 'themes' | 'audit'
+
+/** PageKey 与浏览器 path 的一一映射，供 vue-router 与侧栏链接共用。 */
+export const PAGE_PATHS: Record<PageKey, string> = {
+  overview: '/overview',
+  tenants: '/tenants',
+  applications: '/applications',
+  project_integration: '/project-integration',
+  application_roles: '/application-roles',
+  users: '/users',
+  invitations: '/invitations',
+  groups: '/groups',
+  organizations: '/organizations',
+  tenant_access: '/tenant-access',
+  roles: '/roles',
+  permissions: '/permissions',
+  authorization_simulation: '/authorization-simulation',
+  models: '/models',
+  model_usage: '/model-usage',
+  themes: '/themes',
+  audit: '/audit',
+}
 
 export interface NavigationItem {
   key: PageKey
@@ -11,6 +32,7 @@ export const NAV_ITEMS: NavigationItem[] = [
   { key: 'overview', icon: '▦', label: '工作台' },
   { key: 'tenants', icon: '◫', label: '租户管理' },
   { key: 'applications', icon: '▣', label: '应用管理' },
+  { key: 'project_integration', icon: '⎈', label: '新项目接入' },
   { key: 'users', icon: '♙', label: '用户管理' },
   { key: 'invitations', icon: '✉', label: '成员邀请' },
   { key: 'groups', icon: '♧', label: '用户组' },
@@ -36,6 +58,7 @@ export const PAGE_INFO: Record<PageKey, { title: string }> = {
   overview: { title: '工作台' },
   tenants: { title: '租户管理' },
   applications: { title: '应用管理' },
+  project_integration: { title: '新项目接入' },
   application_roles: { title: '应用角色与成员' },
   users: { title: '用户管理' },
   roles: { title: '角色管理' },

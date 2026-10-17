@@ -678,7 +678,7 @@ watch(() => props.active, active => {
         type="info"
         show-icon
         message="资源级权限按 permission code + resource ID 精确匹配"
-        description="Knowledge Base 使用知识库应用 UUID 作为 resource ID。通用授权仍可访问其覆盖范围内的所有资源；应用目录列表仍要求租户级 knowledge.read。"
+        description="资源 ID 使用业务系统自己的稳定标识，例如 DeerFlow 模型 UUID。不填资源 ID 的通用授权仍覆盖该权限范围；业务服务必须在查询时执行这个条件。"
       />
       <a-alert v-if="resourceGrantError" type="error" show-icon :message="resourceGrantError" />
       <div class="resource-grant-form">
@@ -693,7 +693,7 @@ watch(() => props.active, active => {
         <a-input
           v-model:value="resourceIdInput"
           :maxlength="180"
-          placeholder="资源 ID，例如知识库应用 UUID"
+          placeholder="资源 ID，例如 DeerFlow 模型 UUID"
           :disabled="resourceGrantLoading || resourceGrantSaving"
           @press-enter="saveResourcePermissionGrant"
         />

@@ -1,7 +1,7 @@
 """模型网关配额预留/结算契约与 PostgreSQL 事务测试。"""
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -14,6 +14,7 @@ from starlette.requests import Request
 from app.api.v1.admin.model_usage import (
     list_model_usage_events,
     list_model_usage_reviews,
+    model_usage_summary,
     resolve_model_usage_review,
 )
 from app.api.v1.model_usage import reserve_usage, settle_usage
@@ -62,6 +63,21 @@ class ModelUsageQuotaContractTests(unittest.TestCase):
         self.assertEqual(page, {"items": [], "total": 451, "limit": 200, "offset": 0})
         db.scalar.assert_called_once()
         db.execute.assert_called_once()
+
+    def test_usage_filters_reject_inverted_utc_dates_before_query(self) -> None:
+        db = Mock()
+        with self.assertRaises(HTTPException) as raised:
+            list_model_usage_events(
+                created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), db=db,
+            )
+        self.assertEqual(raised.exception.status_code, 400)
+        db.scalar.assert_not_called()
+        with self.assertRaises(HTTPException) as summary_error:
+            model_usage_summary(
+                created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), db=db,
+            )
+        self.assertEqual(summary_error.exception.status_code, 400)
+        db.execute.assert_not_called()
 
 
 @unittest.skipUnless(get_settings().database_url, "DATABASE_URL is required for PostgreSQL integration tests")
@@ -256,6 +272,54 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
         self.assertEqual(first_page["offset"], 0)
         self.assertEqual([row["id"] for row in first_page["items"]], expected_ids[:2])
         self.assertEqual([row["id"] for row in second_page["items"]], expected_ids[2:])
+
+    def test_usage_history_filters_apply_to_events_and_summary(self) -> None:
+        other_model_id = uuid4()
+        other_model = ModelCatalog(
+            id=other_model_id, tenant_id=self.tenant_id, key="quota-filter-model", provider="test",
+            model_name="filter-model", display_name="Filter Model", capabilities=["chat"], status="active")
+        self.db.add(other_model)
+        self.db.flush()
+        on_day = datetime(2026, 10, 15, 23, 30, tzinfo=timezone.utc)
+        next_day = datetime(2026, 10, 16, 0, 30, tzinfo=timezone.utc)
+        self.db.add_all([
+            ModelUsageEvent(
+                id=uuid4(), request_id="filter-failed-day", tenant_id=self.tenant_id,
+                model_id=self.model_id, application_id=self.application_id, user_id=self.user_id,
+                input_tokens=1, output_tokens=1, outcome="failed", created_at=on_day,
+            ),
+            ModelUsageEvent(
+                id=uuid4(), request_id="filter-ok-day", tenant_id=self.tenant_id,
+                model_id=self.model_id, application_id=self.application_id, user_id=self.user_id,
+                input_tokens=2, output_tokens=2, outcome="succeeded", created_at=on_day,
+            ),
+            ModelUsageEvent(
+                id=uuid4(), request_id="filter-other-model", tenant_id=self.tenant_id,
+                model_id=other_model_id, application_id=self.application_id, user_id=self.user_id,
+                input_tokens=3, output_tokens=3, outcome="failed", created_at=on_day,
+            ),
+            ModelUsageEvent(
+                id=uuid4(), request_id="filter-next-day", tenant_id=self.tenant_id,
+                model_id=self.model_id, application_id=self.application_id, user_id=self.user_id,
+                input_tokens=4, output_tokens=4, outcome="failed", created_at=next_day,
+            ),
+        ])
+        self.db.flush()
+
+        day = date(2026, 10, 15)
+        failed = list_model_usage_events(
+            tenant_id=self.tenant_id, outcome="failed", created_from=day, created_to=day, db=self.db,
+        )
+        scoped = model_usage_summary(
+            tenant_id=self.tenant_id, model_id=self.model_id, outcome="succeeded",
+            created_from=day, created_to=day, db=self.db,
+        )
+
+        self.assertEqual(failed["total"], 2)
+        self.assertEqual({row["request_id"] for row in failed["items"]}, {"filter-failed-day", "filter-other-model"})
+        self.assertEqual(scoped["requests"], 1)
+        self.assertEqual(scoped["succeeded"], 1)
+        self.assertEqual(scoped["failed"], 0)
 
     def test_admin_release_requires_confirmation_and_writes_no_usage_event(self) -> None:
         with patch("app.api.v1.model_usage.get_settings", return_value=self.enabled_settings):

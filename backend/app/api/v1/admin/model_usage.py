@@ -1,7 +1,8 @@
 """模型调用用量与费用估算管理路由。"""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,6 +18,33 @@ from app.models.model_catalog import ModelCatalog, ModelUsageEvent, ModelUsageRe
 from app.schemas.models import ModelUsageReviewRequest
 
 router = APIRouter(tags=["模型用量"])
+
+
+def _usage_event_filters(
+    tenant_id: UUID | None,
+    model_id: UUID | None,
+    outcome: Literal["succeeded", "failed"] | None,
+    created_from: date | None,
+    created_to: date | None,
+) -> list:
+    """汇总和账目共用筛选。日期按 UTC 自然日，结束日包含当天。"""
+    if created_from and created_to and created_from > created_to:
+        raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+    filters = []
+    if tenant_id:
+        filters.append(ModelUsageEvent.tenant_id == tenant_id)
+    if model_id:
+        filters.append(ModelUsageEvent.model_id == model_id)
+    if outcome:
+        filters.append(ModelUsageEvent.outcome == outcome)
+    if created_from:
+        start = datetime.combine(created_from, time.min, tzinfo=timezone.utc)
+        filters.append(ModelUsageEvent.created_at >= start)
+    if created_to:
+        # 结束日取次日零点作为上界，避免漏掉当天任意时刻的账目。
+        end = datetime.combine(created_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        filters.append(ModelUsageEvent.created_at < end)
+    return filters
 
 
 @router.get("/model-usage/reviews")
@@ -129,7 +157,14 @@ def resolve_model_usage_review(
             "event_id": str(event.id) if event else None, "resolved_at": now}
 
 @router.get("/model-usage/summary")
-def model_usage_summary(tenant_id: UUID | None = None, db: Session = Depends(get_db_session)) -> dict:
+def model_usage_summary(
+    tenant_id: UUID | None = None,
+    model_id: UUID | None = None,
+    outcome: Literal["succeeded", "failed"] | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
+    db: Session = Depends(get_db_session),
+) -> dict:
     """返回留存用量汇总；未知目录价格单独计数，不伪装为零成本。"""
     stmt = select(
         func.count(ModelUsageEvent.id).label("requests"),
@@ -141,8 +176,9 @@ def model_usage_summary(tenant_id: UUID | None = None, db: Session = Depends(get
         func.count().filter(ModelUsageEvent.outcome == "failed").label("failed"),
         func.count().filter(ModelUsageEvent.usage_is_estimated.is_(True)).label("estimated_usage_requests"),
     )
-    if tenant_id:
-        stmt = stmt.where(ModelUsageEvent.tenant_id == tenant_id)
+    filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
+    if filters:
+        stmt = stmt.where(*filters)
     result = db.execute(stmt).one()
     return {"requests": result.requests or 0, "input_tokens": result.input_tokens or 0,
             "output_tokens": result.output_tokens or 0,
@@ -155,6 +191,10 @@ def model_usage_summary(tenant_id: UUID | None = None, db: Session = Depends(get
 @router.get("/model-usage/events")
 def list_model_usage_events(
     tenant_id: UUID | None = None,
+    model_id: UUID | None = None,
+    outcome: Literal["succeeded", "failed"] | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db_session),
@@ -163,9 +203,7 @@ def list_model_usage_events(
     # 账目可能持续增长；总数和 offset 分页让管理台可以完整审阅历史记录。
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
-    filters = []
-    if tenant_id:
-        filters.append(ModelUsageEvent.tenant_id == tenant_id)
+    filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
     total = db.scalar(
         select(func.count()).select_from(ModelUsageEvent).where(*filters)
     ) or 0

@@ -1,24 +1,17 @@
 import { createApp } from 'vue'
 import 'ant-design-vue/dist/reset.css'
 import App from './app/App.vue'
-import { ensureManagementUi, installPublicUi } from './app/ui/antd'
-import { getToken, setToken } from './shared/services/api'
+import { router } from './app/router'
+import { installPublicUi } from './app/ui/antd'
 import './style.css'
 import './appearance.css'
 
-async function bootstrap(): Promise<void> {
+// 首屏先挂载公开登录壳；有 token 时由 App 并行恢复会话并注册管理组件，避免阻塞 #app 挂载。
+function bootstrap(): void {
   const app = createApp(App)
   installPublicUi(app)
-
-  // 标签页恢复已有管理会话时，先完成按需注册再渲染控制台，避免模板出现未注册组件。
-  if (getToken()) {
-    try { await ensureManagementUi() }
-    catch {
-      setToken(null)
-    }
-  }
-
+  app.use(router)
   app.mount('#app')
 }
 
-void bootstrap()
+bootstrap()

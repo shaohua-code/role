@@ -133,6 +133,7 @@ services:
       dockerfile: Dockerfile
     environment:
       VITE_API_PROXY_TARGET: http://api:8000
+      VITE_DEV_USE_POLLING: 'true'
     ports:
       - "${IAM_CONSOLE_PORT:-5175}:5173"
     volumes:

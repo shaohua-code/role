@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
 
 type Row = Record<string, unknown>
+
+const props = withDefaults(defineProps<{
+  active?: boolean
+  seedTenants?: Row[]
+  seedApplications?: Row[]
+}>(), {
+  active: false,
+  seedTenants: () => [],
+  seedApplications: () => [],
+})
 interface AuthorizationSimulationResult {
   subject: { user_id: string; email?: string | null; display_name: string; status: string }
   request: { tenant_id: string; application_id?: string | null; permission_code: string; resource_id?: string | null; include_data_scope: boolean }
@@ -58,8 +68,13 @@ function onTenantChange(): void {
 async function loadOptions(): Promise<void> {
   loading.value = true
   try {
+    const needTenantFetch = !props.seedTenants.length
+    const needApplicationFetch = !props.seedApplications.length
     const [tenantRows, userRows, applicationRows, permissionRows] = await Promise.all([
-      api<Row[]>('/admin/tenants'), api<Row[]>('/admin/users'), api<Row[]>('/admin/applications'), api<Row[]>('/admin/permissions'),
+      needTenantFetch ? api<Row[]>('/admin/tenants') : Promise.resolve(props.seedTenants),
+      api<Row[]>('/admin/users'),
+      needApplicationFetch ? api<Row[]>('/admin/applications') : Promise.resolve(props.seedApplications),
+      api<Row[]>('/admin/permissions'),
     ])
     tenants.value = tenantRows.filter(row => row.status === 'active')
     users.value = userRows
@@ -99,7 +114,8 @@ async function simulate(): Promise<void> {
   }
 }
 
-onMounted(loadOptions)
+// 首次进入授权模拟页再拉选项；平台字典已由 App 预加载时可跳过租户/应用重复请求。
+watch(() => props.active, active => { if (active) void loadOptions() }, { immediate: true })
 </script>
 
 <template>

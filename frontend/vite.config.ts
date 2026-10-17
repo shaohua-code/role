@@ -4,18 +4,35 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  // 本地直连开发默认用原生文件事件；Compose bind mount 需显式开启轮询以免 HMR 失效。
+  const devWatchPolling = env.VITE_DEV_USE_POLLING === 'true' || env.CI_DOCKER === 'true'
+  const pollingInterval = Number(env.VITE_DEV_POLLING_INTERVAL || 1000)
   return {
     plugins: [vue(), tailwindcss()],
     server: {
-      watch: {
-        // Docker Desktop 的 Windows bind mount 不总能转发文件系统事件；轮询保证 HMR 能发现宿主机源码改动。
+      watch: devWatchPolling ? {
         usePolling: true,
-        interval: 1000,
-      },
+        interval: Number.isFinite(pollingInterval) && pollingInterval > 0 ? pollingInterval : 1000,
+      } : undefined,
       proxy: {
         '/api': {
           target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000',
           changeOrigin: true,
+        },
+      },
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          // 把 ant-design-vue 与 Vue 运行时拆出主入口，缩短首屏 JS 解析时间。
+          manualChunks(id) {
+            if (id.includes('node_modules/ant-design-vue') || id.includes('node_modules/@ant-design')) {
+              return 'ant-design-vue'
+            }
+            if (id.includes('node_modules/vue') || id.includes('node_modules/@vue')) {
+              return 'vue-vendor'
+            }
+          },
         },
       },
     },

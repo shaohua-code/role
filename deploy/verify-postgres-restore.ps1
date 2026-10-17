@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [string]$BackupFile,
@@ -131,6 +131,8 @@ pg_isready --quiet --host=127.0.0.1 --port="${PGPORT:-5432}" --username="$POSTGR
 pg_restore --list "$1" >/dev/null
 createdb --no-password --username="$POSTGRES_USER" --maintenance-db="$POSTGRES_DB" "$2"
 '@
+# Windows PowerShell 5.1 的 here-string 保留 CRLF，且传参时不转义内嵌双引号；先转 LF 供后续 base64 编码。
+$restoreScript = $restoreScript -replace "`r`n", "`n"
 
 $verifyScript = @'
 set -eu
@@ -143,6 +145,8 @@ schema_ok=$(psql --no-password --no-psqlrc --host=127.0.0.1 --port="${PGPORT:-54
 [ "$schema_ok" = "t" ]
 printf '%s\n' "$revision"
 '@
+# 同上：先转 LF 供后续 base64 编码。
+$verifyScript = $verifyScript -replace "`r`n", "`n"
 
 $restoreIntoScratchScript = @'
 set -eu
@@ -151,6 +155,8 @@ set -eu
 export PGPASSWORD="$POSTGRES_PASSWORD"
 pg_restore --no-password --host=127.0.0.1 --port="${PGPORT:-5432}" --username="$POSTGRES_USER" --dbname="$2" --no-owner --no-privileges "$1"
 '@
+# 同上：先转 LF 供后续 base64 编码。
+$restoreIntoScratchScript = $restoreIntoScratchScript -replace "`r`n", "`n"
 
 $dropScratchScript = @'
 set -eu
@@ -159,6 +165,8 @@ set -eu
 export PGPASSWORD="$POSTGRES_PASSWORD"
 dropdb --no-password --if-exists --username="$POSTGRES_USER" "$1"
 '@
+# 同上：先转 LF 供后续 base64 编码。
+$dropScratchScript = $dropScratchScript -replace "`r`n", "`n"
 
 try {
     # 即使 docker compose cp 中途失败，也尝试移除这个随机命名的临时文件。
@@ -168,19 +176,19 @@ try {
     )
 
     Invoke-IamCompose -Step '检查归档并创建随机隔离数据库' -CommandArgs @(
-        'exec', '-T', $PostgresService, 'sh', '-ec', $restoreScript,
-        'iam-restore-check', $remoteArchivePath, $scratchDatabase
+        'exec', '-T', $PostgresService, 'sh', '-ec',
+        "echo $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($restoreScript.Replace('$1', $remoteArchivePath).Replace('$2', $scratchDatabase)))) | base64 -d | sh"
     )
     $databaseCreated = $true
 
     Invoke-IamCompose -Step '恢复备份到隔离数据库' -CommandArgs @(
-        'exec', '-T', $PostgresService, 'sh', '-ec', $restoreIntoScratchScript,
-        'iam-restore-check', $remoteArchivePath, $scratchDatabase
+        'exec', '-T', $PostgresService, 'sh', '-ec',
+        "echo $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($restoreIntoScratchScript.Replace('$1', $remoteArchivePath).Replace('$2', $scratchDatabase)))) | base64 -d | sh"
     )
 
     $revisionOutput = Invoke-IamCompose -Step '检查恢复后的 migration revision 与关键表' -CommandArgs @(
-        'exec', '-T', $PostgresService, 'sh', '-ec', $verifyScript,
-        'iam-restore-check', $scratchDatabase
+        'exec', '-T', $PostgresService, 'sh', '-ec',
+        "echo $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($verifyScript.Replace('$1', $scratchDatabase)))) | base64 -d | sh"
     )
     $revisionLines = @($revisionOutput | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($revisionLines.Count -eq 0) {
@@ -193,8 +201,8 @@ try {
         Write-Host "按 -KeepScratchDatabase 保留隔离数据库：$scratchDatabase"
     } else {
         Invoke-IamCompose -Step '删除本脚本创建的隔离恢复数据库' -CommandArgs @(
-            'exec', '-T', $PostgresService, 'sh', '-ec', $dropScratchScript,
-            'iam-restore-check', $scratchDatabase
+            'exec', '-T', $PostgresService, 'sh', '-ec',
+            "echo $([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($dropScratchScript.Replace('$1', $scratchDatabase)))) | base64 -d | sh"
         )
         $databaseCreated = $false
         Write-Host '隔离恢复数据库已删除；原业务数据库未被修改。'

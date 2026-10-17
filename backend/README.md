@@ -1,6 +1,24 @@
 # 后端技术、目录与接口说明
 
-**2026-10-14 15:10 只读复查：** API `/api/v1/ready` 返回 503 `database_migration_pending`；当前终端 Docker CLI 不可用，未重新读取 Alembic revision。开发库 0021/head 0031 是 P284 最近成功核实值，本轮未运行迁移、备份或后端测试。
+**2026-10-16 P298 模型用量筛选：** `summary` 与 `events` 增加可选 `model_id`、`outcome`、`created_from`、`created_to`（UTC 自然日，结束日含当天；开始晚于结束返回 400）。待核对列表不变。无 schema/迁移。API 容器契约测试 6/6；开发库集成测试未跑。只读确认 current=head=0031、ready 200。币种和失败原因字段仍没有。详见[验收记录](../docs/验收记录.md)。
+
+**2026-10-15 P297 模型用量前端修复：** 本轮只修复前端 API 读取失败时把账目显示成空态的问题；后端契约、数据库、迁移未改，未运行后端测试。币种规则和失败原因字段仍待决策/设计；详见[验收记录](../docs/验收记录.md)。
+**2026-10-15 P296 模型用量契约走查：** 账目 API 目前仅支持租户和分页筛选，不返回失败原因；费用币种规则未体现在契约中。前端任一相关读取接口失败会掩盖所有区域的有效数据。本轮未改 API/schema/数据库、未运行测试或迁移；详见[验收记录](../docs/验收记录.md)。
+**2026-10-15 P295 模型用量后端状态：** 本轮只改前端展示；后端/API/schema/migration、数据库均未变更，未运行后端测试。账目 API 仍无失败原因字段；当前没有目标 readiness/revision 证据。
+
+**2026-10-15 P294 模型用量契约复核：** 只读检查确认账目查询目前仅支持 tenant_id、limit、offset；响应包含 outcome 但没有失败原因字段，前端因此无法显示失败诊断。没有修改 API/schema/数据库，未运行后端测试或迁移。费用币种待产品确认。
+
+**2026-10-15 P293 运行态记录：** 本轮仅更正运维/架构文档：P292 Docker named pipe 与 API loopback 只读探测受权限阻断，因此当前 Compose、数据库 revision/readiness、备份状态均未知；2026-10-14 的 ready 200/0031 是历史快照。未改后端/API/schema/数据库，未运行测试或迁移。由有权限的 PowerShell 环境交付只读脱敏输出后再进行 A04。
+
+**2026-10-15 P292：** 本轮只改前端模型用量展示和 Ant 管理组件注册；后端/API/schema/数据库未改，未运行后端测试、迁移或写库。前端静态类型检查与生产构建通过；只读 Docker named pipe 和 API localhost 探测因权限失败，IAM 当前数据库 revision/readiness/备份状态、非空用量记账和真实 Provider 路径仍未核验。
+
+**2026-10-15 P291 模型用量 UI 走查：** 后端源码、API 与数据库均未改，未运行后端测试或迁移。静态核对发现汇总 API 对零行返回 `estimated_cost: null`；前端将其直接显示为“未配置价格”，需在后续 UI 修复时结合请求数区分空数据与未知费用。浏览器显示服务正常不等于 revision/readiness 探测，本轮没有做 API/数据库访问。
+
+**2026-10-15 P290：** IAM 后端与数据库本轮未改，未运行 IAM 后端测试、迁移或写库；Docker/API 运行态、revision/readiness 和备份可用性仍按 P288 记为未知。DeerFlow B04 未分片 Windows 离线套件为 17,149 passed、404 skipped、3 deselected、1 failed、82 warnings；失败是 DeerFlow guidance 文件超预算，不是 IAM 后端失败。A04 与 DeerFlow 目标环境仍待验。
+
+**2026-10-14 16:40 迁移完成：** 经用户授权完成受保护备份（`D:\backup\iam-postgres`，含 SHA-256）、随机隔离库恢复演练，开发库从 0021 迁移至 `0031_model_usage_reconciliation`；`/api/v1/ready` 200，api/console/postgres healthy。首次迁移尝试曾因数据库 role 密码与 `.env` 不一致失败即停止（卷 9/27 初始化后 `.env` 10/9 改过 `IAM_POSTGRES_PASSWORD`），已在 postgres 容器内 ALTER 对齐并重建 api，方法见 `docs/部署与运维.md` 第 2 节。管理员 `admin@example.com` 密码已重置（`.env`），僵尸账号 `admin@localhost.test` 已删除。后端源码与迁移文件未修改；真实登录/管理操作验收（A04）待用户执行。注意：`deploy/*.ps1` 已修复 PowerShell 5.1 兼容（UTF-8 BOM + base64 传参）；本仓库曾于 17:30 被外部 checkout 回滚一次并已重建，勿执行 checkout/restore/reset。
+
+**2026-10-14 15:10 只读复查（历史）：** API `/api/v1/ready` 返回 503 `database_migration_pending`；当前终端 Docker CLI 不可用，未重新读取 Alembic revision。开发库 0021/head 0031 是 P284 最近成功核实值，本轮未运行迁移、备份或后端测试。
 
 **2026-10-14 P284：** verify-local.ps1 在随机隔离 PostgreSQL 测试库运行后端完整套件 169/169 通过，测试库迁移到 head 并自动清理，未触及 IAM 开发库。当前开发库 0021_resume_wallet_perms、源码 head 0031_model_usage_reconciliation、readiness 503；本轮未运行目标库迁移或更改后端源码。
 
