@@ -1,0 +1,164 @@
+name: iam-platform-production
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iam
+      POSTGRES_USER: iam
+      POSTGRES_PASSWORD: ${IAM_POSTGRES_PASSWORD:?Set IAM_POSTGRES_PASSWORD in .env.production.local}
+    volumes:
+      - iam-production-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iam -d iam"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [iam-app]
+
+  migrate:
+    image: iam-platform-api:${IAM_RELEASE_TAG:?Set IAM_RELEASE_TAG to an immutable build tag}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment: &api-environment
+      APP_NAME: iam-api
+      APP_ENV: production
+      API_V1_PREFIX: /api/v1
+      DATABASE_URL: postgresql+psycopg://iam:${IAM_POSTGRES_PASSWORD}@postgres:5432/iam
+      JWT_SECRET: ${IAM_JWT_SECRET:?Set IAM_JWT_SECRET to a random value of at least 32 characters}
+      ACCESS_TOKEN_MINUTES: 10
+      REFRESH_TOKEN_DAYS: 14
+      OIDC_ISSUER: https://${IAM_DOMAIN:?Set IAM_DOMAIN to the public DNS name}
+      OIDC_SIGNING_KEY_PATH: /run/iam-secrets/oidc-signing-key.pem
+      CONSOLE_PUBLIC_URL: https://${IAM_DOMAIN}
+      ALLOW_PUBLIC_REGISTRATION: "false"
+      BOOTSTRAP_ADMIN_EMAIL: ${IAM_ADMIN_EMAIL:?Set IAM_ADMIN_EMAIL for the platform admin allow-list}
+      CORS_ORIGINS: "[]"
+      MODEL_USAGE_API_KEY: ${IAM_MODEL_USAGE_API_KEY:-}
+      MODEL_QUOTA_ENFORCEMENT_ENABLED: ${IAM_MODEL_QUOTA_ENFORCEMENT_ENABLED:-false}
+      CREDENTIAL_CLEANUP_INTERVAL_SECONDS: ${IAM_CREDENTIAL_CLEANUP_INTERVAL_SECONDS:-3600}
+      CREDENTIAL_CLEANUP_BATCH_SIZE: ${IAM_CREDENTIAL_CLEANUP_BATCH_SIZE:-1000}
+      IAM_MIGRATE_ONLY: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks: [iam-app]
+
+  api:
+    image: iam-platform-api:${IAM_RELEASE_TAG:?Set IAM_RELEASE_TAG to an immutable build tag}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      <<: *api-environment
+      IAM_MIGRATE_ONLY: "false"
+      IAM_RUN_MIGRATIONS: "false"
+      IAM_ENSURE_OIDC_KEY: "true"
+      IAM_BOOTSTRAP_ADMIN: "false"
+      ALLOW_PUBLIC_REGISTRATION: ${IAM_ALLOW_PUBLIC_REGISTRATION:-false}
+      PUBLIC_REGISTRATION_SECRET: ${IAM_PUBLIC_REGISTRATION_SECRET:-}
+      SMTP_HOST: ${IAM_SMTP_HOST:-}
+      INVITATION_EMAIL_ENABLED: ${IAM_INVITATION_EMAIL_ENABLED:-false}
+      SMTP_PORT: ${IAM_SMTP_PORT:-587}
+      SMTP_USERNAME: ${IAM_SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${IAM_SMTP_PASSWORD:-}
+      SMTP_FROM: ${IAM_SMTP_FROM:-}
+      SMTP_STARTTLS: ${IAM_SMTP_STARTTLS:-true}
+      SMTP_SSL: ${IAM_SMTP_SSL:-false}
+      SMTP_TIMEOUT_SECONDS: ${IAM_SMTP_TIMEOUT_SECONDS:-10}
+      PASSWORD_RESET_TOKEN_MINUTES: ${IAM_PASSWORD_RESET_TOKEN_MINUTES:-30}
+      PASSWORD_RESET_COOLDOWN_SECONDS: ${IAM_PASSWORD_RESET_COOLDOWN_SECONDS:-60}
+      PUBLIC_REGISTRATION_CODE_MINUTES: ${IAM_PUBLIC_REGISTRATION_CODE_MINUTES:-10}
+      PUBLIC_REGISTRATION_MAX_ATTEMPTS: ${IAM_PUBLIC_REGISTRATION_MAX_ATTEMPTS:-5}
+      PUBLIC_REGISTRATION_COOLDOWN_SECONDS: ${IAM_PUBLIC_REGISTRATION_COOLDOWN_SECONDS:-60}
+      PUBLIC_REGISTRATION_DELIVERY_INTERVAL_SECONDS: ${IAM_PUBLIC_REGISTRATION_DELIVERY_INTERVAL_SECONDS:-5}
+      LOGIN_ATTEMPT_WINDOW_SECONDS: ${IAM_LOGIN_ATTEMPT_WINDOW_SECONDS:-900}
+      LOGIN_IDENTIFIER_MAX_FAILURES: ${IAM_LOGIN_IDENTIFIER_MAX_FAILURES:-8}
+      LOGIN_IP_MAX_FAILURES: ${IAM_LOGIN_IP_MAX_FAILURES:-60}
+      LOGIN_BLOCK_SECONDS: ${IAM_LOGIN_BLOCK_SECONDS:-900}
+      # API 仅接收内部代理流量；Caddy 覆写该专用来源头，Nginx 原样传递。
+      TRUST_PROXY_CLIENT_IP: "true"
+    volumes:
+      - ${IAM_OIDC_SIGNING_KEY_FILE:?Mount an externally managed RSA private key}:/run/iam-secrets/oidc-signing-key.pem:ro
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 25s
+    restart: unless-stopped
+    networks: [iam-app]
+
+  bootstrap-admin:
+    image: iam-platform-api:${IAM_RELEASE_TAG:?Set IAM_RELEASE_TAG to an immutable build tag}
+    profiles: [bootstrap]
+    entrypoint: ["python", "manage.py", "bootstrap-admin"]
+    environment:
+      <<: *api-environment
+      BOOTSTRAP_ADMIN_PASSWORD: ${IAM_BOOTSTRAP_ADMIN_PASSWORD:-}
+      IAM_MIGRATE_ONLY: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks: [iam-app]
+
+  console:
+    image: iam-platform-console:${IAM_RELEASE_TAG:?Set IAM_RELEASE_TAG to an immutable build tag}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+    expose: ["8080"]
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks: [iam-edge, iam-app]
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      IAM_DOMAIN: ${IAM_DOMAIN:?Set IAM_DOMAIN to the public DNS name}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/caddy/trusted-proxies:/etc/caddy/trusted-proxies:ro
+      - iam-production-caddy-data:/data
+      - iam-production-caddy-config:/config
+    depends_on:
+      console:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [iam-edge]
+
+volumes:
+  iam-production-postgres:
+  iam-production-caddy-data:
+  iam-production-caddy-config:
+
+networks:
+  iam-edge:
+  iam-app:
+    internal: true
