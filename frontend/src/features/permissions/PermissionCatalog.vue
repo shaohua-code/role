@@ -2,6 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
+import AdminSearchField from '../../shared/components/AdminSearchField.vue'
 
 interface PermissionRecord {
   id: string
@@ -148,21 +151,23 @@ watch(() => props.active, active => {
 </script>
 
 <template>
-  <div class="page-heading">
-    <div>
-      <p class="eyebrow">PERMISSION REGISTRY</p>
-      <h1>权限目录</h1>
-      <p class="subtitle">维护稳定的资源操作编码；权限项被角色引用后将参与服务端默认拒绝判定。</p>
-    </div>
-    <a-button type="primary" @click="openCreate">＋ 新建权限</a-button>
-  </div>
+  <AdminPageHeader
+    eyebrow="PERMISSION REGISTRY"
+    title="权限目录"
+    subtitle="维护稳定的资源操作编码；权限项被角色引用后将参与服务端默认拒绝判定。"
+  >
+    <template #extra>
+      <a-button type="primary" @click="openCreate">＋ 新建权限</a-button>
+    </template>
+  </AdminPageHeader>
 
   <a-card class="data-card" :bordered="false">
-    <div class="table-toolbar permission-toolbar">
-      <a-input-search v-model:value="searchText" allow-clear placeholder="搜索编码、资源、Scope 或说明" class="permission-search" />
-      <span class="table-hint">{{ filteredPermissions.length }} 条权限 · 最多读取 1000 条</span>
-      <a-button :loading="loading" @click="loadPermissions">刷新</a-button>
-    </div>
+    <AdminTableToolbar :hint="`${filteredPermissions.length} 条权限 · 最多读取 1000 条`">
+      <AdminSearchField v-model="searchText" placeholder="搜索编码、资源、Scope 或说明" :submit-on-clear="false" />
+      <template #actions>
+        <a-button :loading="loading" @click="loadPermissions">刷新</a-button>
+      </template>
+    </AdminTableToolbar>
     <a-alert v-if="errorText" type="error" show-icon :message="errorText" class="permission-error" />
     <a-table :data-source="filteredPermissions" :columns="columns" :loading="loading" row-key="id" :scroll="{ x: 920 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
       <template #bodyCell="{ column, record }">

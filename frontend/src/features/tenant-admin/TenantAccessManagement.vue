@@ -2,6 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
+import AdminSearchField from '../../shared/components/AdminSearchField.vue'
 
 interface TenantOption { id: string; name: string; status: string; can_read_organizations?: boolean; can_manage_organizations?: boolean }
 interface MemberRecord {
@@ -236,24 +239,25 @@ watch(() => [props.active, tenantId.value] as const, ([active, selectedTenant]) 
 
 <template>
   <section class="tenant-access-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">TENANT ACCESS CONTROL</p><h1>成员与数据范围</h1>
-        <p class="subtitle">在当前租户内维护成员组织归属，并为角色已获得的权限配置数据过滤范围。</p></div>
-    </header>
+    <AdminPageHeader
+      eyebrow="TENANT ACCESS CONTROL"
+      title="成员与数据范围"
+      subtitle="在当前租户内维护成员组织归属，并为角色已获得的权限配置数据过滤范围。"
+    />
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
-        <a-select v-model:value="tenantId" class="tenant-filter" placeholder="选择租户" :options="tenantOptions" />
-        <span class="table-hint">{{ canManage ? '修改会记录审计；业务系统仍需执行 IAM 返回的数据过滤条件。' : '当前角色为只读；需要 iam.organization.manage 才能保存变更。' }}</span>
-        <a-button :loading="membersLoading || rolesLoading" :disabled="!tenantId" @click="refreshAll">刷新</a-button>
-      </div>
+      <AdminTableToolbar :hint="canManage ? '修改会记录审计；业务系统仍需执行 IAM 返回的数据过滤条件。' : '当前角色为只读；需要 iam.organization.manage 才能保存变更。'">
+        <a-select v-model:value="tenantId" placeholder="选择租户" :options="tenantOptions" />
+        <template #actions>
+          <a-button :loading="membersLoading || rolesLoading" :disabled="!tenantId" @click="refreshAll">刷新</a-button>
+        </template>
+      </AdminTableToolbar>
 
       <a-tabs v-model:active-key="activeTab">
         <a-tab-pane key="members" tab="成员组织归属">
-          <div class="sub-toolbar">
-            <a-input-search v-model:value="memberQuery" class="member-search" placeholder="搜索姓名或邮箱" enter-button="搜索" @search="() => loadMembers(1)" />
-            <span class="table-hint">仅显示当前租户成员；跨租户身份不会出现在此列表。</span>
-          </div>
+          <AdminTableToolbar hint="仅显示当前租户成员；跨租户身份不会出现在此列表。">
+            <AdminSearchField v-model="memberQuery" placeholder="搜索姓名或邮箱，回车查询" @search="() => loadMembers(1)" />
+          </AdminTableToolbar>
           <a-table :data-source="members" :columns="memberColumns" :loading="membersLoading" row-key="user_id"
             :scroll="{ x: 860 }" :pagination="{ current: memberPage, pageSize: memberPageSize, total: memberTotal, showSizeChanger: false }"
             @change="onMemberPageChange">
@@ -333,10 +337,6 @@ watch(() => [props.active, tenantId.value] as const, ([active, selectedTenant]) 
 
 <style scoped>
 .tenant-access-page { display: grid; gap: 20px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.page-heading .subtitle { max-width: 800px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
 .data-card { border-radius: 16px; }
 .table-toolbar, .sub-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .tenant-filter { width: min(280px, 100%); flex: 0 0 auto; }

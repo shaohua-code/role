@@ -2,6 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
 
 interface TenantOption {
   id: string; name: string; status: string; kind?: 'organization' | 'consumer'
@@ -314,18 +316,23 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
 </script>
 
 <template>
-  <section class="application-management-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">APPLICATION DIRECTORY</p><h1>应用管理</h1>
-        <p class="subtitle">登记 OAuth 客户端、精确回调白名单和授权信任策略。客户端密钥只在创建或轮换时展示一次。租户模式下新建需要租户范围管理权限。</p></div>
-      <a-button v-if="canCreateApplication" type="primary" @click="createApplication">＋ 新建应用</a-button>
-    </header>
+  <section class="application-management-page w-full min-w-0 max-w-full">
+    <AdminPageHeader
+      eyebrow="APPLICATION DIRECTORY"
+      title="应用管理"
+      subtitle="登记 OAuth 客户端、精确回调白名单和授权信任策略。客户端密钥只在创建或轮换时展示一次。租户模式下新建需要租户范围管理权限。"
+    >
+      <template #extra>
+        <a-button v-if="canCreateApplication" type="primary" @click="createApplication">＋ 新建应用</a-button>
+      </template>
+    </AdminPageHeader>
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
-        <span class="table-hint">应用归属、Client ID 和回调白名单创建后只读；编辑只更新名称与说明。</span>
-        <a-button :loading="loading" @click="loadApplications">刷新</a-button>
-      </div>
+      <AdminTableToolbar hint="应用归属、Client ID 和回调白名单创建后只读；编辑只更新名称与说明。">
+        <template #actions>
+          <a-button :loading="loading" @click="loadApplications">刷新</a-button>
+        </template>
+      </AdminTableToolbar>
       <a-table class="scroll-actions-on-mobile" :data-source="applications" :columns="columns" :loading="loading" row-key="id"
         :scroll="{ x: 1660 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
         <template #bodyCell="{ column, record }">
@@ -395,11 +402,7 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
 </template>
 
 <style scoped>
-.application-management-page { display: grid; gap: 20px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.page-heading .subtitle { max-width: 800px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
+.application-management-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; min-width: 0; max-width: 100%; }
 .data-card { border-radius: 16px; }
 .table-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .table-hint { flex: 1; color: #7c8798; font-size: 12px; }

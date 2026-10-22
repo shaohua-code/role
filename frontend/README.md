@@ -1,6 +1,14 @@
 # 前端技术与目录说明
 
-**2026-10-17 P303 路由与接入页：** 管理台菜单改为 vue-router（history）；`src/app/navigation.ts` 的 `PAGE_PATHS` 映射各 PageKey（如 `/overview`、`/project-integration`）；侧栏 `router-link` 高亮；新增平台页「新项目接入」（Tailwind 步骤指引，F02 部分）。登录前仍 `AuthEntry`；登录后保留 visitedPages 懒加载。`vue-tsc --noEmit` 与 Vite build（`--configLoader runner`）通过；浏览器登录后走查未运行。
+**2026-10-22 P330 全站换皮：** ConfigProvider 补 Layout/Menu/Card token；顶栏浅色（默认黑底用内联色盖住）；向导选中卡/单组 Steps；内容列 `min-width:0` 避免宽表页级横滚。`vue-tsc -b` 与全路由走查见[验收记录](../docs/验收记录.md)。Vite 生产构建未跑。
+
+**2026-10-22 P329 管理台 antd：** 壳层 `a-layout`/`a-menu`/`a-drawer`/`a-breadcrumb`；总览 `a-statistic`；CRUD 页头 `AdminPageHeader`；接入向导 antd 控件（P328 示例保留）；审计 DatePicker；登录页 readiness `a-alert`。侧栏图标 `src/app/icons.ts`，不要把 `@ant-design/icons-vue` 别名到该文件。`vue-tsc -b` 与登录后走查见[验收记录](../docs/验收记录.md)。Vite 生产构建未跑。
+
+**2026-10-22 P328 接入页向导：** `/project-integration` 改为一次一步手风琴，并补业务侧 env / Python·Node / Vue / curl 示例。验证见[验收记录](../docs/验收记录.md)。
+
+**2026-10-22 P327 接入页双路径：** `/project-integration` 改为公共准备 + 方案 A（OIDC 托管登录）/ 方案 B（HTTP login + check）；可复制示例。`vue-tsc -b` 通过；浏览器走查 A/B、跳转与 375 无页级横滚，见[验收记录](../docs/验收记录.md)。
+
+**2026-10-17 P303 路由与接入页：** 管理台菜单改为 vue-router（history）；`src/app/navigation.ts` 的 `PAGE_PATHS` 映射各 PageKey（如 `/overview`、`/project-integration`）；侧栏 `router-link` 高亮；新增平台页「新项目接入」（Tailwind 步骤指引，F02 部分）。登录前仍 `AuthEntry`；登录后保留 visitedPages 懒加载。`vue-tsc --noEmit` 与 Vite build（`--configLoader runner`）通过；登录后走查见后续 P322/P327。
 
 **2026-10-17 P302 性能：** 有 token 时不再阻塞 `main.ts` mount；App 并行恢复会话并注册管理组件。平台字典后台加载；用户组/授权模拟复用 App 字典。异步页在 `src/app/featureLoaders.ts`；生产构建拆出 `ant-design-vue` chunk。本地 dev 默认不用 watch polling，Docker Compose console 设 `VITE_DEV_USE_POLLING=true`。`vue-tsc --noEmit --pretty false` 与 Vite build（3206 modules）通过；浏览器耗时未运行。
 
@@ -206,8 +214,8 @@ DeerFlow 的 OIDC 首次登录账号由后端以普通用户创建；前端不�
 
 - Vue 3 Composition API、TypeScript 5、Vite 8、Vue SFC。
 - 依赖由 `pnpm-lock.yaml` 完整锁定，仓库声明 `pnpm@12.6.0`；生产镜像在安装前复制 lockfile 并使用 `pnpm install --frozen-lockfile`。
-- Ant Design Vue 4 提供表单、表格、弹窗、导航、消息、主题令牌和 ConfigProvider。
-- Tailwind CSS 4 通过 Vite 插件接入；复杂页面排版在 `src/style.css`，主题变量由 CSS 自定义属性和 Ant Design Vue token 统一驱动。
+- Ant Design Vue 4 提供表单、表格、弹窗、Layout/Menu/Drawer、向导 Steps/Collapse、消息、主题令牌和 ConfigProvider。
+- Tailwind CSS 4 通过 Vite 插件接入；`src/style.css` 只保留 OIDC 登录主题变量、主题预览画布、≤575 弹窗宽度和减少动效，管理台交互不再靠自定义壳层 class。
 - 管理 API 使用短期 Bearer 访问令牌，令牌只保存在当前标签页的 `sessionStorage`；服务端另发 HttpOnly、SameSite=Lax 刷新 Cookie。并行 401 请求共用当前页面的续期 Promise；支持 Web Locks 的浏览器还会串行化同源标签页续期，避免一次性 refresh token 被并发消费。退出或认证失败时，`BroadcastChannel` 会通知同源其他标签页清除 access token；不支持该 API 的浏览器只清除当前标签页。续期后原请求最多重放一次。服务端撤销当前 JWT 和刷新会话；其他已签发的离线 JWT 最长仍可被直接重放至到期。非开发环境 Cookie 使用 Secure；Cookie 路径限定为 `/api/v1`，普通 API 仍必须显式提供 Bearer。
 
 ## 目录
@@ -224,11 +232,12 @@ frontend/
 ├── vite.config.ts
 └── src/
     ├── app/
-    │   ├── App.vue             # 登录后会话、页面状态和 feature 装配
+    │   ├── App.vue             # 登录后会话、a-layout 壳层和 feature 装配
     │   ├── auth/AuthEntry.vue  # 登录、OIDC 同意、邀请接受及登录主题展示
+    │   ├── icons.ts            # 侧栏/壳层本地 SVG 图标
     │   ├── navigation.ts       # 页面白名单、侧栏项和面包屑标题
     │   ├── components/
-    │   │   └── AppSidebar.vue  # 桌面导航和窄屏页面选择器
+    │   │   └── AppSidebar.vue  # 桌面 a-menu 与窄屏 a-drawer
     │   └── ui/
     │       ├── antd.ts         # 公共组件注册与管理组件延迟加载
     │       └── registerManagementUi.ts # 登录后注册管理组件
@@ -238,6 +247,7 @@ frontend/
     │   ├── application-roles/  # 单应用角色、业务权限与已授权成员
     │   ├── audit/              # 审计查询、操作筛选和结果展示
     │   ├── groups/             # 用户组独立页面及关系维护
+    │   ├── integration/        # 新项目接入向导
     │   ├── invitations/        # 邀请查询、创建、撤销和一次性链接
     │   ├── models/             # 模型目录与用量治理页面、领域 API 状态
     │   ├── overview/           # 工作台概览和统计卡片
@@ -249,14 +259,14 @@ frontend/
     │   ├── themes/             # 登录主题编辑、预览和版本管理
     │   └── users/              # 身份目录、状态、租户角色和组织归属
     ├── shared/
-    │   ├── components/         # feature 首访时的加载/错误反馈
+    │   ├── components/         # AdminPageHeader、加载/错误反馈
     │   └── services/           # 认证 API 请求和健康探针
     ├── main.ts                 # Vue/Ant Design Vue 启动
-    ├── style.css               # 后台布局与响应式样式
-    └── appearance.css          # 外观覆盖
+    ├── style.css               # OIDC 主题变量、预览画布、窄屏弹窗
+    └── appearance.css          # 外观覆盖（P329 后基本清空）
 ```
 
-`frontend/` 是独立 Vue 工程，只包含 Vue、TypeScript 和浏览器侧 API 调用；Python 路由、ORM 模型和迁移仅存在于同级的 `backend/` 工程。两边不共享源码，通过 `shared/services/api.ts` 和 HTTP/OpenAPI 契约协作。OIDC 授权、令牌、用户信息和登出协议实现仅位于后端 `app/api/v1/oidc_provider/`，前端不持有客户端密钥、签名私钥或服务端 SDK 凭证；签名公钥重叠由 API 的 JWKS 端点发布给 OIDC relying party。工作台、每应用登录主题、用户组、成员邀请、授权模拟、审计查询、模型治理、权限目录、角色授权、租户目录、OAuth 应用、单应用角色、用户、组织管理和租户委派管理分别由 `features/overview/`、`features/themes/`、`features/groups/`、`features/invitations/`、`features/access-control/`、`features/audit/`、`features/models/`、`features/permissions/`、`features/roles/`、`features/tenants/`、`features/applications/`、`features/application-roles/`、`features/users/`、`features/organizations/` 和 `features/tenant-admin/` 管理。用户 feature 自管用户查询/创建/启停、活动租户角色绑定及成员组织归属，并在组织归属保存时保留已有停用组织；组织 feature 自管租户过滤、组织创建/层级和启停；租户委派 feature 自管当前授权租户中的成员搜索、组织归属读取/替换、角色权限读取和角色数据范围读取/替换。应用角色 feature 自管单应用角色 CRUD/启停、业务权限预览与原子替换、已授权成员查询和直接绑定移除；权限预览展示直接绑定/用户组继承成员去重数及逐权限的通用授权覆盖估算，不能新增 `iam.*` 权限。仅允许绑定现有活动租户成员，用户组关系仍只读显示。只读身份可以查看允许范围内的租户资源，修改入口仅在 manage 权限下开放，服务端逐请求重新授权。模型 feature 自管目录/用量请求，租户 feature 自管租户生命周期，应用 feature 自管 OAuth 客户端列表、回调校验、资料编辑、信任策略、密钥轮换及一次性密钥展示，邀请 feature 自管列表筛选、表单校验、创建/撤销和只展示一次的邀请链接，审计 feature 自管只读查询和操作编码筛选，角色 feature 自管角色 CRUD/启停、权限变更预览与数据范围编辑，权限 feature 自管稳定编码目录的检索、创建、停用/恢复确认及关联角色影响提示。`app/auth/AuthEntry.vue` 负责公开登录、OIDC consent、邀请接受与登录主题展示；`app/App.vue` 负责登录后会话、当前页状态和 feature 装配。`app/navigation.ts` 是页面键/标题/导航项的单一来源，`app/components/AppSidebar.vue` 负责桌面侧栏、窄屏页面选择器与健康状态展示。前后端项目与代码目录继续分离。完整工程边界见[架构说明](../docs/技术架构与接入.md)。
+`frontend/` 是独立 Vue 工程，只包含 Vue、TypeScript 和浏览器侧 API 调用；Python 路由、ORM 模型和迁移仅存在于同级的 `backend/` 工程。两边不共享源码，通过 `shared/services/api.ts` 和 HTTP/OpenAPI 契约协作。OIDC 授权、令牌、用户信息和登出协议实现仅位于后端 `app/api/v1/oidc_provider/`，前端不持有客户端密钥、签名私钥或服务端 SDK 凭证；签名公钥重叠由 API 的 JWKS 端点发布给 OIDC relying party。工作台、每应用登录主题、用户组、成员邀请、授权模拟、审计查询、模型治理、权限目录、角色授权、租户目录、OAuth 应用、单应用角色、用户、组织管理和租户委派管理分别由 `features/overview/`、`features/themes/`、`features/groups/`、`features/invitations/`、`features/access-control/`、`features/audit/`、`features/models/`、`features/permissions/`、`features/roles/`、`features/tenants/`、`features/applications/`、`features/application-roles/`、`features/users/`、`features/organizations/` 和 `features/tenant-admin/` 管理。用户 feature 自管用户查询/创建/启停、活动租户角色绑定及成员组织归属，并在组织归属保存时保留已有停用组织；组织 feature 自管租户过滤、组织创建/层级和启停；租户委派 feature 自管当前授权租户中的成员搜索、组织归属读取/替换、角色权限读取和角色数据范围读取/替换。应用角色 feature 自管单应用角色 CRUD/启停、业务权限预览与原子替换、已授权成员查询和直接绑定移除；权限预览展示直接绑定/用户组继承成员去重数及逐权限的通用授权覆盖估算，不能新增 `iam.*` 权限。仅允许绑定现有活动租户成员，用户组关系仍只读显示。只读身份可以查看允许范围内的租户资源，修改入口仅在 manage 权限下开放，服务端逐请求重新授权。模型 feature 自管目录/用量请求，租户 feature 自管租户生命周期，应用 feature 自管 OAuth 客户端列表、回调校验、资料编辑、信任策略、密钥轮换及一次性密钥展示，邀请 feature 自管列表筛选、表单校验、创建/撤销和只展示一次的邀请链接，审计 feature 自管只读查询和操作编码筛选，角色 feature 自管角色 CRUD/启停、权限变更预览与数据范围编辑，权限 feature 自管稳定编码目录的检索、创建、停用/恢复确认及关联角色影响提示。`app/auth/AuthEntry.vue` 负责公开登录、OIDC consent、邀请接受与登录主题展示；`app/App.vue` 负责登录后会话、当前页状态和 feature 装配。`app/navigation.ts` 是页面键/标题/导航项的单一来源，`app/components/AppSidebar.vue` 负责桌面 `a-menu`、窄屏 `a-drawer` 与健康状态展示。前后端项目与代码目录继续分离。完整工程边界见[架构说明](../docs/技术架构与接入.md)。
 
 管理页面使用 `defineAsyncComponent` 做领域级代码拆分；15 个管理 feature 仅在首次导航时创建并请求自身 chunk，创建后以 `v-show` 保持挂载，避免离开页面时丢失表单草稿和筛选状态。共享加载提示与错误刷新提示位于 `shared/components/FeatureLoading.vue` 和 `FeatureLoadError.vue`。Ant Design Vue 公共组件在 `app/ui/antd.ts` 先行注册，管理专用组件位于异步导入的 `app/ui/registerManagementUi.ts`，管理员登录或恢复标签页会话后才完成注册；当前宿主机临时目录构建转换 3205 modules，主入口 chunk 为 378.96 KB（gzip 117.51 KB)，管理注册 chunk 为 285.65 KB（gzip 83.80 KB)，应用角色 chunk 为 15.40 KB（gzip 5.68 KB），最大 chunk 低于 500 KB 且 Vite 无体积告警。
 
@@ -304,7 +314,7 @@ frontend/
 - 管理台外观：浅色/深色、品牌主色和紧凑/舒适密度，当前偏好只保存在浏览器本地。
 - 管理页面提供统一刷新入口；停用记录前二次确认；401 事件会同步清空 Vue 登录态，避免令牌过期后仍展示后台。
 - 用户停用由服务端立即阻断现有访问令牌并撤销所有刷新会话；重新启用后用户须重新登录，旧 Cookie 不会恢复访问。
-- UI 样式保持表格/表单易读字号，工作台统计卡片按屏幕宽度重排；桌面使用侧栏导航，650px 以下显示完整页面选择器，列表工具栏在窄屏换行，主题预览适配手机布局。
+- UI 样式保持表格/表单易读字号，工作台统计卡片按屏幕宽度重排；桌面使用 `a-layout-sider`+`a-menu`，650px 以下改为汉堡 + `a-drawer` 同一套菜单，列表工具栏在窄屏换行，主题预览适配手机布局。
 
 ## API 服务约定
 

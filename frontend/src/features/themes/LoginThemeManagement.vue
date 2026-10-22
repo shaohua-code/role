@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
 import { resolveThemeAssetUrl, themeCardShadow, themeChoice, themeFontFamily, themeHex, themeNumber, themeRgba } from '../../shared/theme'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminColorField from '../../shared/components/AdminColorField.vue'
 
 interface ThemeConfig {
   title: string
@@ -94,6 +96,10 @@ let themeDirty = false
 watch(themeDraft, () => {
   if (!applyingLoadedConfig && loadedApplicationId === props.selectedApplicationId) themeDirty = true
 }, { deep: true, flush: 'sync' })
+
+function applyDraftColor(field: 'primary_color' | 'background_color' | 'card_background_color' | 'title_color' | 'text_color', hex: string): void {
+  if (/^#[\da-f]{6}$/i.test(hex)) themeDraft.value[field] = hex
+}
 
 const themePreviewBackground = computed(() => {
   const draft = themeDraft.value
@@ -240,13 +246,11 @@ async function saveTheme(publish: boolean): Promise<void> {
 </script>
 
 <template>
-  <div class="page-heading">
-    <div>
-      <p class="eyebrow">APPLICATION BRANDING</p>
-      <h1>登录主题</h1>
-      <p class="subtitle">每个应用独立保存主题草稿、发布版本和历史记录。</p>
-    </div>
-  </div>
+  <AdminPageHeader
+    eyebrow="APPLICATION BRANDING"
+    title="登录主题"
+    subtitle="每个应用独立保存主题草稿、发布版本和历史记录。"
+  />
 
   <div v-if="applications.length" class="theme-workspace">
     <a-card class="data-card theme-editor" title="主题配置">
@@ -261,11 +265,11 @@ async function saveTheme(publish: boolean): Promise<void> {
         </a-form-item>
         <div class="theme-field-grid">
           <a-form-item label="登录标题"><a-input v-model:value="themeDraft.title" :maxlength="60" /></a-form-item>
-          <a-form-item label="品牌色"><input v-model="themeDraft.primary_color" type="color" class="theme-color-input" aria-label="品牌色" /></a-form-item>
+          <a-form-item label="品牌色"><AdminColorField :model-value="themeDraft.primary_color" aria-label="品牌色" @update:model-value="(hex) => applyDraftColor('primary_color', hex)" /></a-form-item>
         </div>
         <a-form-item label="欢迎文案"><a-input v-model:value="themeDraft.welcome_text" :maxlength="120" /></a-form-item>
         <div class="theme-field-grid">
-          <a-form-item label="页面底色"><input v-model="themeDraft.background_color" type="color" class="theme-color-input" aria-label="页面底色" /></a-form-item>
+          <a-form-item label="页面底色"><AdminColorField :model-value="themeDraft.background_color" aria-label="页面底色" @update:model-value="(hex) => applyDraftColor('background_color', hex)" /></a-form-item>
           <a-form-item label="登录卡片宽度"><a-input-number v-model:value="themeDraft.card_width" :min="320" :max="720" :step="10" addon-after="px" style="width:100%" /></a-form-item>
         </div>
         <a-form-item label="背景图片地址"><a-input v-model:value="themeDraft.background_url" placeholder="https://example.com/background.jpg（可选）" /></a-form-item>
@@ -303,7 +307,7 @@ async function saveTheme(publish: boolean): Promise<void> {
             <a-form-item label="Logo 尺寸"><a-input-number v-model:value="themeDraft.logo_size" :min="32" :max="96" :step="2" addon-after="px" style="width:100%" /></a-form-item>
           </div>
           <div class="theme-field-grid">
-            <a-form-item label="卡片背景色"><input v-model="themeDraft.card_background_color" type="color" class="theme-color-input" aria-label="卡片背景色" /></a-form-item>
+            <a-form-item label="卡片背景色"><AdminColorField :model-value="themeDraft.card_background_color" aria-label="卡片背景色" @update:model-value="(hex) => applyDraftColor('card_background_color', hex)" /></a-form-item>
             <a-form-item label="卡片不透明度"><a-input-number v-model:value="themeDraft.card_opacity" :min="60" :max="100" addon-after="%" style="width:100%" /></a-form-item>
           </div>
           <div class="theme-field-grid">
@@ -311,8 +315,8 @@ async function saveTheme(publish: boolean): Promise<void> {
             <a-form-item label="隐私政策链接"><a-input v-model:value="themeDraft.privacy_url" :maxlength="2048" placeholder="https://example.com/privacy" /></a-form-item>
           </div>
           <div class="theme-field-grid">
-            <a-form-item label="标题文字色"><input v-model="themeDraft.title_color" type="color" class="theme-color-input" aria-label="标题文字色" /></a-form-item>
-            <a-form-item label="正文文字色"><input v-model="themeDraft.text_color" type="color" class="theme-color-input" aria-label="正文文字色" /></a-form-item>
+            <a-form-item label="标题文字色"><AdminColorField :model-value="themeDraft.title_color" aria-label="标题文字色" @update:model-value="(hex) => applyDraftColor('title_color', hex)" /></a-form-item>
+            <a-form-item label="正文文字色"><AdminColorField :model-value="themeDraft.text_color" aria-label="正文文字色" @update:model-value="(hex) => applyDraftColor('text_color', hex)" /></a-form-item>
           </div>
           <div class="theme-field-grid">
             <a-form-item label="字体风格"><a-select v-model:value="themeDraft.font_family"><a-select-option value="system">系统无衬线</a-select-option><a-select-option value="serif">衬线</a-select-option><a-select-option value="rounded">圆润无衬线</a-select-option></a-select></a-form-item>

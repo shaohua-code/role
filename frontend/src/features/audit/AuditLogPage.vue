@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+type DayjsLike = { isValid: () => boolean; toISOString: () => string }
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
 
 interface AuditEvent {
   id: string
@@ -30,16 +32,16 @@ interface AuditFilters {
   target_id: string
   actor_user_id: string
   tenant_id: string
-  start_at: string
-  end_at: string
 }
 
 const props = defineProps<{ active: boolean }>()
 const events = ref<AuditEvent[]>([])
 const filters = ref<AuditFilters>({
   action: '', outcome: undefined, target_type: '', target_id: '',
-  actor_user_id: '', tenant_id: '', start_at: '', end_at: '',
+  actor_user_id: '', tenant_id: '',
 })
+const startAt = ref<DayjsLike | null>(null)
+const endAt = ref<DayjsLike | null>(null)
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
@@ -62,11 +64,10 @@ const columns = [
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function toUtcIso(value: string): string | undefined {
+function toUtcIso(value: DayjsLike | null): string | undefined {
   if (!value) return undefined
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) throw new Error('日期时间格式无效')
-  return date.toISOString()
+  if (!value.isValid()) throw new Error('日期时间格式无效')
+  return value.toISOString()
 }
 
 async function loadEvents(): Promise<void> {
@@ -85,16 +86,16 @@ async function loadEvents(): Promise<void> {
     return
   }
 
-  let startAt: string | undefined
-  let endAt: string | undefined
+  let startIso: string | undefined
+  let endIso: string | undefined
   try {
-    startAt = toUtcIso(filters.value.start_at)
-    endAt = toUtcIso(filters.value.end_at)
+    startIso = toUtcIso(startAt.value)
+    endIso = toUtcIso(endAt.value)
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : '日期时间格式无效'
     return
   }
-  if (startAt && endAt && startAt >= endAt) {
+  if (startIso && endIso && startIso >= endIso) {
     errorText.value = '结束时间必须晚于开始时间'
     return
   }
@@ -103,15 +104,15 @@ async function loadEvents(): Promise<void> {
   errorText.value = ''
   try {
     const query = new URLSearchParams({ limit: String(pageSize.value), offset: String((page.value - 1) * pageSize.value) })
-    const exactFilters: Array<[keyof AuditFilters, string | undefined]> = [
+    const exactFilters: Array<[string, string | undefined]> = [
       ['action', filters.value.action.trim()],
       ['outcome', filters.value.outcome],
       ['target_type', filters.value.target_type.trim()],
       ['target_id', filters.value.target_id.trim()],
       ['actor_user_id', actorId],
       ['tenant_id', tenantId],
-      ['start_at', startAt],
-      ['end_at', endAt],
+      ['start_at', startIso],
+      ['end_at', endIso],
     ]
     for (const [key, value] of exactFilters) if (value) query.set(key, value)
 
@@ -165,13 +166,11 @@ watch(() => props.active, (active) => {
 </script>
 
 <template>
-  <div class="page-heading">
-    <div>
-      <p class="eyebrow">SECURITY &amp; COMPLIANCE</p>
-      <h1>审计日志</h1>
-      <p class="subtitle">追踪身份、访问策略和平台配置的管理操作；此页面只读。</p>
-    </div>
-  </div>
+  <AdminPageHeader
+    eyebrow="SECURITY & COMPLIANCE"
+    title="审计日志"
+    subtitle="追踪身份、访问策略和平台配置的管理操作；此页面只读。"
+  />
 
   <a-card class="data-card" :bordered="false">
     <div class="audit-filters">
@@ -184,8 +183,8 @@ watch(() => props.active, (active) => {
       <a-input v-model:value="filters.target_id" allow-clear placeholder="对象 ID（精确匹配）" :maxlength="180" @press-enter="search" />
       <a-input v-model:value="filters.actor_user_id" allow-clear placeholder="操作者 UUID" @press-enter="search" />
       <a-input v-model:value="filters.tenant_id" allow-clear placeholder="租户 UUID" @press-enter="search" />
-      <label class="audit-date-filter"><span>开始</span><input v-model="filters.start_at" type="datetime-local" aria-label="审计开始时间" /></label>
-      <label class="audit-date-filter"><span>结束</span><input v-model="filters.end_at" type="datetime-local" aria-label="审计结束时间" /></label>
+      <a-date-picker v-model:value="startAt" show-time placeholder="开始时间" class="w-full" aria-label="审计开始时间" />
+      <a-date-picker v-model:value="endAt" show-time placeholder="结束时间" class="w-full" aria-label="审计结束时间" />
       <div class="audit-filter-actions">
         <a-button type="primary" :loading="loading" @click="search">查询</a-button>
         <a-button :loading="loading" @click="loadEvents">刷新</a-button>
@@ -238,9 +237,6 @@ watch(() => props.active, (active) => {
 <style scoped>
 .audit-filters { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; align-items: center; }
 .audit-toolbar-summary { display: flex; justify-content: space-between; align-items: center; margin: 14px 0; }
-.audit-date-filter { display: grid; grid-template-columns: max-content minmax(0, 1fr); min-width: 0; align-items: center; gap: 8px; color: var(--subtle); font-size: 12px; }
-.audit-date-filter > span { white-space: nowrap; }
-.audit-date-filter input { min-width: 0; width: 100%; height: 32px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface); }
 .audit-filter-actions { display: flex; gap: 8px; }
 .audit-error { margin-bottom: 16px; }
 .audit-retention-note { margin: 14px 0 0; color: var(--subtle); font-size: 12px; line-height: 1.6; }

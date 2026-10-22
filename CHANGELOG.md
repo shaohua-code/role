@@ -1,5 +1,53 @@
 # 变更日志
 
+## 2026-10-22 IAM P332 — Console 镜像 echarts 与 AdminTableToolbar 类型修复
+
+- **修复：** `AdminTableToolbar.vue` 改用模板 `$slots.default`，消除 `useSlots()` 在 `vue-tsc -b` 下的 TS2554，解除 Docker 前端镜像构建阻塞。
+- **运维：** `docker compose build console` 成功（含 `echarts@5.6.0` 安装、`vue-tsc -b` + Vite 生产构建）；`docker compose up -d --force-recreate console` 已执行。
+- **验证：** 镜像内构建通过；浏览器 `/overview` 未在本轮复跑。
+
+## 2026-10-22 IAM P331 — 工作台 ECharts 与筛选条搜索样式
+
+- **总览页：** `OverviewPage.vue` 渐变 Hero、六指标卡（可跳转对应模块）、管理能力卡片网格；`App.vue` 向总览传入 `primaryColor`。
+- **图表：** 新增 `OverviewDashboardCharts.vue`，基于 `AdminOverview` 快照渲染环形图与横向柱状图（`echarts/core` 按需注册）。
+- **搜索：** 新增 `AdminSearchField`（前缀放大镜、无右侧搜索按钮）；用户/角色/权限/成员等页替换 `a-input-search`。筛选条浅紫渐变底、圆角与聚焦环（`style.css`）。
+- **工具条：** `AdminTableToolbar` 无筛选控件时不留大块空白，hint 与刷新靠右对齐。
+- **布局：** 宽表页（如应用管理）`section`/`.data-card` 增加 `min-width:0` 与卡片内横滚，避免整页被表格撑出视口。
+- **依赖：** `frontend/package.json` 增加 `echarts@^5.6.0`。
+- **验证：** `vue-tsc -b` 通过；浏览器未在本轮复跑。Vite 生产构建未跑。后端测试未运行。`pnpm-lock.yaml` 未更新（宿主机 pnpm/corepack 故障）。
+
+## 2026-10-22 IAM P330 — antdv 全站换皮
+
+- **壳层补修：** 登录后 `h-screen` 锁视口，侧栏固定、菜单过长只在侧栏内滚；右侧 `layout-content` 单独纵向滚动。去掉顶栏多余 `a-avatar`。宽表仅在 `ant-table-wrapper` 横滚。
+- **筛选条：** 新增 `AdminTableToolbar`（浅灰底+边框），租户/用户/角色/邀请等表页统一搜索与刷新布局；去掉 `enter-button="搜索"` 大按钮样式。
+- **主题：** `App.vue` ConfigProvider 补 Layout/Menu/Card token 与内容区底色；`a-layout-header` 默认 `#001529` 盖不住 token，浅/深色用内联底色与字色。
+- **向导：** `ProjectIntegrationPage.vue` 去掉重复 Progress；选中方案卡浅紫底+主色边；底栏与内容同宽。`IntegrationCodeBlock.vue` 代码块深底。
+- **布局：** 侧栏旁内容列 `min-width:0`；`style.css` 约束管理页宽表只在卡片内横滚，标题区「新建」不再被挤出视口。
+- **验证：** `vue-tsc -b` 通过；登录后全平台路由 + 登录页 + 375 drawer overflow 0。Vite 生产构建未跑。后端测试未运行。
+- **边界：** 无 API、无迁移；不回退 P329；不把 `@ant-design/icons-vue` 整包别名到 `icons.ts`。
+
+## 2026-10-22 IAM P329 — 管理台全面改用 Ant Design Vue
+
+- **壳层：** `App.vue` / `AppSidebar.vue` 改为 `a-layout`、`a-menu`、`a-breadcrumb`、窄屏 `a-drawer`；密度走 ConfigProvider `componentSize`。`FeatureLoading`→`a-spin`，`FeatureLoadError`→`a-result`。
+- **页面：** 共享 `AdminPageHeader`；总览 `a-statistic`/`a-card`；接入向导 antd 控件（P328 示例保留）；审计 `a-date-picker`；登录页去装饰轨道、readiness `a-alert`。主色 `AdminColorField`（4.2.6 无 ColorPicker）。
+- **样式：** `style.css` 去掉 sidebar/topbar/welcome-card 等壳层 class；保留 OIDC 变量、主题预览、≤575 `.ant-modal`、`prefers-reduced-motion`。
+- **依赖：** `package.json` 增加 `@ant-design/icons-vue` 与 `dayjs`；侧栏运行时仍用 `src/app/icons.ts`。去掉会打断 antd `/es/icons` 子路径的 Vite 别名。
+- **验证：** `vue-tsc -b` 通过；登录后壳层折叠、总览、向导 A/B/下一步/跳步、打开应用/权限/角色、浅/深色、375 drawer overflow 0。Vite 生产构建未跑。后端测试未运行。
+- **边界：** 无 API、无迁移、无第二套 UI 库；登录主题预览画布与 OIDC CSS 变量保留。`pnpm-lock.yaml` 未更新（宿主机 pnpm/npm 安装器故障）。
+
+## 2026-10-22 IAM P328 — 接入页交互向导与业务改造示例
+
+- **前端：** `ProjectIntegrationPage.vue` 改为选方案 + 进度条 + 手风琴；抽出 `integrationGuide.ts` 与 `IntegrationCodeBlock.vue`。页内示例覆盖业务 .env、Python/Node 挂载、Vue 登录/按钮、login/check curl。侧栏图标走 `src/app/icons.ts`；`vite.config.ts` 把 `@ant-design/icons-vue` 别名到该文件（控制台镜像未装此包，勿在宿主机对该目录 `npm i`）。P328 后续去掉本页 antd Card/Steps/Collapse，只保留当前阶段步骤，避免标题与方案卡挤成一排、当前步被收起。
+- **验证：** `vue-tsc -b` 通过；浏览器下一步、A/B、跳转 `/applications` 与 `/roles`、375 overflow 0。后端测试未运行。
+- **边界：** 无 API、无迁移；不自动创建租户/应用；完整可运行对照仍是 `examples/iam-crud-fastapi`。
+
+## 2026-10-22 IAM P327 — 新项目接入页双路径指南
+
+- **前端：** 重写 `frontend/src/features/integration/ProjectIntegrationPage.vue`。公共准备 5 步（跳转租户/应用/权限/角色/邀请）+ 方案 A 平台托管登录（OIDC）+ 方案 B 平台 HTTP 接口（login / check / check-batch）；可复制示例。旧五步卡片、DeerFlow 试点长文、SDK 失败关闭表删除。步骤卡片 `min-w-0` + `break-words`，375 无页级横滚。
+- **验证：** `vue-tsc -b` 通过；浏览器 A/B 切换、页内跳转 `/tenants` 与 `/permissions`、375 overflow 0。自动化剪贴板未切到「已复制」。后端测试未运行。
+- **文档：** 技术架构第 3 节指向管理台新页；进度/验收记录同步。
+- **边界：** 无 API、无迁移。
+
 ## 2026-10-22 IAM P326 — 邮箱登录/找回/管理台注册完善
 
 - **后端：** 新增 `GET /api/v1/auth/public-capabilities`（SMTP 找回是否可用、管理台绑定的 ToC 注册 client）；配置项 `IAM_CONSOLE_REGISTRATION_CLIENT_ID`。

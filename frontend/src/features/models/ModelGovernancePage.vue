@@ -2,6 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api, ApiRequestError } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
 
 type View = 'catalog' | 'usage'
 interface Tenant { id: string; name: string; status: string }
@@ -454,17 +456,25 @@ watch([
 
 <template>
   <section class="model-governance-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">MODEL GOVERNANCE</p><h1>{{ title }}</h1>
-        <p class="subtitle">{{ view === 'catalog' ? '维护租户模型目录、外部凭证引用、价格与调用限额。' : '查看可信网关报告的请求量、Token 消耗和费用估算。可按模型、结果和 UTC 日期筛选。' }}</p></div>
-      <a-button v-if="view === 'catalog'" type="primary" :disabled="!tenants.length" @click="createModel">＋ 新建模型</a-button>
-    </header>
+    <AdminPageHeader
+      eyebrow="MODEL GOVERNANCE"
+      :title="title"
+      :subtitle="view === 'catalog' ? '维护租户模型目录、外部凭证引用、价格与调用限额。' : '查看可信网关报告的请求量、Token 消耗和费用估算。可按模型、结果和 UTC 日期筛选。'"
+    >
+      <template #extra>
+        <a-button v-if="view === 'catalog'" type="primary" :disabled="!tenants.length" @click="createModel">＋ 新建模型</a-button>
+      </template>
+    </AdminPageHeader>
 
     <a-alert v-if="view === 'usage' && usageLoadError" type="error" show-icon :message="usageLoadError" role="alert" />
 
-    <div v-if="view === 'usage'" class="status-grid usage-summary">
-      <article v-for="metric in displayedSummaryMetrics" :key="metric.label" class="status-card"><h3>{{ metric.label }}</h3><div class="metric number">{{ metric.value }}</div></article>
-    </div>
+    <a-row v-if="view === 'usage'" :gutter="[16, 16]" class="mb-4">
+      <a-col v-for="metric in displayedSummaryMetrics" :key="metric.label" :xs="12" :sm="8" :lg="4" :flex="1">
+        <a-card>
+          <a-statistic :title="metric.label" :value="metric.value" />
+        </a-card>
+      </a-col>
+    </a-row>
 
     <a-card v-if="view === 'usage'" class="data-card review-card" :bordered="false">
       <div class="review-heading"><div><h2>待核对调用 <a-badge :count="reviewTotal" :show-zero="false" /></h2>
@@ -486,7 +496,7 @@ watch([
     </a-card>
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
+      <AdminTableToolbar :hint="view === 'catalog' ? '凭证仅保存外部 Secret Manager 引用；RPM/TPM 是否拦截由服务端开关控制。' : `共 ${usageEventTotal} 条模型调用账目，按时间倒序分页。结果、模型和 UTC 日期同时作用于汇总与账目，不筛选待核对队列。`">
         <div class="tenant-filter-control">
           <span class="tenant-filter-label">租户</span>
           <a-select v-model:value="tenantId" class="tenant-filter" aria-label="按租户筛选" placeholder="全部租户" allow-clear
@@ -512,9 +522,10 @@ watch([
             <a-input v-model:value="createdTo" class="tenant-filter" :maxlength="10" allow-clear placeholder="YYYY-MM-DD" aria-label="结束日期，UTC" @blur="commitUsageDates" @change="commitUsageDates" />
           </div>
         </template>
-        <span class="table-hint">{{ view === 'catalog' ? '凭证仅保存外部 Secret Manager 引用；RPM/TPM 是否拦截由服务端开关控制。' : `共 ${usageEventTotal} 条模型调用账目，按时间倒序分页。结果、模型和 UTC 日期同时作用于汇总与账目，不筛选待核对队列。记录不含 Prompt、响应内容、失败原因或凭证引用。表格可横向滚动查看完整列。` }}</span>
-        <a-button :loading="loading" @click="load">刷新</a-button>
-      </div>
+        <template #actions>
+          <a-button :loading="loading" @click="load">刷新</a-button>
+        </template>
+      </AdminTableToolbar>
       <p v-if="view === 'usage' && usageDateError" class="m-0 mb-3 text-xs text-red-400" role="alert">{{ usageDateError }}</p>
       <a-table v-if="view === 'catalog'" :data-source="models" :columns="modelColumns" :loading="loading" row-key="id"
         :scroll="{ x: modelTableScrollWidth }" :pagination="{ pageSize: 10, showSizeChanger: true }">
@@ -594,10 +605,6 @@ watch([
 
 <style scoped>
 .model-governance-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; min-width: 0; max-width: 100%; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.page-heading .subtitle { max-width: 760px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
 .data-card { min-width: 0; max-width: 100%; border-radius: 16px; }
 .review-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .model-governance-page :deep(.ant-card-body) { min-width: 0; max-width: 100%; }

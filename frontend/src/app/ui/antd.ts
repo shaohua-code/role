@@ -7,6 +7,7 @@ import {
   Empty,
   Form,
   Input,
+  Layout,
   Popover,
   Radio,
   Spin,
@@ -24,7 +25,8 @@ let managementUiPromise: Promise<void> | null = null
 export function installPublicUi(app: App): void {
   rootApp = app
   app.use(StyleProvider)
-  for (const component of [Alert, Button, Card, ConfigProvider, Empty, Form, Input, Popover, Radio, Spin, Tag]) {
+  // Layout 给公开登录页居中壳使用；表格等管理件仍延后注册。
+  for (const component of [Alert, Button, Card, ConfigProvider, Empty, Form, Input, Layout, Popover, Radio, Spin, Tag]) {
     app.use(component)
   }
 }

@@ -3,6 +3,9 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
 import { validateReservedEmailDomain } from '../../shared/utils/emailValidation'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
+import AdminSearchField from '../../shared/components/AdminSearchField.vue'
 
 interface TenantOption { id: string; name: string; status: string }
 interface UserRecord {
@@ -393,19 +396,23 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
 
 <template>
   <section class="users-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">IDENTITY DIRECTORY</p><h1>用户管理</h1>
-        <p class="subtitle">全局账号状态会影响所有产品；租户停用和离职仅影响选中的租户成员关系。</p></div>
-      <a-button type="primary" :disabled="!tenantOptions.length" @click="openCreate">＋ 新建用户</a-button>
-    </header>
+    <AdminPageHeader
+      eyebrow="IDENTITY DIRECTORY"
+      title="用户管理"
+      subtitle="全局账号状态会影响所有产品；租户停用和离职仅影响选中的租户成员关系。"
+    >
+      <template #extra>
+        <a-button type="primary" :disabled="!tenantOptions.length" @click="openCreate">＋ 新建用户</a-button>
+      </template>
+    </AdminPageHeader>
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
-        <a-input-search v-model:value="searchText" class="user-search" placeholder="搜索邮箱或姓名" allow-clear
-          @search="loadUsers" @clear="loadUsers" />
-        <span class="table-hint">最多读取最近 500 个身份；用户可加入多个租户。</span>
-        <a-button :loading="loading" @click="loadUsers">刷新</a-button>
-      </div>
+      <AdminTableToolbar hint="最多读取最近 500 个身份；用户可加入多个租户。">
+        <AdminSearchField v-model="searchText" placeholder="搜索邮箱或姓名，回车查询" @search="loadUsers" />
+        <template #actions>
+          <a-button :loading="loading" @click="loadUsers">刷新</a-button>
+        </template>
+      </AdminTableToolbar>
       <a-table :data-source="users" :columns="columns" :loading="loading" row-key="id"
         :scroll="{ x: 1320 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
         <template #bodyCell="{ column, record }">
@@ -544,10 +551,6 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
 
 <style scoped>
 .users-page { display: grid; gap: 20px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.page-heading .subtitle { max-width: 800px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
 .data-card { border-radius: 16px; }
 .table-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .user-search { width: min(320px, 100%); flex: 0 0 auto; }

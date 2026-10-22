@@ -2,6 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
+import AdminSearchField from '../../shared/components/AdminSearchField.vue'
 
 interface TenantOption { id: string; name: string; can_read_applications?: boolean }
 interface ApplicationRecord {
@@ -364,19 +367,21 @@ watch(memberQuery, () => { memberPage.value = 1 })
 
 <template>
   <section class="application-role-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">APPLICATION ACCESS</p><h1>应用角色与成员</h1>
-        <p class="subtitle">按应用维护角色、业务权限和成员绑定。成员目录只展示已通过该应用角色授权的人。</p></div>
-    </header>
+    <AdminPageHeader
+      eyebrow="APPLICATION ACCESS"
+      title="应用角色与成员"
+      subtitle="按应用维护角色、业务权限和成员绑定。成员目录只展示已通过该应用角色授权的人。"
+    />
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
-        <a-select v-model:value="applicationId" class="application-filter" placeholder="选择已授权应用"
+      <AdminTableToolbar :hint="canManage ? '写入会记录审计；iam.* 管理权限不能通过应用角色新增。' : '当前只有读取权限；联系应用管理员申请角色管理权限。'">
+        <a-select v-model:value="applicationId" placeholder="选择已授权应用"
           :loading="loadingApplications" :options="applications.map(item => ({ value: item.id, label: `${item.name} · ${item.client_id}` }))" />
-        <span class="table-hint">{{ canManage ? '写入会记录审计；iam.* 管理权限不能通过应用角色新增。' : '当前只有读取权限；联系应用管理员申请角色管理权限。' }}</span>
-        <a-button :loading="loadingRoles || loadingMembers" :disabled="!applicationId" @click="refreshAll">刷新</a-button>
-        <a-button v-if="canManage" type="primary" :disabled="selectedApplication?.status !== 'active'" @click="openCreateRole">新建应用角色</a-button>
-      </div>
+        <template #actions>
+          <a-button :loading="loadingRoles || loadingMembers" :disabled="!applicationId" @click="refreshAll">刷新</a-button>
+          <a-button v-if="canManage" type="primary" :disabled="selectedApplication?.status !== 'active'" @click="openCreateRole">新建应用角色</a-button>
+        </template>
+      </AdminTableToolbar>
       <a-alert v-if="errorText" class="page-alert" type="info" show-icon :message="errorText" />
       <a-alert v-if="selectedApplication?.status === 'disabled'" class="page-alert" type="warning" show-icon
         message="当前应用已停用" description="你可以查看和整理角色；停用应用期间不能新增成员角色绑定。" />
@@ -408,10 +413,9 @@ watch(memberQuery, () => { memberPage.value = 1 })
             <a-select v-model:value="memberRoleId" class="member-role" placeholder="选择启用的应用角色" :options="roleSelectOptions" />
             <a-button type="primary" :loading="memberSaving" :disabled="!canAssign" @click="bindMember">绑定角色</a-button>
           </div>
-          <div class="sub-toolbar">
-            <a-input-search v-model:value="memberQuery" class="member-search" placeholder="搜索已授权成员" enter-button="搜索" @search="() => loadMembers(1)" />
-            <span class="table-hint">用户组继承的角色会标记为“用户组”；直接移除后若仍有继承，授权仍然有效。</span>
-          </div>
+          <AdminTableToolbar hint="用户组继承的角色会标记为「用户组」；直接移除后若仍有继承，授权仍然有效。">
+            <AdminSearchField v-model="memberQuery" placeholder="搜索已授权成员，回车查询" @search="() => loadMembers(1)" />
+          </AdminTableToolbar>
           <a-table :data-source="members" :columns="memberColumns" :loading="loadingMembers" row-key="user_id"
             :scroll="{ x: 840 }" :pagination="{ current: memberPage, pageSize: 20, total: memberTotal, showSizeChanger: false }"
             @change="onMemberPageChange">
@@ -461,12 +465,8 @@ watch(memberQuery, () => { memberPage.value = 1 })
 
 <style scoped>
 .application-role-page { display: grid; gap: 20px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.subtitle { max-width: 850px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
 .data-card { border-radius: 16px; }
-.table-toolbar, .sub-toolbar, .modal-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.sub-toolbar, .modal-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .application-filter { width: min(360px, 100%); flex: 0 0 auto; }
 .member-search { width: min(340px, 100%); }
 .member-email { width: min(320px, 100%); }

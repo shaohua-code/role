@@ -1,3 +1,24 @@
+import type { Component } from 'vue'
+import {
+  ApiOutlined,
+  AppstoreOutlined,
+  AuditOutlined,
+  BankOutlined,
+  ClusterOutlined,
+  DashboardOutlined,
+  ExperimentOutlined,
+  FileSearchOutlined,
+  HomeOutlined,
+  IdcardOutlined,
+  MailOutlined,
+  SafetyCertificateOutlined,
+  SafetyOutlined,
+  SkinOutlined,
+  TeamOutlined,
+  UserOutlined,
+  UserSwitchOutlined,
+} from './icons'
+
 /** 管理台的页面白名单和展示标题；按钮与窄屏选择器共用同一数据源。 */
 export type PageKey = 'overview' | 'tenants' | 'applications' | 'project_integration' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'tenant_access' | 'roles' | 'permissions' | 'authorization_simulation' | 'models' | 'model_usage' | 'themes' | 'audit'
 
@@ -24,34 +45,34 @@ export const PAGE_PATHS: Record<PageKey, string> = {
 
 export interface NavigationItem {
   key: PageKey
-  icon: string
+  icon: Component
   label: string
 }
 
 export const NAV_ITEMS: NavigationItem[] = [
-  { key: 'overview', icon: '▦', label: '工作台' },
-  { key: 'tenants', icon: '◫', label: '租户管理' },
-  { key: 'applications', icon: '▣', label: '应用管理' },
-  { key: 'project_integration', icon: '⎈', label: '新项目接入' },
-  { key: 'users', icon: '♙', label: '用户管理' },
-  { key: 'invitations', icon: '✉', label: '成员邀请' },
-  { key: 'groups', icon: '♧', label: '用户组' },
-  { key: 'organizations', icon: '⌂', label: '组织管理' },
-  { key: 'roles', icon: '⌘', label: '角色管理' },
-  { key: 'permissions', icon: '⛨', label: '权限目录' },
-  { key: 'authorization_simulation', icon: '⊙', label: '授权模拟' },
-  { key: 'models', icon: '✧', label: '模型管理' },
-  { key: 'model_usage', icon: '◴', label: '模型用量' },
-  { key: 'themes', icon: '◐', label: '登录主题' },
-  { key: 'audit', icon: '≋', label: '审计日志' },
+  { key: 'overview', icon: AppstoreOutlined, label: '工作台' },
+  { key: 'tenants', icon: BankOutlined, label: '租户管理' },
+  { key: 'applications', icon: ClusterOutlined, label: '应用管理' },
+  { key: 'project_integration', icon: ApiOutlined, label: '新项目接入' },
+  { key: 'users', icon: UserOutlined, label: '用户管理' },
+  { key: 'invitations', icon: MailOutlined, label: '成员邀请' },
+  { key: 'groups', icon: TeamOutlined, label: '用户组' },
+  { key: 'organizations', icon: HomeOutlined, label: '组织管理' },
+  { key: 'roles', icon: SafetyCertificateOutlined, label: '角色管理' },
+  { key: 'permissions', icon: SafetyOutlined, label: '权限目录' },
+  { key: 'authorization_simulation', icon: ExperimentOutlined, label: '授权模拟' },
+  { key: 'models', icon: DashboardOutlined, label: '模型管理' },
+  { key: 'model_usage', icon: AuditOutlined, label: '模型用量' },
+  { key: 'themes', icon: SkinOutlined, label: '登录主题' },
+  { key: 'audit', icon: FileSearchOutlined, label: '审计日志' },
 ]
 
 /** 租户管理员只看到已实现且具备租户级服务端授权的页面。 */
 export const TENANT_NAV_ITEMS: NavigationItem[] = [
-  { key: 'organizations', icon: '⌂', label: '组织管理' },
-  { key: 'tenant_access', icon: '♙', label: '成员与数据范围' },
-  { key: 'applications', icon: '▣', label: '应用管理' },
-  { key: 'application_roles', icon: '⌘', label: '应用角色与成员' },
+  { key: 'organizations', icon: HomeOutlined, label: '组织管理' },
+  { key: 'tenant_access', icon: UserSwitchOutlined, label: '成员与数据范围' },
+  { key: 'applications', icon: ClusterOutlined, label: '应用管理' },
+  { key: 'application_roles', icon: IdcardOutlined, label: '应用角色与成员' },
 ]
 
 export const PAGE_INFO: Record<PageKey, { title: string }> = {

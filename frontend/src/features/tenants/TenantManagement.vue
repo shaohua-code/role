@@ -2,6 +2,8 @@
 import { reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
 
 interface Tenant {
   id: string
@@ -145,17 +147,22 @@ watch(() => [props.shellCatalogGeneration, props.shellTenants?.length] as const,
 
 <template>
   <section class="tenant-management-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">TENANT DIRECTORY</p><h1>租户管理</h1>
-        <p class="subtitle">管理业务隔离边界。租户停用会阻止旗下应用续期登录会话，并立即影响成员访问。</p></div>
-      <a-button type="primary" @click="createTenant">＋ 新建租户</a-button>
-    </header>
+    <AdminPageHeader
+      eyebrow="TENANT DIRECTORY"
+      title="租户管理"
+      subtitle="管理业务隔离边界。租户停用会阻止旗下应用续期登录会话，并立即影响成员访问。"
+    >
+      <template #extra>
+        <a-button type="primary" @click="createTenant">＋ 新建租户</a-button>
+      </template>
+    </AdminPageHeader>
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
-        <span class="table-hint">共 {{ tenants.length }} 个租户；租户标识创建后不可修改。</span>
-        <a-button :loading="loading" @click="loadTenants">刷新</a-button>
-      </div>
+      <AdminTableToolbar :hint="`共 ${tenants.length} 个租户；租户标识创建后不可修改。`">
+        <template #actions>
+          <a-button :loading="loading" @click="loadTenants">刷新</a-button>
+        </template>
+      </AdminTableToolbar>
       <a-table :data-source="tenants" :columns="columns" :loading="loading" row-key="id"
         :scroll="{ x: 1045 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
         <template #bodyCell="{ column, record }">
@@ -181,15 +188,5 @@ watch(() => [props.shellCatalogGeneration, props.shellTenants?.length] as const,
 
 <style scoped>
 .tenant-management-page { display: grid; gap: 20px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.page-heading .subtitle { max-width: 760px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
 .data-card { border-radius: 16px; }
-.table-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
-.table-hint { flex: 1; color: #7c8798; font-size: 12px; }
-@media (max-width: 700px) {
-  .page-heading { align-items: flex-start; flex-direction: column; }
-  .table-toolbar { align-items: flex-end; }
-}
 </style>

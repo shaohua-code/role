@@ -2,10 +2,13 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, theme as antTheme } from 'ant-design-vue'
+import zhCN from 'ant-design-vue/es/locale/zh_CN'
+import { MenuOutlined } from './icons'
+import AdminPageHeader from '../shared/components/AdminPageHeader.vue'
+import AdminColorField from '../shared/components/AdminColorField.vue'
 import { ApiRequestError, api, getToken, setToken, type AdminOverview } from '../shared/services/api'
 import { getReadiness, ReadinessError } from '../shared/services/health'
 import { ensureManagementUi } from './ui/antd'
-import FeatureLoadError from '../shared/components/FeatureLoadError.vue'
 import FeatureLoading from '../shared/components/FeatureLoading.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import AuthEntry from './auth/AuthEntry.vue'
@@ -159,14 +162,64 @@ const systemPrefersDark = ref(window.matchMedia('(prefers-color-scheme: dark)').
 const themeMode = computed(() => themePreference.value === 'system' ? (systemPrefersDark.value ? 'dark' : 'light') : themePreference.value)
 const primaryColor = ref(/^#[\da-f]{6}$/i.test(localStorage.getItem('iam-primary-color') || '') ? localStorage.getItem('iam-primary-color')! : '#756df2')
 const density = ref(localStorage.getItem('iam-density') === 'compact' ? 'compact' : 'comfortable')
+// 舒适=middle、紧凑=small，交给 ConfigProvider，不再用 data-density 补丁表格。
+const componentSize = computed(() => density.value === 'compact' ? 'small' : 'middle')
+const MOBILE_MEDIA_QUERY = '(max-width: 650px)'
+const isMobile = ref(window.matchMedia(MOBILE_MEDIA_QUERY).matches)
+const mobileNavOpen = ref(false)
+let mobileQuery: MediaQueryList | null = null
+function onMobileViewportChange(event: MediaQueryListEvent): void {
+  isMobile.value = event.matches
+  if (!event.matches) mobileNavOpen.value = false
+}
 // 桌面侧栏折叠只记在当前浏览器。缺省或无法识别的值保持展开，不改浅色/深色/跟随系统。
 const sidebarCollapsed = ref(localStorage.getItem('iam-sidebar-collapsed') === 'collapsed')
 function toggleSidebar(): void {
   sidebarCollapsed.value = !sidebarCollapsed.value
   localStorage.setItem('iam-sidebar-collapsed', sidebarCollapsed.value ? 'collapsed' : 'expanded')
 }
-const antdTheme = computed(() => ({ algorithm: themeMode.value === 'dark' ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
-  token: { colorPrimary: primaryColor.value, borderRadius: 8 } }))
+function applyPrimaryColor(hex: string): void {
+  if (/^#[\da-f]{6}$/i.test(hex)) {
+    primaryColor.value = hex
+    onThemePreferenceChange()
+  }
+}
+// 浅色顶栏/侧栏与内容区同一套皮。Header 默认仍是 #001529，token 盖不住时用内联色。
+const headerSurfaceStyle = computed(() => (
+  themeMode.value === 'dark'
+    ? { backgroundColor: '#1e293b', color: '#e2e8f0' }
+    : { backgroundColor: '#ffffff', color: '#202a3b' }
+))
+const antdTheme = computed(() => {
+  const isDark = themeMode.value === 'dark'
+  const primary = primaryColor.value
+  return {
+    algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+    token: {
+      colorPrimary: primary,
+      borderRadius: 10,
+      colorBgLayout: isDark ? '#0f172a' : '#f4f6fa',
+      colorBgContainer: isDark ? '#1e293b' : '#ffffff',
+      fontFamily: 'Inter, "Noto Sans SC", system-ui, sans-serif',
+    },
+    components: {
+      Layout: {
+        headerBg: isDark ? '#1e293b' : '#ffffff',
+        headerColor: isDark ? '#e2e8f0' : '#202a3b',
+        siderBg: isDark ? '#1e293b' : '#ffffff',
+        bodyBg: isDark ? '#0f172a' : '#f4f6fa',
+      },
+      Menu: {
+        itemSelectedBg: isDark ? 'rgba(117, 109, 242, 0.18)' : '#f3f0ff',
+        itemSelectedColor: primary,
+        itemHoverBg: isDark ? 'rgba(117, 109, 242, 0.1)' : '#f5f3ff',
+      },
+      Card: {
+        boxShadowTertiary: '0 1px 2px rgba(15, 23, 42, 0.06)',
+      },
+    },
+  }
+})
 let systemThemeQuery: MediaQueryList | null = null
 function onSystemThemeChange(event: MediaQueryListEvent): void {
   systemPrefersDark.value = event.matches
@@ -359,6 +412,9 @@ onMounted(async () => {
   systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
   systemPrefersDark.value = systemThemeQuery.matches
   systemThemeQuery.addEventListener('change', onSystemThemeChange)
+  mobileQuery = window.matchMedia(MOBILE_MEDIA_QUERY)
+  isMobile.value = mobileQuery.matches
+  mobileQuery.addEventListener('change', onMobileViewportChange)
   // api.ts 已清除本标签页 token 并广播其他标签页；此处只更新 Vue 状态，避免收到远端事件后再次广播。
   window.addEventListener('iam:unauthorized', () => { token.value = null; currentUser.value = null })
   // 状态探测与认证会话恢复并行，探针慢或失败不阻塞后台登录。
@@ -385,13 +441,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   systemThemeQuery?.removeEventListener('change', onSystemThemeChange)
+  mobileQuery?.removeEventListener('change', onMobileViewportChange)
   document.removeEventListener('visibilitychange', onReadinessVisibilityChange)
   stopReadinessPolling()
 })
 </script>
 
 <template>
-  <a-config-provider :theme="antdTheme">
+  <a-config-provider :theme="antdTheme" :locale="zhCN" :component-size="componentSize">
       <AuthEntry v-if="!token"
         :login-return-to="loginReturnTo"
         :invitation-token="invitationToken"
@@ -402,28 +459,67 @@ onUnmounted(() => {
         @authenticated="onAuthenticated"
         @refresh-readiness="refreshReadiness"
       />
-    <div v-else-if="sessionBootstrapping" class="admin-shell session-bootstrap" :data-theme="themeMode">
-      <FeatureLoading />
-    </div>
-    <div v-else class="admin-shell" :data-theme="themeMode" :data-density="density" :data-sidebar="sidebarCollapsed ? 'collapsed' : 'expanded'" :style="{ '--accent': primaryColor }">
-      <AppSidebar :health-state="healthState" :items="visibleNavigation"
-        :mode-label="consoleMode === 'platform' ? '平台管理' : consoleMode === 'tenant' ? '租户管理' : '访问受限'" :collapsed="sidebarCollapsed" @toggle-sidebar="toggleSidebar" />
-      <main class="main">
-        <header class="topbar">
-          <div class="breadcrumbs">{{ consoleMode === 'tenant' ? '租户工作台' : consoleMode === 'platform' ? '平台' : '访问受限' }} <span>/</span> {{ pageInfo[page].title }}</div>
-          <div class="profile">
-            <a-popover trigger="click" placement="bottomRight"><template #content><div class="appearance-panel">
-              <label>界面主题</label><a-radio-group v-model:value="themePreference" button-style="solid" @change="onThemePreferenceChange"><a-radio-button value="light">浅色</a-radio-button><a-radio-button value="dark">深色</a-radio-button><a-radio-button value="system">跟随系统</a-radio-button></a-radio-group>
-              <label>界面密度</label><a-radio-group v-model:value="density" button-style="solid" @change="onThemePreferenceChange"><a-radio-button value="comfortable">舒适</a-radio-button><a-radio-button value="compact">紧凑</a-radio-button></a-radio-group>
-              <label>品牌主色</label><input v-model="primaryColor" class="color-input" type="color" @change="onThemePreferenceChange" />
-              <small>外观偏好保存在当前会话浏览器</small></div></template><a-button>◐ 外观</a-button></a-popover>
-            <span class="avatar">{{ currentUser?.display_name?.slice(0, 1) || '管' }}</span><span>{{ currentUser?.display_name || currentUser?.email || '平台管理员' }}</span><a-button type="link" @click="signOut">退出</a-button>
+    <a-layout v-else-if="sessionBootstrapping" class="min-h-screen">
+      <a-layout-content class="flex min-h-screen items-center justify-center">
+        <FeatureLoading />
+      </a-layout-content>
+    </a-layout>
+    <!-- 视口内滚动：侧栏不随页面上下滚，只有右侧内容区滚。 -->
+    <a-layout v-else class="h-screen w-full overflow-hidden">
+      <AppSidebar
+        v-model:mobile-open="mobileNavOpen"
+        :health-state="healthState"
+        :items="visibleNavigation"
+        :mode-label="consoleMode === 'platform' ? '平台管理' : consoleMode === 'tenant' ? '租户管理' : '访问受限'"
+        :collapsed="sidebarCollapsed"
+        :is-mobile="isMobile"
+        @toggle-sidebar="toggleSidebar"
+      />
+      <!-- 侧栏旁的内容列必须能收缩，否则宽表会把整页撑出横向滚动。 -->
+      <a-layout class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" :style="{ minWidth: '0' }">
+        <a-layout-header
+          class="z-10 flex h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 leading-none shadow-sm dark:border-slate-700"
+          :style="headerSurfaceStyle"
+        >
+          <div class="flex min-w-0 items-center gap-3">
+            <a-button v-if="isMobile" type="text" aria-label="打开导航" @click="mobileNavOpen = true">
+              <MenuOutlined />
+            </a-button>
+            <a-breadcrumb>
+              <a-breadcrumb-item>{{ consoleMode === 'tenant' ? '租户工作台' : consoleMode === 'platform' ? '平台' : '访问受限' }}</a-breadcrumb-item>
+              <a-breadcrumb-item>{{ pageInfo[page].title }}</a-breadcrumb-item>
+            </a-breadcrumb>
           </div>
-        </header>
+          <a-space :size="8" wrap>
+            <a-popover trigger="click" placement="bottomRight">
+              <template #content>
+                <div class="grid min-w-48 gap-2">
+                  <span class="text-xs text-slate-500">界面主题</span>
+                  <a-radio-group v-model:value="themePreference" button-style="solid" @change="onThemePreferenceChange">
+                    <a-radio-button value="light">浅色</a-radio-button>
+                    <a-radio-button value="dark">深色</a-radio-button>
+                    <a-radio-button value="system">跟随系统</a-radio-button>
+                  </a-radio-group>
+                  <span class="text-xs text-slate-500">界面密度</span>
+                  <a-radio-group v-model:value="density" button-style="solid" @change="onThemePreferenceChange">
+                    <a-radio-button value="comfortable">舒适</a-radio-button>
+                    <a-radio-button value="compact">紧凑</a-radio-button>
+                  </a-radio-group>
+                  <span class="text-xs text-slate-500">品牌主色</span>
+                  <AdminColorField :model-value="primaryColor" @update:model-value="applyPrimaryColor" />
+                  <small class="text-xs text-slate-400">外观偏好保存在当前会话浏览器</small>
+                </div>
+              </template>
+              <a-button>外观</a-button>
+            </a-popover>
+            <span class="hidden max-w-40 truncate text-sm sm:inline">{{ currentUser?.display_name || currentUser?.email || '平台管理员' }}</span>
+            <a-button type="link" @click="signOut">退出</a-button>
+          </a-space>
+        </a-layout-header>
 
-        <section class="content">
+        <a-layout-content class="mx-auto w-full min-h-0 min-w-0 max-w-[1500px] flex-1 overflow-x-hidden overflow-y-auto px-4 py-6 sm:px-6">
           <router-view aria-hidden="true" class="hidden" />
-          <a-card v-if="consoleMode === 'no_access'" :bordered="false" class="data-card">
+          <a-card v-if="consoleMode === 'no_access'" :bordered="false">
             <a-alert type="error" show-icon message="当前账号尚未获得管理权限"
               description="请联系平台管理员，为你的租户角色授予 iam.organization.read、iam.organization.manage、iam.application.read 或 iam.application.manage 权限。" />
           </a-card>
@@ -433,6 +529,7 @@ onUnmounted(() => {
               :overview="overview"
               :health-state="healthState"
               :loading="loading"
+              :primary-color="primaryColor"
               @navigate="setPage"
               @refresh="() => loadPage(true)"
             />
@@ -518,17 +615,24 @@ onUnmounted(() => {
             />
           </div>
           <div v-if="visitedPages.has('authorization_simulation')" v-show="page === 'authorization_simulation'">
-            <div class="page-heading"><div><p class="eyebrow">ACCESS POLICY PREVIEW</p><h1>授权模拟</h1><p class="subtitle">用当前生效的成员、角色和数据范围规则预演一次请求，不会修改授权配置。</p></div></div>
+            <AdminPageHeader
+              eyebrow="ACCESS POLICY PREVIEW"
+              title="授权模拟"
+              subtitle="用当前生效的成员、角色和数据范围规则预演一次请求，不会修改授权配置。"
+            />
             <AuthorizationSimulator
               :active="page === 'authorization_simulation'"
               :seed-tenants="consoleMode === 'platform' ? tenants : []"
               :seed-applications="consoleMode === 'platform' ? applications : []"
             />
           </div>
-          <footer class="page-footer"><span>统一身份与权限管理平台</span><span>{{ page === 'authorization_simulation' ? '授权模拟只读，不会修改策略' : '管理变更由服务端鉴权并写入审计' }}</span></footer>
+          <footer class="mt-6 flex min-w-0 max-w-full flex-col justify-between gap-2 border-t border-slate-200 pt-3 text-xs text-slate-400 dark:border-slate-700 sm:flex-row">
+            <span class="min-w-0 shrink-0">统一身份与权限管理平台</span>
+            <span class="min-w-0 break-words sm:text-right">{{ page === 'authorization_simulation' ? '授权模拟只读，不会修改策略' : '管理变更由服务端鉴权并写入审计' }}</span>
+          </footer>
           </template>
-        </section>
-      </main>
-    </div>
+        </a-layout-content>
+      </a-layout>
+    </a-layout>
   </a-config-provider>
 </template>

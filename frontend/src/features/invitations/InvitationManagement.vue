@@ -3,6 +3,8 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
 import { isReservedEmailHost } from '../../shared/utils/emailValidation'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
 
 interface TenantOption { id: string; name: string; status: string }
 interface RoleOption { id: string; tenant_id: string; name: string; status: string }
@@ -183,37 +185,38 @@ watch(() => props.active, (active) => {
 </script>
 
 <template>
-  <div class="page-heading">
-    <div>
-      <p class="eyebrow">TENANT MEMBERSHIP</p>
-      <h1>成员邀请</h1>
-      <p class="subtitle">向指定邮箱创建有期限的租户角色邀请；系统只保存令牌摘要，邮件投递由服务端可选配置。</p>
-    </div>
-    <a-button type="primary" @click="openCreate">＋ 新建邀请</a-button>
-  </div>
+  <AdminPageHeader
+    eyebrow="TENANT MEMBERSHIP"
+    title="成员邀请"
+    subtitle="向指定邮箱创建有期限的租户角色邀请；系统只保存令牌摘要，邮件投递由服务端可选配置。"
+  >
+    <template #extra>
+      <a-button type="primary" @click="openCreate">＋ 新建邀请</a-button>
+    </template>
+  </AdminPageHeader>
 
   <a-card class="data-card" :bordered="false">
-    <div class="table-toolbar invitation-toolbar">
+    <AdminTableToolbar :hint="`${invitations.length} 条邀请 · 最多读取 500 条`">
       <a-select
         v-model:value="selectedTenantId"
         allow-clear
         show-search
         option-filter-prop="label"
         placeholder="全部租户"
-        class="invitation-tenant-filter"
         :options="tenantOptions"
         @change="loadInvitations"
       />
-      <span class="table-hint">{{ invitations.length }} 条邀请 · 最多读取 500 条</span>
-      <a-button :loading="loading" @click="loadInvitations">刷新</a-button>
-    </div>
+      <template #actions>
+        <a-button :loading="loading" @click="loadInvitations">刷新</a-button>
+      </template>
+    </AdminTableToolbar>
     <a-alert v-if="errorText" type="error" show-icon :message="errorText" class="invitation-error" />
     <a-table
       :data-source="invitations"
       :columns="columns"
       :loading="loading"
       row-key="id"
-      :scroll="{ x: 1500 }"
+      :scroll="{ x: 1520 }"
       :pagination="{ pageSize: 10, showSizeChanger: true }"
     >
       <template #bodyCell="{ column, record }">
@@ -257,11 +260,6 @@ watch(() => props.active, (active) => {
 </template>
 
 <style scoped>
-.invitation-toolbar { flex-wrap: wrap; }
-.invitation-tenant-filter { width: min(100%, 300px); }
 .invitation-error { margin-bottom: 16px; }
 .invitation-link-field { margin: 14px 0 10px; }
-@media (max-width: 650px) {
-  .invitation-tenant-filter { width: 100%; }
-}
 </style>

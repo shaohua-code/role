@@ -2,6 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
 
 interface TenantOption { id: string; name: string; status: string; can_read_organizations?: boolean; can_manage_organizations?: boolean }
 interface Organization {
@@ -174,18 +176,23 @@ watch(() => props.tenants, () => {
 
 <template>
   <section class="organizations-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">ORGANIZATION DIRECTORY</p><h1>组织管理</h1>
-        <p class="subtitle">维护租户内的组织树，成员归属与角色数据范围会引用这里的组织关系。</p></div>
-      <a-button v-if="apiPrefix === '/admin' || canManageTenant" type="primary" :disabled="!activeTenantOptions.length" @click="openCreate">＋ 新建组织</a-button>
-    </header>
+    <AdminPageHeader
+      eyebrow="ORGANIZATION DIRECTORY"
+      title="组织管理"
+      subtitle="维护租户内的组织树，成员归属与角色数据范围会引用这里的组织关系。"
+    >
+      <template #extra>
+        <a-button v-if="apiPrefix === '/admin' || canManageTenant" type="primary" :disabled="!activeTenantOptions.length" @click="openCreate">＋ 新建组织</a-button>
+      </template>
+    </AdminPageHeader>
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
-        <a-select v-model:value="tenantId" class="tenant-filter" placeholder="选择租户" :options="tenantOptions" />
-        <span class="table-hint">{{ canManageTenant ? '组织标识创建后不可修改；上级组织仅能选择同一租户中的启用组织。' : '当前为只读访问；组织变更需由具备 iam.organization.manage 权限的管理员执行。' }}</span>
-        <a-button :loading="loading" :disabled="!tenantId" @click="loadOrganizations">刷新</a-button>
-      </div>
+      <AdminTableToolbar :hint="canManageTenant ? '组织标识创建后不可修改；上级组织仅能选择同一租户中的启用组织。' : '当前为只读访问；组织变更需由具备 iam.organization.manage 权限的管理员执行。'">
+        <a-select v-model:value="tenantId" placeholder="选择租户" :options="tenantOptions" />
+        <template #actions>
+          <a-button :loading="loading" :disabled="!tenantId" @click="loadOrganizations">刷新</a-button>
+        </template>
+      </AdminTableToolbar>
       <a-table :data-source="organizations" :columns="columns" :loading="loading" row-key="id"
         :scroll="{ x: 1040 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
         <template #bodyCell="{ column, record }">
@@ -226,10 +233,6 @@ watch(() => props.tenants, () => {
 
 <style scoped>
 .organizations-page { display: grid; gap: 20px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.page-heading .subtitle { max-width: 800px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
 .data-card { border-radius: 16px; }
 .table-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .tenant-filter { width: min(280px, 100%); flex: 0 0 auto; }

@@ -2,6 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
 
 interface Tenant { id: string; name: string }
 
@@ -200,19 +202,24 @@ watch(() => props.active, active => {
 
 <template>
   <section class="groups-page">
-    <header class="page-heading">
-      <div><p class="eyebrow">IDENTITY GROUPS</p><h1>用户组</h1>
-        <p class="subtitle">按租户组织成员并继承角色；直接角色和多个用户组角色都会参与统一授权判定。</p></div>
-      <a-button type="primary" :disabled="!tenants.length" @click="createGroup">＋ 新建用户组</a-button>
-    </header>
+    <AdminPageHeader
+      eyebrow="IDENTITY GROUPS"
+      title="用户组"
+      subtitle="按租户组织成员并继承角色；直接角色和多个用户组角色都会参与统一授权判定。"
+    >
+      <template #extra>
+        <a-button type="primary" :disabled="!tenants.length" @click="createGroup">＋ 新建用户组</a-button>
+      </template>
+    </AdminPageHeader>
 
     <a-card class="data-card" :bordered="false">
-      <div class="table-toolbar">
-        <a-select v-model:value="tenantId" class="tenant-filter" placeholder="全部租户" allow-clear
+      <AdminTableToolbar hint="停用用户组会暂停角色继承，重新启用后恢复。">
+        <a-select v-model:value="tenantId" placeholder="全部租户" allow-clear
           :options="tenants.map(tenant => ({ value: tenant.id, label: tenant.name }))" @change="loadGroups" />
-        <span class="table-hint">停用用户组会暂停角色继承，重新启用后恢复。</span>
-        <a-button :loading="loading" @click="loadGroups">刷新</a-button>
-      </div>
+        <template #actions>
+          <a-button :loading="loading" @click="loadGroups">刷新</a-button>
+        </template>
+      </AdminTableToolbar>
       <a-table class="scroll-actions-on-mobile" :data-source="groups" :columns="columns" :loading="loading" row-key="id"
         :scroll="{ x: 980 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
         <template #bodyCell="{ column, record }">
@@ -252,10 +259,6 @@ watch(() => props.active, active => {
 
 <style scoped>
 .groups-page { display: grid; gap: 20px; }
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
-.page-heading h1 { margin: 5px 0 7px; font-size: clamp(25px, 3vw, 32px); letter-spacing: -.035em; }
-.page-heading .subtitle { max-width: 760px; margin: 0; color: #7c8798; line-height: 1.65; }
-.eyebrow { margin: 0; color: #766fe8; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
 .data-card { border-radius: 16px; }
 .table-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .tenant-filter { width: 280px; flex: 0 0 auto; }

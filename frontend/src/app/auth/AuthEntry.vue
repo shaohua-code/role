@@ -475,19 +475,24 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div class="login-shell" :class="oidcFlow ? ['oidc-login-shell', `layout-${themeChoice(oidcTheme.layout, ['centered', 'split', 'banner'], 'centered')}`] : []" :style="oidcFlow ? oidcBackgroundStyle : undefined">
-      <div v-if="!loginReturnTo && !invitationToken" class="login-decoration"><div class="login-orbit"></div><div class="login-orbit second"></div><div class="login-mark">ID</div></div>
+    <a-layout class="login-shell min-h-screen" :class="oidcFlow ? ['oidc-login-shell', `layout-${themeChoice(oidcTheme.layout, ['centered', 'split', 'banner'], 'centered')}`] : []" :style="oidcFlow ? oidcBackgroundStyle : undefined">
+      <a-layout-content class="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
       <div v-if="loginReturnTo && oidcTheme.layout === 'split'" class="oidc-brand-copy"><strong>{{ loginApplication?.application_name }}</strong><span>{{ String(oidcTheme.welcome_text || '安全访问您的工作空间') }}</span></div>
       <div v-if="loginReturnTo && oidcTheme.layout === 'banner'" class="oidc-login-banner"><strong>{{ loginApplication?.application_name || '安全登录' }}</strong></div>
       <a-card class="login-card" :class="[{ 'oidc-login-card': oidcFlow }, oidcFlow ? `position-${themeChoice(oidcTheme.card_position, ['left', 'center', 'right'], 'center')}` : '', oidcFlow ? `layout-${themeChoice(oidcTheme.layout, ['centered', 'split', 'banner'], 'centered')}` : '']" :bordered="false" :style="oidcFlow ? oidcCardStyle : undefined">
         <div class="login-brand"><span class="brand-mark" :style="oidcFlow ? oidcLogoStyle : undefined">{{ oidcFlow ? (loginApplication?.application_name?.slice(0, 2) || 'AP') : 'ID' }}<img v-if="oidcFlow && oidcLogoUrl" :src="oidcLogoUrl" alt="应用 Logo" /></span><div><strong>{{ oidcFlow ? loginApplication?.application_name || '应用登录' : '统一身份平台' }}</strong><small>{{ oidcFlow ? 'SECURE SIGN IN' : 'IDENTITY & ACCESS' }}</small></div></div>
-        <div v-if="readinessState !== '服务正常'" class="readiness-warning" role="status" aria-live="polite">
-          <div class="readiness-copy">
-            <strong>IAM 服务暂未就绪：{{ readinessState }}</strong>
-            <span>{{ readinessMessage }}</span>
-          </div>
-          <a-button class="readiness-retry" type="link" size="small" :loading="readinessLoading" @click="emit('refresh-readiness')">重新检查</a-button>
-        </div>
+        <a-alert
+          v-if="readinessState !== '服务正常'"
+          class="mb-4"
+          type="warning"
+          show-icon
+          :message="`IAM 服务暂未就绪：${readinessState}`"
+          :description="readinessMessage"
+        >
+          <template #action>
+            <a-button type="link" size="small" :loading="readinessLoading" @click="emit('refresh-readiness')">重新检查</a-button>
+          </template>
+        </a-alert>
         <template v-if="invitationToken">
           <p class="eyebrow">TENANT INVITATION</p><h1>接受租户邀请</h1>
           <a-spin :spinning="invitationLoading"><template v-if="invitationPreview"><p class="login-subtitle">加入 {{ invitationPreview.tenant_name }}，并获得 {{ invitationPreview.role_name }} 角色。</p><a-alert class="invitation-summary" type="info" show-icon :message="invitationPreview.email" :description="`邀请将于 ${new Date(invitationPreview.expires_at).toLocaleString()} 过期`" /><a-form :model="invitationForm" :rules="invitationRules" layout="vertical" @finish="acceptInvitation"><a-form-item label="密码" name="password" help="新账号请设置至少 12 位密码；已有账号请输入当前密码以绑定原身份。"><a-input-password v-model:value="invitationForm.password" size="large" autocomplete="new-password" :maxlength="128" /></a-form-item><a-button type="primary" html-type="submit" size="large" block :loading="invitationAccepting" :disabled="!authActionsAvailable">接受邀请并登录</a-button></a-form></template><template v-else-if="!invitationLoading && authActionsAvailable"><a-empty description="邀请链接无效或已过期" /><a-button type="link" block @click="returnToSignIn">返回登录</a-button></template></a-spin>
@@ -553,5 +558,6 @@ onUnmounted(() => {
         <div class="login-note">{{ loginReturnTo ? '登录后将安全返回原应用。' : consoleLoginNote }}</div>
         </template>
       </a-card>
-    </div>
+      </a-layout-content>
+    </a-layout>
 </template>

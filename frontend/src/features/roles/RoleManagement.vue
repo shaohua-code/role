@@ -2,6 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
+import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
+import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
+import AdminSearchField from '../../shared/components/AdminSearchField.vue'
 
 interface TenantOption { id: string; name: string; status: string }
 interface ApplicationOption { id: string; tenant_id: string; name: string; status: string }
@@ -576,22 +579,24 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
 </script>
 
 <template>
-  <div class="page-heading">
-    <div>
-      <p class="eyebrow">ROLE &amp; POLICY</p>
-      <h1>角色管理</h1>
-      <p class="subtitle">维护租户/应用角色、通用权限授予和数据范围策略。</p>
-    </div>
-    <a-button type="primary" @click="openCreate">＋ 新建角色</a-button>
-  </div>
+  <AdminPageHeader
+    eyebrow="ROLE & POLICY"
+    title="角色管理"
+    subtitle="维护租户/应用角色、通用权限授予和数据范围策略。"
+  >
+    <template #extra>
+      <a-button type="primary" @click="openCreate">＋ 新建角色</a-button>
+    </template>
+  </AdminPageHeader>
 
   <a-card class="data-card" :bordered="false">
-    <div class="table-toolbar role-toolbar">
-      <a-input-search v-model:value="searchText" allow-clear placeholder="搜索角色名称、标识或说明" class="role-search" />
-      <a-select v-model:value="tenantFilter" allow-clear show-search option-filter-prop="label" placeholder="全部租户" class="role-tenant-filter" :options="tenantOptions" />
-      <span class="table-hint">{{ filteredRoles.length }} 条角色 · 最多读取 500 条</span>
-      <a-button :loading="loading" @click="loadRoles">刷新</a-button>
-    </div>
+    <AdminTableToolbar :hint="`${filteredRoles.length} 条角色 · 最多读取 500 条`">
+      <AdminSearchField v-model="searchText" placeholder="搜索角色名称、标识或说明" :submit-on-clear="false" />
+      <a-select v-model:value="tenantFilter" allow-clear show-search option-filter-prop="label" placeholder="全部租户" :options="tenantOptions" />
+      <template #actions>
+        <a-button :loading="loading" @click="loadRoles">刷新</a-button>
+      </template>
+    </AdminTableToolbar>
     <a-alert v-if="errorText" type="error" show-icon :message="errorText" class="role-error" />
     <a-table class="scroll-actions-on-mobile" :data-source="filteredRoles" :columns="columns" :loading="loading" row-key="id" :scroll="{ x: 1780 }" :pagination="{ pageSize: 10, showSizeChanger: true }">
       <template #bodyCell="{ column, record }">

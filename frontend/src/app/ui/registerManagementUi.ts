@@ -1,9 +1,67 @@
 import type { App } from 'vue'
-import { Badge, Checkbox, Descriptions, Divider, InputNumber, Modal, Select, Space, Switch, Table, Tabs, Tooltip } from 'ant-design-vue'
+import {
+  Avatar,
+  Badge,
+  Breadcrumb,
+  Checkbox,
+  Collapse,
+  DatePicker,
+  Descriptions,
+  Divider,
+  Drawer,
+  Dropdown,
+  Flex,
+  InputNumber,
+  List,
+  Menu,
+  Modal,
+  Progress,
+  Result,
+  Row,
+  Col,
+  Select,
+  Space,
+  Statistic,
+  Steps,
+  Switch,
+  Table,
+  Tabs,
+  Tooltip,
+  Typography,
+} from 'ant-design-vue'
 
-/** 只在打开已认证管理台后注册的表格、筛选、弹窗及策略编辑组件。 */
+/** 只在打开已认证管理台后注册的表格、筛选、弹窗、布局及向导组件。 */
 export function registerManagementUi(app: App): void {
-  for (const component of [Badge, Checkbox, Descriptions, Divider, InputNumber, Modal, Select, Space, Switch, Table, Tabs, Tooltip]) {
+  for (const component of [
+    Avatar,
+    Badge,
+    Breadcrumb,
+    Checkbox,
+    Collapse,
+    DatePicker,
+    Descriptions,
+    Divider,
+    Drawer,
+    Dropdown,
+    Flex,
+    InputNumber,
+    List,
+    Menu,
+    Modal,
+    Progress,
+    Result,
+    Row,
+    Col,
+    Select,
+    Space,
+    Statistic,
+    Steps,
+    Switch,
+    Table,
+    Tabs,
+    Tooltip,
+    Typography,
+  ]) {
     app.use(component)
   }
 }
