@@ -1,5 +1,18 @@
 # 变更日志
 
+## 2026-10-22 IAM P324 — P302 浏览器 Network 走查
+
+- **走查：** 平台管理员登录 5175；路由 **租户 → 角色 → 工作台** 切换时，页面内 `fetch` 探针未再出现 `/admin/overview|tenants|applications|roles` 重复请求。
+- **结论：** P323 优化在浏览器实测侧成立；P302 任务可标记完成（375 弹窗仍归 P311 用户复测）。
+
+## 2026-10-22 IAM P323 — P302 管理台重复请求与 ready 轮询
+
+- **App 壳：** 平台字典 `loadDictionaries` 单次预拉（`dictionariesReady` + `platformCatalogGeneration`）；路由同步仅在进入工作台时调 `loadPage`；概览已有数据时跳过重复 `/admin/overview`；退出登录清空壳层缓存。
+- **子页复用：** `TenantManagement` / `ApplicationManagement` / `RoleManagement` 在平台模式下优先复用壳层 tenants/applications/roles，避免路由激活重复打同名 admin 列表接口。
+- **Ready 探针：** 服务正常时间隔 120s、异常 30s；标签页隐藏时暂停请求；回到前台立即补一次探测。
+- **模板：** 管理台 content 区移除错误的 `v-if`/`v-else-if` 链（消除 Vue 编译 warn）；工作台改为与其他页一致的 `visitedPages` + `v-show`。
+- **验证：** `frontend` 下 `vue-tsc -b` 通过；浏览器 Network 复测未运行。
+
 ## 2026-10-17 IAM — 取消仓库绑定（用户指令）
 
 - **操作：** 用户要求取消仓库绑定；删除 `D:\project\role\.git`，目录不再是 git 仓库。删除前核实本地 main（3 提交：`bea2e51` → `25a2968` → `0d7452c` cursor改造）与 GitHub 远程 `https://github.com/shaohua-code/role.git` **完全同步**（`main...origin/main` 无领先/落后），完整历史在远程保留；无 stash。38 个未提交文件（含 P312–P322 全部成果）仅保留在工作区，未受影响。

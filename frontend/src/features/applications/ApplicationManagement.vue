@@ -17,8 +17,16 @@ interface Application {
 }
 interface RegistrationRole { id: string; key: string; name: string }
 
-const props = withDefaults(defineProps<{ active: boolean; tenants: TenantOption[]; apiPrefix?: string }>(), { apiPrefix: '/admin' })
+const props = withDefaults(defineProps<{
+  active: boolean
+  tenants: TenantOption[]
+  apiPrefix?: string
+  shellApplications?: Application[] | null
+  shellCatalogGeneration?: number
+}>(), { apiPrefix: '/admin' })
 const emit = defineEmits<{ changed: [] }>()
+
+let hydratedCatalogGeneration = -1
 
 const applications = ref<Application[]>([])
 const registrationRoles = ref<RegistrationRole[]>([])
@@ -95,6 +103,15 @@ function isSafeRedirectUri(value: string): boolean {
     if (url.hash || url.username || url.password) return false
     return url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
   } catch { return false }
+}
+
+function hydrateFromShell(): boolean {
+  if (props.apiPrefix !== '/admin' || props.shellApplications == null) return false
+  const generation = props.shellCatalogGeneration ?? -1
+  if (generation < 0 || generation === hydratedCatalogGeneration) return false
+  applications.value = props.shellApplications
+  hydratedCatalogGeneration = generation
+  return true
 }
 
 async function loadApplications(): Promise<void> {
@@ -284,7 +301,16 @@ function changeStatus(application: Application): void {
   else void update()
 }
 
-watch(() => props.active, active => { if (active) void loadApplications() }, { immediate: true })
+watch(() => props.active, active => {
+  if (!active) return
+  // 平台壳已预拉应用目录时复用，避免路由激活重复请求 /admin/applications。
+  if (hydrateFromShell()) return
+  void loadApplications()
+}, { immediate: true })
+
+watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as const, () => {
+  if (props.active) hydrateFromShell()
+})
 </script>
 
 <template>

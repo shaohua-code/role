@@ -50,7 +50,13 @@ const healthState = ref('检查中')
 const readinessRefreshing = ref(false)
 const dictionariesLoading = ref(false)
 const dictionariesNeedRetry = ref(false)
+// 平台壳字典只预拉一次；子页复用 generation 感知刷新，避免路由切换重复打 tenants/applications/roles。
+const dictionariesReady = ref(false)
+const platformCatalogGeneration = ref(0)
+const READINESS_POLL_OK_MS = 120_000
+const READINESS_POLL_DEGRADED_MS = 30_000
 let readinessTimer: number | undefined
+let readinessPollGeneration = 0
 // 在侧栏显示可操作的依赖状态，避免把“API 进程存活”误报为“服务已经可用”。
 async function refreshReadiness(): Promise<void> {
   // 定时轮询和用户手动重查可能同时触发；同一时刻只保留一个探针请求。
@@ -73,6 +79,34 @@ async function refreshReadiness(): Promise<void> {
     readinessRefreshing.value = false
   }
 }
+
+function stopReadinessPolling(): void {
+  if (readinessTimer === undefined) return
+  window.clearTimeout(readinessTimer)
+  readinessTimer = undefined
+}
+
+function scheduleReadinessPoll(delayMs: number): void {
+  stopReadinessPolling()
+  const generation = ++readinessPollGeneration
+  readinessTimer = window.setTimeout(async () => {
+    if (generation !== readinessPollGeneration) return
+    if (document.visibilityState === 'hidden') {
+      scheduleReadinessPoll(delayMs)
+      return
+    }
+    await refreshReadiness()
+    const nextDelay = healthState.value === '服务正常' ? READINESS_POLL_OK_MS : READINESS_POLL_DEGRADED_MS
+    scheduleReadinessPoll(nextDelay)
+  }, delayMs)
+}
+
+function onReadinessVisibilityChange(): void {
+  if (document.visibilityState !== 'visible') return
+  void refreshReadiness()
+  scheduleReadinessPoll(healthState.value === '服务正常' ? READINESS_POLL_OK_MS : READINESS_POLL_DEGRADED_MS)
+}
+
 // OIDC 往返地址只允许本站的授权端点，避免 return_to 成为开放重定向。
 const loginReturnTo = (() => {
   const raw = new URLSearchParams(window.location.search).get('return_to') || ''
@@ -137,8 +171,10 @@ let systemThemeQuery: MediaQueryList | null = null
 function onSystemThemeChange(event: MediaQueryListEvent): void {
   systemPrefersDark.value = event.matches
 }
-async function loadPage(): Promise<void> {
+async function loadPage(force = false): Promise<void> {
   if (!token.value || consoleMode.value !== 'platform' || page.value !== 'overview') return
+  // 登录初始化已写入 overview 时，路由同步不再重复请求。
+  if (!force && overview.value) return
   const requestSequence = ++pageRequestSequence
   loading.value = true
   try {
@@ -149,8 +185,9 @@ async function loadPage(): Promise<void> {
   } finally { if (requestSequence === pageRequestSequence) loading.value = false }
 }
 
-async function loadDictionaries(): Promise<void> {
+async function loadDictionaries(force = false): Promise<void> {
   if (consoleMode.value !== 'platform' || dictionariesLoading.value) return
+  if (dictionariesReady.value && !force) return
   dictionariesLoading.value = true
   try {
     const [tenantRows, applicationRows, roles] = await Promise.all([
@@ -160,10 +197,13 @@ async function loadDictionaries(): Promise<void> {
     applications.value = applicationRows
     roleOptions.value = roles
     dictionariesNeedRetry.value = false
+    dictionariesReady.value = true
+    platformCatalogGeneration.value += 1
     if (applications.value.length && !themeAppId.value) themeAppId.value = String(applications.value[0].id)
   } catch {
     // 初始化时字典读取失败会禁用创建入口；保留重试标记，后续导航时重新拉取。
     dictionariesNeedRetry.value = true
+    dictionariesReady.value = false
     message.warning('租户、应用或角色目录暂时无法读取；切换页面后会自动重试。')
   } finally {
     dictionariesLoading.value = false
@@ -274,12 +314,15 @@ async function signOut(): Promise<void> {
   try { await api('/auth/logout', { method: 'POST' }) } catch { /* 令牌过期时本地仍须可退出。 */ }
   setToken(null); token.value = null; currentUser.value = null
   consoleMode.value = 'platform'; tenants.value = []; applications.value = []; roleOptions.value = []
+  dictionariesReady.value = false
+  platformCatalogGeneration.value = 0
+  overview.value = null
 }
 
 function setPage(next: PageKey): void {
   if (!visibleNavigation.value.some(item => item.key === next)) return
   void router.push(PAGE_PATHS[next])
-  if (dictionariesNeedRetry.value) void loadDictionaries()
+  if (dictionariesNeedRetry.value) void loadDictionaries(true)
 }
 
 // 路由变化时维护 visitedPages、概览刷新与导航纠正。
@@ -291,7 +334,8 @@ function syncRoutePage(next: PageKey, previous?: PageKey): void {
     return
   }
   visitedPages.value.add(next)
-  void loadPage()
+  // 仅进入工作台时刷新概览，避免每次路由切换都打 /admin/overview。
+  if (next === 'overview') void loadPage()
   if (previous && previous !== next) window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -318,9 +362,10 @@ onMounted(async () => {
   // api.ts 已清除本标签页 token 并广播其他标签页；此处只更新 Vue 状态，避免收到远端事件后再次广播。
   window.addEventListener('iam:unauthorized', () => { token.value = null; currentUser.value = null })
   // 状态探测与认证会话恢复并行，探针慢或失败不阻塞后台登录。
-  void refreshReadiness()
-  // 运行期间可能发生数据库/迁移状态变化；定时重查并避免保留过时的绿色状态。
-  readinessTimer = window.setInterval(() => { void refreshReadiness() }, 30_000)
+  document.addEventListener('visibilitychange', onReadinessVisibilityChange)
+  void refreshReadiness().then(() => {
+    scheduleReadinessPoll(healthState.value === '服务正常' ? READINESS_POLL_OK_MS : READINESS_POLL_DEGRADED_MS)
+  })
   if (token.value) {
     sessionBootstrapping.value = true
     try {
@@ -340,7 +385,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   systemThemeQuery?.removeEventListener('change', onSystemThemeChange)
-  if (readinessTimer !== undefined) window.clearInterval(readinessTimer)
+  document.removeEventListener('visibilitychange', onReadinessVisibilityChange)
+  stopReadinessPolling()
 })
 </script>
 
@@ -377,6 +423,20 @@ onUnmounted(() => {
 
         <section class="content">
           <router-view aria-hidden="true" class="hidden" />
+          <a-card v-if="consoleMode === 'no_access'" :bordered="false" class="data-card">
+            <a-alert type="error" show-icon message="当前账号尚未获得管理权限"
+              description="请联系平台管理员，为你的租户角色授予 iam.organization.read、iam.organization.manage、iam.application.read 或 iam.application.manage 权限。" />
+          </a-card>
+          <template v-else>
+          <div v-if="visitedPages.has('overview')" v-show="page === 'overview'">
+            <OverviewPage
+              :overview="overview"
+              :health-state="healthState"
+              :loading="loading"
+              @navigate="setPage"
+              @refresh="() => loadPage(true)"
+            />
+          </div>
           <div v-if="visitedPages.has('project_integration')" v-show="page === 'project_integration'">
             <ProjectIntegrationPage :active="page === 'project_integration'" />
           </div>
@@ -392,13 +452,20 @@ onUnmounted(() => {
             <ModelGovernancePage :active="page === 'models' || page === 'model_usage'" :view="page === 'models' ? 'catalog' : 'usage'" />
           </div>
           <div v-if="visitedPages.has('tenants')" v-show="page === 'tenants'">
-            <TenantManagement :active="page === 'tenants'" @changed="loadDictionaries" />
+            <TenantManagement
+              :active="page === 'tenants'"
+              :shell-catalog-generation="platformCatalogGeneration"
+              :shell-tenants="consoleMode === 'platform' ? tenants : null"
+              @changed="() => loadDictionaries(true)"
+            />
           </div>
           <div v-if="visitedPages.has('applications')" v-show="page === 'applications'">
             <ApplicationManagement :active="page === 'applications'"
               :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
+              :shell-catalog-generation="platformCatalogGeneration"
+              :shell-applications="consoleMode === 'platform' ? applications : null"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
-              @changed="consoleMode === 'platform' ? loadDictionaries() : undefined" />
+              @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined" />
           </div>
           <div v-if="visitedPages.has('audit')" v-show="page === 'audit'">
             <AuditLogPage :active="page === 'audit'" />
@@ -413,9 +480,11 @@ onUnmounted(() => {
           <div v-if="visitedPages.has('roles')" v-show="page === 'roles'">
             <RoleManagement
               :active="page === 'roles'"
+              :shell-catalog-generation="platformCatalogGeneration"
+              :shell-roles="consoleMode === 'platform' ? roleOptions : null"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
               :applications="applications.map(application => ({ id: String(application.id), tenant_id: String(application.tenant_id), name: String(application.name), status: String(application.status) }))"
-              @changed="loadDictionaries"
+              @changed="() => loadDictionaries(true)"
             />
           </div>
           <div v-if="visitedPages.has('permissions')" v-show="page === 'permissions'">
@@ -425,9 +494,9 @@ onUnmounted(() => {
             <UserManagement :active="page === 'users'"
               :current-user-id="String(currentUser?.id || '')"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
-              @changed="loadDictionaries" />
+              @changed="() => loadDictionaries(true)" />
           </div>
-          <div v-if="visitedPages.has('organizations') && consoleMode !== 'no_access'" v-show="page === 'organizations'">
+          <div v-if="visitedPages.has('organizations')" v-show="page === 'organizations'">
             <OrganizationManagement :active="page === 'organizations'"
               :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true, can_manage_organizations: consoleMode === 'platform' || tenant.can_manage_organizations === true }))" />
@@ -442,47 +511,6 @@ onUnmounted(() => {
             <TenantAccessManagement :active="page === 'tenant_access'"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_organizations: tenant.can_read_organizations === true, can_manage_organizations: tenant.can_manage_organizations === true }))" />
           </div>
-          <template v-if="page === 'overview'">
-            <OverviewPage
-              :overview="overview"
-              :health-state="healthState"
-              :loading="loading"
-              @navigate="setPage"
-              @refresh="loadPage"
-            />
-          </template>
-          <a-card v-if="consoleMode === 'no_access'" :bordered="false" class="data-card">
-            <a-alert type="error" show-icon message="当前账号尚未获得管理权限"
-              description="请联系平台管理员，为你的租户角色授予 iam.organization.read、iam.organization.manage、iam.application.read 或 iam.application.manage 权限。" />
-          </a-card>
-
-          <template v-else-if="page === 'themes'">
-            <!-- 主题页面由上方保持挂载的领域组件渲染，切换导航时保留未保存草稿。 -->
-          </template>
-          <template v-else-if="page === 'tenants'">
-            <!-- 租户列表、创建与启停由独立领域组件负责。 -->
-          </template>
-          <template v-else-if="page === 'applications'">
-            <!-- OAuth 应用登记、信任策略和一次性客户端密钥由独立领域组件负责。 -->
-          </template>
-          <template v-else-if="page === 'audit'">
-            <!-- 只读审计查询和筛选由独立审计 feature 负责。 -->
-          </template>
-          <template v-else-if="page === 'invitations'">
-            <!-- 邀请列表、创建、撤销和一次性链接由独立领域组件负责；接受邀请仍属于公开认证流程。 -->
-          </template>
-          <template v-else-if="page === 'roles'">
-            <!-- 角色目录、通用权限变更预览和数据范围由独立授权领域组件负责。 -->
-          </template>
-          <template v-else-if="page === 'permissions'">
-            <!-- 权限编码目录由独立权限目录 feature 管理。 -->
-          </template>
-          <template v-else-if="page === 'users' || page === 'organizations'">
-            <!-- 用户和组织管理由独立领域 feature 管理。 -->
-          </template>
-          <template v-else-if="page === 'tenant_access'">
-            <!-- 租户成员组织归属和角色数据范围由租户权限 feature 管理。 -->
-          </template>
           <div v-if="visitedPages.has('groups')" v-show="page === 'groups'">
             <GroupManagement
               :active="page === 'groups'"
@@ -497,12 +525,8 @@ onUnmounted(() => {
               :seed-applications="consoleMode === 'platform' ? applications : []"
             />
           </div>
-          <template v-else-if="page === 'models' || page === 'model_usage'">
-            <!-- 模型目录与用量界面由保持挂载的模型治理 feature 负责。 -->
-          </template>
-
-          <template v-else />
           <footer class="page-footer"><span>统一身份与权限管理平台</span><span>{{ page === 'authorization_simulation' ? '授权模拟只读，不会修改策略' : '管理变更由服务端鉴权并写入审计' }}</span></footer>
+          </template>
         </section>
       </main>
     </div>

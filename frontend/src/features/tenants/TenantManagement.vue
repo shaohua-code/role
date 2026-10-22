@@ -12,8 +12,14 @@ interface Tenant {
   member_count: number
 }
 
-const props = defineProps<{ active: boolean }>()
+const props = defineProps<{
+  active: boolean
+  shellTenants?: Tenant[] | null
+  shellCatalogGeneration?: number
+}>()
 const emit = defineEmits<{ changed: [] }>()
+
+let hydratedCatalogGeneration = -1
 
 const tenants = ref<Tenant[]>([])
 const loading = ref(false)
@@ -37,6 +43,15 @@ const columns = [
   { title: '状态', dataIndex: 'status', key: 'status', width: 100 },
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 245, fixed: 'right' as const },
 ]
+
+function hydrateFromShell(): boolean {
+  if (props.shellTenants == null) return false
+  const generation = props.shellCatalogGeneration ?? -1
+  if (generation < 0 || generation === hydratedCatalogGeneration) return false
+  tenants.value = props.shellTenants
+  hydratedCatalogGeneration = generation
+  return true
+}
 
 async function loadTenants(): Promise<void> {
   const sequence = ++requestSequence
@@ -116,7 +131,16 @@ function changeStatus(tenant: Tenant): void {
   else void update()
 }
 
-watch(() => props.active, active => { if (active) void loadTenants() }, { immediate: true })
+watch(() => props.active, active => {
+  if (!active) return
+  // 平台壳已预拉租户目录时复用，避免路由激活重复请求 /admin/tenants。
+  if (hydrateFromShell()) return
+  void loadTenants()
+}, { immediate: true })
+
+watch(() => [props.shellCatalogGeneration, props.shellTenants?.length] as const, () => {
+  if (props.active) hydrateFromShell()
+})
 </script>
 
 <template>

@@ -39,8 +39,12 @@ const props = defineProps<{
   active: boolean
   tenants: TenantOption[]
   applications: ApplicationOption[]
+  shellRoles?: RoleRecord[] | null
+  shellCatalogGeneration?: number
 }>()
 const emit = defineEmits<{ changed: [] }>()
+
+let hydratedCatalogGeneration = -1
 
 const roles = ref<RoleRecord[]>([])
 const tenantFilter = ref('')
@@ -106,6 +110,15 @@ const columns = [
   { title: '说明', dataIndex: 'description', key: 'description', width: 240, ellipsis: true },
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 470, fixed: 'right' as const },
 ]
+
+function hydrateFromShell(): boolean {
+  if (props.shellRoles == null) return false
+  const generation = props.shellCatalogGeneration ?? -1
+  if (generation < 0 || generation === hydratedCatalogGeneration) return false
+  roles.value = props.shellRoles
+  hydratedCatalogGeneration = generation
+  return true
+}
 
 async function loadRoles(): Promise<void> {
   if (!props.active) return
@@ -551,8 +564,15 @@ function applicationName(id: string | null): string {
 }
 
 watch(() => props.active, active => {
-  if (active) void loadRoles()
+  if (!active) return
+  // 平台壳已预拉角色目录时复用，避免路由激活重复请求 /admin/roles。
+  if (hydrateFromShell()) return
+  void loadRoles()
 }, { immediate: true })
+
+watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, () => {
+  if (props.active) hydrateFromShell()
+})
 </script>
 
 <template>
