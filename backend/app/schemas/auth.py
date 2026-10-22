@@ -131,6 +131,28 @@ class AdminUserCreate(BaseModel):
     role_id: UUID | None = None
 
 
+class PublicRegistrationCapabilities(BaseModel):
+    """匿名登录页可展示的注册策略摘要；不含 client secret 或草稿主题。"""
+
+    available: bool
+    resend_cooldown_seconds: int
+    terms_url: str
+    privacy_url: str
+    terms_version: str
+    privacy_version: str
+
+
+class ConsoleRegistrationContext(BaseModel):
+    client_id: str
+    application_name: str
+    registration: PublicRegistrationCapabilities
+
+
+class AuthPublicCapabilities(BaseModel):
+    password_reset_available: bool
+    console_registration: ConsoleRegistrationContext | None = None
+
+
 class UserStatusUpdate(BaseModel):
     """携带页面读取时的全局账号状态，阻止过期管理页覆盖新状态。"""
 

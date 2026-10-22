@@ -26,8 +26,9 @@ from app.models.identity import (AuditEvent, PasswordResetThrottle, PasswordRese
 from app.models.authorization import Role, RoleBinding
 from app.models.identity import UserInvitation
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRefreshToken
-from app.schemas.auth import (AcceptInvitationRequest, AuthResponse, InvitationTokenRequest,
-                              LoginRequest, PasswordResetComplete, PasswordResetRequest,
+from app.schemas.auth import (AcceptInvitationRequest, AuthPublicCapabilities, AuthResponse,
+                              ConsoleRegistrationContext, InvitationTokenRequest, LoginRequest,
+                              PasswordResetComplete, PasswordResetRequest, PublicRegistrationCapabilities,
                               RegisterRequest, RegisterVerifyRequest, UserResponse)
 from app.services.email import send_password_reset_email
 from app.services.login_throttle import (begin_login_attempt, clear_login_identifier_failures,
@@ -447,6 +448,31 @@ def refresh_session(
     db.commit()
     set_refresh_cookie(response, rotated_token, session_expiry)
     return AuthResponse(access_token=create_access_token(user, session_id), expires_in=get_settings().access_token_minutes * 60, user=user)
+
+
+@router.get("/public-capabilities", response_model=AuthPublicCapabilities)
+def public_capabilities(db: Session = Depends(get_db_session)) -> AuthPublicCapabilities:
+    """公开认证页读取邮件找回与管理台注册入口是否可用，不泄漏密钥或内部配置。"""
+    settings = get_settings()
+    password_reset_available = bool(settings.smtp_host and settings.smtp_from)
+    console_registration = None
+    if settings.console_registration_client_id:
+        application = db.scalar(select(Application).where(
+            Application.client_id == settings.console_registration_client_id,
+            Application.status == "active",
+        ))
+        if application:
+            details = application_registration_details(db, application, settings=settings)
+            if details:
+                console_registration = ConsoleRegistrationContext(
+                    client_id=application.client_id,
+                    application_name=application.name,
+                    registration=PublicRegistrationCapabilities(**details),
+                )
+    return AuthPublicCapabilities(
+        password_reset_available=password_reset_available,
+        console_registration=console_registration,
+    )
 
 
 @router.post("/password-reset/request")

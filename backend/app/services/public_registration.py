@@ -228,6 +228,7 @@ def request_registration_code(
         db.commit()
         return False
 
+    email_hash = registration_email_hash(settings, application.id, email)
     challenge = db.scalar(select(PublicRegistrationChallenge).where(
         PublicRegistrationChallenge.application_id == application.id,
         PublicRegistrationChallenge.email_hash == email_hash,

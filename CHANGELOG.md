@@ -1,5 +1,18 @@
 # 变更日志
 
+## 2026-10-22 IAM P326 — 邮箱登录/找回/管理台注册完善
+
+- **后端：** 新增 `GET /api/v1/auth/public-capabilities`（SMTP 找回是否可用、管理台绑定的 ToC 注册 client）；配置项 `IAM_CONSOLE_REGISTRATION_CLIENT_ID`。
+- **前端：** `AuthEntry` 统一「邮箱地址」登录文案；保留域校验；忘记密码预填邮箱与 SMTP 未配置提示；管理台「邮箱注册」入口（绑定 client 时）。
+- **脚本：** `scripts/provision_dev_console_registration.py` 幂等创建 `iam-dev-console-reg` 试点应用。
+- **验证：** 容器 unittest 6/6；`vue-tsc -b` 通过；`public-capabilities` 返回 `console_registration.available=true`（本地 dev）。
+
+## 2026-10-22 IAM P325 — 163 SMTP 阶段一接入
+
+- **配置与示例：** [`.env.compose.example`](.env.compose.example) 163 SMTP 示例脱敏（授权码占位、邮箱示例泛化）；真实授权码仅写入本地 `.env`。
+- **运行验证：** 重建 API 容器后 163 **465+SSL** 试发与忘记密码申请接口 200；容器内邮件/密码重置单元测试 4/4；邀请创建 `delivery=email_sent`（验收时开启 `IAM_INVITATION_EMAIL_ENABLED`）。
+- **文档：** [验收记录](docs/验收记录.md) P325、[快速启动指南](docs/快速启动指南.md) SMTP 小节、[项目总览与进度](docs/项目总览与进度.md) P325 任务行。
+
 ## 2026-10-22 IAM P324 — P302 浏览器 Network 走查
 
 - **走查：** 平台管理员登录 5175；路由 **租户 → 角色 → 工作台** 切换时，页面内 `fetch` 探针未再出现 `/admin/overview|tenants|applications|roles` 重复请求。

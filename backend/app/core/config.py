@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     smtp_timeout_seconds: int = Field(default=10, ge=1, le=30)
     password_reset_token_minutes: int = Field(default=30, ge=5, le=120)
     password_reset_cooldown_seconds: int = Field(default=60, ge=30, le=3600)
+    # 管理台登录页可选绑定一个 OAuth client，用于在控制台展示 ToC 邮箱注册（仍受全局与应用策略约束）。
+    console_registration_client_id: str | None = None
     # 注册 challenge、邮箱键与 OTP 使用独立稳定密钥，避免 JWT 签名密钥轮换使验证码失效。
     public_registration_secret: str = ""
     public_registration_code_minutes: int = Field(default=10, ge=3, le=30)

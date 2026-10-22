@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from '
 import { message } from 'ant-design-vue'
 import type { Rule } from 'ant-design-vue/es/form'
 import { ApiRequestError, api, setToken } from '../../shared/services/api'
+import { fetchAuthPublicCapabilities, type AuthPublicCapabilities } from '../../shared/services/authCapabilities'
+import { validateReservedEmailDomain } from '../../shared/utils/emailValidation'
 import { resolveThemeAssetUrl, themeCardShadow, themeChoice, themeFontFamily, themeHex, themeNumber, themeRgba } from '../../shared/theme'
 
 type AuthenticatedSession = {
@@ -61,12 +63,16 @@ const resetCompleteForm = reactive({ password: '', confirmPassword: '' })
 const invitationForm = reactive({ password: '' })
 const registrationForm = reactive({ email: '', display_name: '', password: '', code: '', accepted_terms: false, accepted_privacy: false })
 // 表单规则只改善即时反馈；API schema 与服务端策略仍是最终校验边界。
+const emailFieldRules: Rule[] = [
+  { required: true, type: 'email', max: 254, message: '请输入有效邮箱', trigger: 'blur' },
+  { validator: validateReservedEmailDomain, trigger: 'blur' },
+]
 const loginRules: Record<string, Rule[]> = {
-  email: [{ required: true, type: 'email', max: 254, message: '请输入有效邮箱', trigger: 'blur' }],
+  email: emailFieldRules,
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 const resetRequestRules: Record<string, Rule[]> = {
-  email: [{ required: true, type: 'email', max: 254, message: '请输入有效邮箱', trigger: 'blur' }],
+  email: emailFieldRules,
 }
 const invitationRules: Record<string, Rule[]> = {
   // 被邀请人可能已有 IAM 账号，因此这里只要求填写，不强制套用新账号密码长度。
@@ -89,7 +95,7 @@ const resetCompleteRules: Record<string, Rule[]> = {
   ],
 }
 const registrationRequestRules: Record<string, Rule[]> = {
-  email: [{ required: true, type: 'email', max: 254, message: '请输入有效邮箱', trigger: 'blur' }],
+  email: emailFieldRules,
   display_name: [{ required: true, whitespace: true, max: 120, message: '请输入 1–120 个字符的姓名', trigger: 'blur' }],
 }
 const registrationVerifyRules: Record<string, Rule[]> = {
@@ -114,16 +120,30 @@ const consentPreview = ref<ConsentPreview | null>(null)
 const consentLoading = ref(false)
 const consentSubmitting = ref(false)
 const loginApplication = ref<LoginApplication | null>(null)
+const authCapabilities = ref<AuthPublicCapabilities | null>(null)
 
 const oidcClientId = computed(() => {
   if (!loginReturnTo.value) return ''
   return new URLSearchParams(loginReturnTo.value.split('?', 2)[1] || '').get('client_id') || ''
 })
+// 管理台可绑定独立 OAuth client，复用同一套邮箱 OTP 注册流程。
+const consoleRegistrationClientId = computed(() => authCapabilities.value?.console_registration?.client_id || '')
+const registrationClientId = computed(() => oidcClientId.value || consoleRegistrationClientId.value)
 const oidcTheme = computed(() => loginApplication.value?.theme || {})
-const registrationAvailable = computed(() => Boolean(
-  oidcFlow.value && loginApplication.value?.registration?.available && oidcTheme.value.show_register === true,
-))
 const oidcFlow = computed(() => Boolean(loginReturnTo.value || consentTicket.value))
+const registrationAvailable = computed(() => {
+  const registration = loginApplication.value?.registration
+  if (!registration?.available || !registrationClientId.value) return false
+  if (oidcFlow.value) return oidcTheme.value.show_register === true
+  return Boolean(consoleRegistrationClientId.value)
+})
+const passwordResetAvailable = computed(() => authCapabilities.value?.password_reset_available ?? true)
+const consoleLoginNote = computed(() => {
+  if (registrationAvailable.value) {
+    return '可使用邮箱注册普通账号；注册不会自动获得平台管理员权限。平台管理员仍由部署引导或邀请创建。'
+  }
+  return '公开注册当前未开放，新用户请联系平台管理员获取邀请；首个平台管理员由部署引导命令创建。'
+})
 const oidcPrimaryColor = computed(() => /^#[\da-f]{6}$/i.test(String(oidcTheme.value.primary_color || ''))
   ? String(oidcTheme.value.primary_color) : '#756df2')
 const oidcLogoUrl = computed(() => resolveThemeAssetUrl(oidcTheme.value.logo_url))
@@ -169,13 +189,42 @@ const consentScopeText: Record<string, string> = {
   offline_access: '在你离开后通过刷新令牌保持登录（可随时撤销应用会话）',
 }
 
-async function loadLoginApplication(): Promise<void> {
-  if (!authActionsAvailable.value || !oidcClientId.value) return
+async function loadAuthCapabilities(): Promise<void> {
+  if (!authActionsAvailable.value) return
   try {
-    loginApplication.value = await api<LoginApplication>(`/oidc/login-context?client_id=${encodeURIComponent(oidcClientId.value)}`)
+    authCapabilities.value = await fetchAuthPublicCapabilities()
+    const consoleRegistration = authCapabilities.value.console_registration
+    if (!oidcClientId.value && consoleRegistration) {
+      loginApplication.value = {
+        application_name: consoleRegistration.application_name,
+        client_id: consoleRegistration.client_id,
+        theme: {},
+        registration: consoleRegistration.registration,
+      }
+    }
+  } catch {
+    authCapabilities.value = null
+  }
+}
+
+async function loadLoginApplication(): Promise<void> {
+  if (!authActionsAvailable.value || !registrationClientId.value) return
+  if (!oidcClientId.value && consoleRegistrationClientId.value) return
+  try {
+    loginApplication.value = await api<LoginApplication>(`/oidc/login-context?client_id=${encodeURIComponent(registrationClientId.value)}`)
   } catch {
     message.error('无法读取应用登录配置，请联系管理员')
   }
+}
+
+function openForgotPasswordMode(): void {
+  // 从登录页进入找回时预填邮箱，减少重复输入。
+  if (loginForm.email.trim()) resetRequestForm.email = loginForm.email.trim()
+  forgotPasswordMode.value = true
+}
+
+function openRegisterMode(): void {
+  registerMode.value = true
 }
 
 async function login(): Promise<void> {
@@ -207,22 +256,19 @@ async function login(): Promise<void> {
 async function requestRegistrationCode(): Promise<void> {
   if (!requireAuthService()) return
   const registration = loginApplication.value?.registration
-  if (!oidcClientId.value || !registrationAvailable.value || !registration) return
-  if (!registrationForm.accepted_terms || !registrationForm.accepted_privacy) {
-    message.warning('请先阅读并接受用户协议与隐私政策')
-    return
-  }
+  if (!registrationClientId.value || !registrationAvailable.value || !registration) return
   const isResend = registrationCodeRequested.value
   registrationRequestLoading.value = true
   try {
     const result = await api<{ message: string }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({
-        client_id: oidcClientId.value,
+        client_id: registrationClientId.value,
         email: registrationForm.email,
         display_name: registrationForm.display_name.trim(),
-        accepted_terms: registrationForm.accepted_terms,
-        accepted_privacy: registrationForm.accepted_privacy,
+        // 公开登录页不展示勾选框；发送验证码即表示同意当前版本协议（与服务端 RegisterRequest 一致）。
+        accepted_terms: true,
+        accepted_privacy: true,
         terms_version: registration.terms_version,
         privacy_version: registration.privacy_version,
         terms_url: registration.terms_url,
@@ -252,12 +298,12 @@ async function requestRegistrationCode(): Promise<void> {
 
 async function verifyRegistrationCode(): Promise<void> {
   if (!requireAuthService()) return
-  if (!oidcClientId.value || !registrationCodeRequested.value) return
+  if (!registrationClientId.value || !registrationCodeRequested.value) return
   registrationVerifyLoading.value = true
   try {
     const result = await api<AuthenticatedSession>('/auth/register/verify', {
       method: 'POST',
-      body: JSON.stringify({ client_id: oidcClientId.value, email: registrationForm.email, code: registrationForm.code, password: registrationForm.password }),
+      body: JSON.stringify({ client_id: registrationClientId.value, email: registrationForm.email, code: registrationForm.code, password: registrationForm.password }),
     })
     registrationForm.password = ''
     registrationForm.code = ''
@@ -411,6 +457,7 @@ async function decideConsent(approved: boolean): Promise<void> {
 watch(readinessState, state => {
   if (state !== '服务正常') return
   if (invitationToken.value) void loadInvitation()
+  void loadAuthCapabilities()
   void loadLoginApplication()
   if (consentTicket.value) void loadConsent()
 }, { immediate: true })
@@ -459,15 +506,18 @@ onUnmounted(() => {
           </a-form>
         </template>
         <template v-else-if="registerMode">
-          <p class="eyebrow">CREATE YOUR ACCOUNT</p><h1 :style="{ color: themeHex(oidcTheme.title_color, '#202a3b') }">注册 {{ loginApplication?.application_name || '应用账号' }}</h1>
-          <p class="login-subtitle">验证邮箱后即可创建账号。账号只获得此应用配置的基础角色。</p>
+          <p class="eyebrow">{{ oidcFlow ? 'CREATE YOUR ACCOUNT' : '邮箱注册' }}</p>
+          <h1 :style="{ color: themeHex(oidcTheme.title_color, '#202a3b') }">{{ oidcFlow ? `注册 ${loginApplication?.application_name || '应用'}` : '创建你的账号' }}</h1>
+          <p class="login-subtitle">{{ oidcFlow ? '验证邮箱后即可创建账号，仅获得此应用配置的基础角色。' : '验证邮箱后即可登录控制台；不会自动获得平台管理员权限。' }}</p>
           <a-form v-if="!registrationCodeRequested" :model="registrationForm" :rules="registrationRequestRules" layout="vertical" @finish="requestRegistrationCode">
             <a-form-item label="邮箱地址" name="email"><a-input v-model:value="registrationForm.email" type="email" size="large" autocomplete="email" :maxlength="254" placeholder="name@example.com" /></a-form-item>
-            <a-form-item label="姓名" name="display_name"><a-input v-model:value="registrationForm.display_name" size="large" autocomplete="name" :maxlength="120" /></a-form-item>
-            <div class="registration-consents">
-              <a-checkbox v-model:checked="registrationForm.accepted_terms"><span>我已阅读并接受</span> <a :href="loginApplication?.registration?.terms_url" target="_blank" rel="noopener noreferrer">用户协议</a></a-checkbox>
-              <a-checkbox v-model:checked="registrationForm.accepted_privacy"><span>我已阅读并接受</span> <a :href="loginApplication?.registration?.privacy_url" target="_blank" rel="noopener noreferrer">隐私政策</a></a-checkbox>
-            </div>
+            <a-form-item label="姓名" name="display_name"><a-input v-model:value="registrationForm.display_name" size="large" autocomplete="name" :maxlength="120" placeholder="如何称呼你" /></a-form-item>
+            <p v-if="loginApplication?.registration?.terms_url && loginApplication?.registration?.privacy_url" class="registration-legal-hint">
+              点击发送即表示你已阅读并同意
+              <a :href="loginApplication.registration.terms_url" target="_blank" rel="noopener noreferrer">用户协议</a>
+              与
+              <a :href="loginApplication.registration.privacy_url" target="_blank" rel="noopener noreferrer">隐私政策</a>。
+            </p>
             <a-button type="primary" html-type="submit" size="large" block :loading="registrationRequestLoading" :disabled="!authActionsAvailable" :style="{ background: oidcPrimaryColor, borderColor: oidcPrimaryColor }">发送邮箱验证码</a-button>
           </a-form>
           <a-form v-else :model="registrationForm" :rules="registrationVerifyRules" layout="vertical" @finish="verifyRegistrationCode">
@@ -482,22 +532,25 @@ onUnmounted(() => {
         <template v-else-if="forgotPasswordMode">
           <p class="eyebrow">PASSWORD RECOVERY</p><h1>忘记密码</h1>
           <p class="login-subtitle">输入注册邮箱；如果邮箱已登记且邮件服务可用，我们会发送一次性重置链接。</p>
+          <a-alert v-if="!passwordResetAvailable" class="invitation-summary" type="warning" show-icon message="密码重置邮件服务暂未配置" description="请联系平台管理员配置 SMTP 后重试。" />
           <a-alert v-if="resetRequestSent" class="invitation-summary" type="success" show-icon message="请检查邮箱及垃圾邮件文件夹。为保护账号隐私，系统不会提示该邮箱是否已注册。" />
           <a-form :model="resetRequestForm" :rules="resetRequestRules" layout="vertical" @finish="requestPasswordReset">
             <a-form-item label="邮箱地址" name="email"><a-input v-model:value="resetRequestForm.email" type="email" size="large" autocomplete="email" :maxlength="254" placeholder="name@example.com" /></a-form-item>
-            <a-button type="primary" html-type="submit" size="large" block :loading="resetRequestLoading" :disabled="!authActionsAvailable">发送重置链接</a-button>
+            <a-button type="primary" html-type="submit" size="large" block :loading="resetRequestLoading" :disabled="!authActionsAvailable || !passwordResetAvailable">发送重置链接</a-button>
           </a-form>
           <a-button type="link" block @click="forgotPasswordMode = false">返回登录</a-button>
         </template>
-        <template v-else><p class="eyebrow">{{ loginReturnTo ? 'APPLICATION SIGN IN' : 'ADMIN CONSOLE' }}</p><h1 :style="oidcFlow ? { color: themeHex(oidcTheme.title_color, '#202a3b') } : {}">{{ loginReturnTo ? String(oidcTheme.title || `登录 ${loginApplication?.application_name || '应用'}`) : '欢迎回来' }}</h1><p class="login-subtitle">{{ loginReturnTo ? String(oidcTheme.welcome_text || '使用您的统一身份账号继续') : '使用管理员账号登录控制台' }}</p>
+        <template v-else><p class="eyebrow">{{ loginReturnTo ? 'APPLICATION SIGN IN' : 'ADMIN CONSOLE' }}</p><h1 :style="oidcFlow ? { color: themeHex(oidcTheme.title_color, '#202a3b') } : {}">{{ loginReturnTo ? String(oidcTheme.title || `登录 ${loginApplication?.application_name || '应用'}`) : '欢迎回来' }}</h1><p class="login-subtitle">{{ loginReturnTo ? String(oidcTheme.welcome_text || '使用邮箱与密码登录') : '使用邮箱与密码登录控制台' }}</p>
         <a-form :model="loginForm" :rules="loginRules" layout="vertical" @finish="login">
-          <a-form-item :label="loginReturnTo ? '邮箱地址' : '管理员邮箱'" name="email"><a-input v-model:value="loginForm.email" type="email" size="large" autocomplete="username" :maxlength="254" placeholder="name@example.com" /></a-form-item>
+          <a-form-item label="邮箱地址" name="email"><a-input v-model:value="loginForm.email" type="email" size="large" autocomplete="username" :maxlength="254" placeholder="name@example.com" /></a-form-item>
           <a-form-item label="密码" name="password"><a-input-password v-model:value="loginForm.password" size="large" autocomplete="current-password" placeholder="请输入密码" /></a-form-item>
           <a-button type="primary" html-type="submit" size="large" block :loading="loginLoading" :disabled="!authActionsAvailable" :style="loginReturnTo ? { background: oidcPrimaryColor, borderColor: oidcPrimaryColor } : undefined">{{ loginReturnTo ? `登录 ${loginApplication?.application_name || '应用'}` : '登录控制台' }}</a-button>
         </a-form>
-        <a-button v-if="!oidcFlow || oidcTheme.show_forgot_password !== false" type="link" block @click="forgotPasswordMode = true">忘记密码？</a-button>
-        <a-button v-if="registrationAvailable" type="link" block @click="registerMode = true">创建应用账号</a-button>
-        <div class="login-note">{{ loginReturnTo ? '登录后将安全返回原应用。' : '公开注册当前默认关闭，新用户请联系平台管理员获取邀请；首个平台管理员由部署引导命令创建。' }}</div>
+        <div class="login-secondary-actions">
+          <a-button v-if="!oidcFlow || oidcTheme.show_forgot_password !== false" type="link" @click="openForgotPasswordMode">忘记密码？</a-button>
+          <a-button v-if="registrationAvailable" type="link" @click="openRegisterMode">{{ oidcFlow ? '创建应用账号' : '邮箱注册' }}</a-button>
+        </div>
+        <div class="login-note">{{ loginReturnTo ? '登录后将安全返回原应用。' : consoleLoginNote }}</div>
         </template>
       </a-card>
     </div>
