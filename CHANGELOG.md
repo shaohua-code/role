@@ -1,5 +1,13 @@
 # 变更日志
 
+## 2026-10-22 IAM P333 — 应用与权限命名空间层级
+
+- **数据模型：** 迁移 `0032_application_permission_namespace`；`applications.permission_namespace`、`permissions.catalog_namespace`；归属规则 `code == namespace` 或 `code` 以 `namespace.` 开头。
+- **后端：** `permission_namespace` 服务模块；`GET/POST /admin/applications/{id}/permissions`；目录/应用角色 API 按命名空间过滤与 grant 校验；创建应用时可登记/推导命名空间。
+- **SDK：** Python/TS 权限清单同步 `POST` 附带 `catalog_namespace`。
+- **前端：** 应用管理「权限项」抽屉；权限目录页改为平台全览 + 命名空间筛选。
+- **验证：** 容器内 `tests.test_permission_namespace` 6 OK；`docker compose build console` 见进度文档；浏览器走查未在本轮复跑；开发库迁移未在本轮执行。
+
 ## 2026-10-22 IAM P332 — Console 镜像 echarts 与 AdminTableToolbar 类型修复
 
 - **修复：** `AdminTableToolbar.vue` 改用模板 `$slots.default`，消除 `useSlots()` 在 `vue-tsc -b` 下的 TS2554，解除 Docker 前端镜像构建阻塞。

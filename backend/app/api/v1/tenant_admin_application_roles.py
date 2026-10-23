@@ -27,6 +27,7 @@ from app.services.permission_impact import (
     apply_role_permissions,
     preview_role_permissions,
 )
+from app.services.permission_namespace import assert_application_grant_permissions, permission_matches_namespace
 
 
 router = APIRouter(tags=["应用角色与成员"])
@@ -99,12 +100,13 @@ def _role_payloads(roles: list[Role], db: Session) -> list[dict]:
     ]
 
 
-def _reject_new_iam_permissions(
+def _reject_ineligible_application_permissions(
+    application: Application,
     role: Role,
     proposed_permission_ids: list[UUID],
     db: Session,
 ) -> None:
-    """应用管理员可调整业务权限，不能借角色编辑新增 IAM 管理权限。"""
+    """应用角色只能绑定同命名空间业务权限，不能新增 IAM/platform 目录项。"""
     current_ids = set(db.scalars(select(RolePermission.permission_id).where(
         RolePermission.role_id == role.id,
         RolePermission.resource_id.is_(None),
@@ -114,8 +116,7 @@ def _reject_new_iam_permissions(
     ).with_for_update()).all() if proposed_permission_ids else []
     if len(proposed) != len(set(proposed_permission_ids)):
         raise HTTPException(422, "权限目录中存在无效权限")
-    if any(permission.code.startswith("iam.") and permission.id not in current_ids for permission in proposed):
-        raise HTTPException(403, "应用管理员不能新增 IAM 管理权限")
+    assert_application_grant_permissions(application.permission_namespace, proposed, current_ids)
 
 
 @router.get("/applications/{application_id}/roles")
@@ -237,22 +238,28 @@ def list_application_permissions(
     """只为当前应用内指定角色返回业务候选与其历史授权，避免角色间目录信息泄漏。"""
     application = _authorized_application(application_id, actor, db)
     role = _authorized_role(application, role_id, actor, db)
-    currently_assigned_ids = select(RolePermission.permission_id).where(
+    currently_assigned_ids = set(db.scalars(select(RolePermission.permission_id).where(
         RolePermission.role_id == role.id,
-    )
+    )).all())
+    namespace = application.permission_namespace
+    catalog_clauses = [
+        and_(Permission.status == "active", Permission.catalog_namespace == namespace),
+    ]
+    if currently_assigned_ids:
+        catalog_clauses.append(Permission.id.in_(currently_assigned_ids))
     rows = db.scalars(
         select(Permission)
-        .where(or_(
-            and_(Permission.status == "active", ~Permission.code.like("iam.%")),
-            Permission.id.in_(currently_assigned_ids),
-        ))
+        .where(or_(*catalog_clauses))
         .order_by(Permission.code)
         .limit(1000)
     ).all()
     return [{"id": str(permission.id), "code": permission.code,
+             "catalog_namespace": permission.catalog_namespace,
              "resource_type": permission.resource_type, "scope": permission.scope,
              "status": permission.status}
-            for permission in rows]
+            for permission in rows
+            if permission_matches_namespace(permission.code, namespace)
+            or permission.id in currently_assigned_ids]
 
 
 @router.get("/applications/{application_id}/roles/{role_id}/permissions")
@@ -285,7 +292,7 @@ def preview_application_role_permissions(
 ) -> dict:
     application = _authorized_application(application_id, actor, db, manage=True)
     role = _authorized_role(application, role_id, actor, db, manage=True, lock=True)
-    _reject_new_iam_permissions(role, body.permission_ids, db)
+    _reject_ineligible_application_permissions(application, role, body.permission_ids, db)
     try:
         return preview_role_permissions(role.id, body.permission_ids, db)
     except LookupError as error:
@@ -306,7 +313,7 @@ def replace_application_role_permissions(
     """只替换角色的通用业务权限；不改动实例级授权或数据范围策略。"""
     application = _authorized_application(application_id, actor, db, manage=True)
     role = _authorized_role(application, role_id, actor, db, manage=True, lock=True)
-    _reject_new_iam_permissions(role, body.permission_ids, db)
+    _reject_ineligible_application_permissions(application, role, body.permission_ids, db)
     try:
         impact = apply_role_permissions(
             role.id,

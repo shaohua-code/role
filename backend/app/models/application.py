@@ -25,6 +25,8 @@ class Application(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
     client_id: Mapped[str] = mapped_column(String(160), unique=True, index=True, nullable=False)
+    # 与 permissions.catalog_namespace 对齐；创建后不可通过管理 API 修改。
+    permission_namespace: Mapped[str] = mapped_column(String(100), nullable=False, index=True, default="app")
     client_secret_hash: Mapped[str | None] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))

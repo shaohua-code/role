@@ -3,7 +3,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ApplicationCreate(BaseModel):
@@ -16,6 +16,15 @@ class ApplicationCreate(BaseModel):
     # 服务端 schema 强制非空，不能依赖管理台表单阻止无回调客户端。
     redirect_uris: list[str] = Field(min_length=1, max_length=20)
     post_logout_redirect_uris: list[str] = Field(default_factory=list, max_length=20)
+    permission_namespace: str | None = Field(default=None, max_length=100)
+
+    @field_validator("permission_namespace", mode="before")
+    @classmethod
+    def trim_permission_namespace(cls, value):
+        if value is None or not isinstance(value, str):
+            return value
+        cleaned = value.strip().lower()
+        return cleaned or None
 
 
 class ApplicationUpdate(BaseModel):

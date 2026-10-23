@@ -22,6 +22,16 @@ export interface PermissionManifestEntry {
   resource_type: string
   scope: string
   description?: string
+  /** 可选；缺省时从 code 首段推导，须与 IAM catalog_namespace 规则一致 */
+  catalog_namespace?: string
+}
+
+function deriveCatalogNamespace(code: string): string {
+  const cleaned = code.trim()
+  if (cleaned.startsWith('iam.')) return 'platform'
+  const dot = cleaned.indexOf('.')
+  if (dot < 1) throw new Error(`permission code must contain a namespace segment: ${code}`)
+  return cleaned.slice(0, dot).toLowerCase()
 }
 
 /** 一次同步的结果分类；failed 非空时调用方应人工核对后重跑（幂等安全）。 */
@@ -70,8 +80,11 @@ export class IamAdminClient {
 
   /** 创建一条权限码；201 返回目录条目，409/422 等按 IamAdminError 抛出。 */
   async createPermission(managementToken: string, entry: PermissionManifestEntry): Promise<Record<string, unknown>> {
+    const catalogNamespace = entry.catalog_namespace?.trim().toLowerCase()
+      ?? deriveCatalogNamespace(entry.code)
     const payload: Record<string, unknown> = {
       code: entry.code,
+      catalog_namespace: catalogNamespace,
       resource_type: entry.resource_type,
       scope: entry.scope,
       ...(entry.description !== undefined ? { description: entry.description } : {}),
@@ -178,7 +191,7 @@ function validateManifest(manifest: PermissionManifestEntry[]): PermissionManife
     if (!item || typeof item !== 'object') {
       throw new Error('each manifest entry must be an object')
     }
-    const { code, resource_type: resourceType, scope, description } = item
+    const { code, resource_type: resourceType, scope, description, catalog_namespace: catalogNamespace } = item
     // 长度约束与后端 PermissionCreate 完全对齐，提前拦截无谓的 422。
     if (typeof code !== 'string' || code.length < 3 || code.length > 180) {
       throw new Error(`permission code must be a 3-180 char string: ${String(code)}`)
@@ -192,6 +205,15 @@ function validateManifest(manifest: PermissionManifestEntry[]): PermissionManife
     if (description !== undefined && (typeof description !== 'string' || description.length > 500)) {
       throw new Error(`description must be a string of at most 500 chars for ${code}`)
     }
+    const derivedNamespace = deriveCatalogNamespace(code)
+    if (catalogNamespace !== undefined) {
+      if (typeof catalogNamespace !== 'string' || catalogNamespace.length < 1 || catalogNamespace.length > 100) {
+        throw new Error(`catalog_namespace must be a 1-100 char string for ${code}`)
+      }
+      if (catalogNamespace.trim().toLowerCase() !== derivedNamespace) {
+        throw new Error(`catalog_namespace must match code prefix for ${code}`)
+      }
+    }
     if (seen.has(code)) {
       // 同一码出现两次属清单自相矛盾；不允许静默去重掩盖清单错误。
       throw new Error(`duplicate permission code in manifest: ${code}`)
@@ -201,6 +223,7 @@ function validateManifest(manifest: PermissionManifestEntry[]): PermissionManife
       code,
       resource_type: resourceType,
       scope,
+      catalog_namespace: catalogNamespace?.trim().toLowerCase() ?? derivedNamespace,
       ...(description !== undefined ? { description } : {}),
     })
   }

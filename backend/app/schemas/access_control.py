@@ -92,6 +92,7 @@ class PermissionCreate(BaseModel):
     resource_type: str = Field(min_length=1, max_length=100)
     scope: str = Field(min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=500)
+    catalog_namespace: str | None = Field(default=None, max_length=100)
 
 
 class PermissionStatusUpdate(BaseModel):

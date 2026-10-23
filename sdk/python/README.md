@@ -87,7 +87,7 @@ Current authorization client tests: 15 passed, including single-code contract an
 
 ## 权限清单同步工具（`iam_permission_sync.py`，P321）
 
-管理面组件——调用方必须持有**平台管理 access JWT**（HS256 management token）；终端用户 OIDC access token 会被 IAM 以 403 拒绝。`IamAdminClient` 覆盖 `GET/POST /api/v1/admin/permissions` 两个端点（标准库零依赖、固定超时、错误归一 `IamAdminError` 保留状态码）；`sync_permission_manifest` 把应用权限清单幂等同步到权限目录：
+管理面组件——调用方必须持有**平台管理 access JWT**（HS256 management token）；终端用户 OIDC access token 会被 IAM 以 403 拒绝。`IamAdminClient` 覆盖 `GET/POST /api/v1/admin/permissions` 两个端点（标准库零依赖、固定超时、错误归一 `IamAdminError` 保留状态码）；`sync_permission_manifest` 把应用权限清单幂等同步到权限目录。创建时会自动附带 `catalog_namespace`（与 `code` 首段一致，`iam.*` 为 `platform`），清单也可显式传 `catalog_namespace` 做预检。
 
 ```python
 from iam_permission_sync import IamAdminClient, sync_permission_manifest

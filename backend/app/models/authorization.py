@@ -3,10 +3,11 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func, Index, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, event, func, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.services.permission_namespace import derive_catalog_namespace_value
 
 
 class Role(Base):
@@ -47,6 +48,7 @@ class Permission(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     code: Mapped[str] = mapped_column(String(180), unique=True, index=True, nullable=False)
+    catalog_namespace: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     resource_type: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     scope: Mapped[str] = mapped_column(String(80), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))
@@ -54,6 +56,13 @@ class Permission(Base):
     status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
 
     grants: Mapped[list["RolePermission"]] = relationship(back_populates="permission")
+
+
+@event.listens_for(Permission, "before_insert")
+def _permission_catalog_namespace_default(_mapper, _connection, target: Permission) -> None:
+    """测试与旧代码路径未显式传 catalog_namespace 时，从 code 推导。"""
+    if not target.catalog_namespace:
+        target.catalog_namespace = derive_catalog_namespace_value(target.code)
 
 
 class RolePermission(Base):

@@ -64,7 +64,7 @@ mountOidcAuth(app, {
 })
 ```
 
-**Permission-catalog sync（`src/permission-sync.ts`，P321，零运行时依赖）:** 管理面组件——调用方必须持有**平台管理 access JWT**（HS256 management token）；终端用户 OIDC access token 会被 IAM 以 403 拒绝。`IamAdminClient` 覆盖 `GET/POST /api/v1/admin/permissions`（AbortController 超时、错误归一 `IamAdminError` 保留状态码）；`syncPermissionManifest` 把应用权限清单幂等同步到权限目录：清单先本地预检（字段/长度/重复码，非法即 `Error` 且零网络请求）→ 拉目录建 code 索引 → 只创建缺失项；已存在条目一律跳过，**不修改其描述或状态**。创建遇 409（并发窗口）重拉目录确认（已存在记 skipped，仍缺失保守记 failed）；单条失败不中断整批；目录不可达直接抛 `IamAdminError(503)`。与 Python `sync_permission_manifest`（P321）语义对称；工具不做角色授予。
+**Permission-catalog sync（`src/permission-sync.ts`，P321，零运行时依赖）:** 管理面组件——调用方必须持有**平台管理 access JWT**（HS256 management token）；终端用户 OIDC access token 会被 IAM 以 403 拒绝。`IamAdminClient` 覆盖 `GET/POST /api/v1/admin/permissions`（AbortController 超时、错误归一 `IamAdminError` 保留状态码）；`syncPermissionManifest` 把应用权限清单幂等同步到权限目录：清单先本地预检（字段/长度/重复码，非法即 `Error` 且零网络请求）→ 拉目录建 code 索引 → 只创建缺失项；已存在条目一律跳过，**不修改其描述或状态**。`POST` 创建时会附带 `catalog_namespace`（与 `code` 首段一致）；清单可显式传 `catalog_namespace` 做预检。创建遇 409（并发窗口）重拉目录确认（已存在记 skipped，仍缺失保守记 failed）；单条失败不中断整批；目录不可达直接抛 `IamAdminError(503)`。与 Python `sync_permission_manifest`（P321）语义对称；工具不做角色授予。
 
 ```ts
 import { IamAdminClient, syncPermissionManifest } from '@iam-platform/authorization-client'

@@ -32,6 +32,11 @@ from app.services.permission_impact import (
     apply_role_permissions,
     preview_role_permissions,
 )
+from app.services.permission_namespace import (
+    normalize_namespace,
+    permission_matches_namespace,
+    resolve_permission_namespace,
+)
 
 router = APIRouter(tags=["RBAC 权限管理"])
 
@@ -218,7 +223,20 @@ def bind_role(body: RoleBindingCreate, request: Request, actor: User = Depends(p
 
 
 @router.get("/permissions")
-def list_permissions(db: Session = Depends(get_db_session)) -> list[dict]:
+def list_permissions(
+    catalog_namespace: Annotated[str | None, Query(max_length=100)] = None,
+    application_id: UUID | None = None,
+    db: Session = Depends(get_db_session),
+) -> list[dict]:
+    namespace_filter: str | None = None
+    if application_id is not None:
+        application = db.get(Application, application_id)
+        if not application:
+            raise HTTPException(404, "应用不存在")
+        namespace_filter = application.permission_namespace
+    elif catalog_namespace:
+        namespace_filter = normalize_namespace(catalog_namespace)
+
     assigned_roles = (
         select(
             RolePermission.permission_id.label("permission_id"),
@@ -227,13 +245,17 @@ def list_permissions(db: Session = Depends(get_db_session)) -> list[dict]:
         .group_by(RolePermission.permission_id)
         .subquery()
     )
-    rows = db.execute(
+    statement = (
         select(Permission, func.coalesce(assigned_roles.c.assigned_role_count, 0))
         .outerjoin(assigned_roles, assigned_roles.c.permission_id == Permission.id)
-        .order_by(Permission.code)
+        .order_by(Permission.catalog_namespace, Permission.code)
         .limit(1000)
-    ).all()
+    )
+    if namespace_filter is not None:
+        statement = statement.where(Permission.catalog_namespace == namespace_filter)
+    rows = db.execute(statement).all()
     return [{"id": str(permission.id), "code": permission.code,
+             "catalog_namespace": permission.catalog_namespace,
              "resource_type": permission.resource_type, "scope": permission.scope,
              "description": permission.description, "status": permission.status,
              "assigned_role_count": int(assigned_role_count)}
@@ -242,9 +264,28 @@ def list_permissions(db: Session = Depends(get_db_session)) -> list[dict]:
 
 @router.post("/permissions", status_code=201)
 def create_permission(body: PermissionCreate, request: Request, actor: User = Depends(platform_admin), db: Session = Depends(get_db_session)) -> dict:
-    row = Permission(**body.model_dump()); db.add(row); flush_or_conflict(db)
-    audit(db, actor, request, "permission.create", "permission", str(row.id), {"code": row.code}); commit_or_conflict(db)
-    return {"id": str(row.id), "code": row.code, "resource_type": row.resource_type,
+    catalog_namespace = resolve_permission_namespace(
+        code=body.code,
+        catalog_namespace=body.catalog_namespace,
+    )
+    if not permission_matches_namespace(body.code, catalog_namespace):
+        raise HTTPException(422, "权限编码与 catalog_namespace 不匹配")
+    row = Permission(
+        code=body.code.strip(),
+        catalog_namespace=catalog_namespace,
+        resource_type=body.resource_type.strip(),
+        scope=body.scope.strip(),
+        description=body.description.strip() if body.description else None,
+    )
+    db.add(row)
+    flush_or_conflict(db)
+    audit(db, actor, request, "permission.create", "permission", str(row.id), {
+        "code": row.code,
+        "catalog_namespace": row.catalog_namespace,
+    })
+    commit_or_conflict(db)
+    return {"id": str(row.id), "code": row.code, "catalog_namespace": row.catalog_namespace,
+            "resource_type": row.resource_type,
             "scope": row.scope, "status": row.status, "assigned_role_count": 0}
 
 

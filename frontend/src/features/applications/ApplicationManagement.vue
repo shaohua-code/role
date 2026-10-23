@@ -4,13 +4,15 @@ import { message, Modal } from 'ant-design-vue'
 import { api } from '../../shared/services/api'
 import AdminPageHeader from '../../shared/components/AdminPageHeader.vue'
 import AdminTableToolbar from '../../shared/components/AdminTableToolbar.vue'
+import ApplicationPermissionDrawer from './ApplicationPermissionDrawer.vue'
 
 interface TenantOption {
   id: string; name: string; status: string; kind?: 'organization' | 'consumer'
   can_read_applications?: boolean; can_manage_applications?: boolean; can_rotate_application_secret?: boolean
 }
 interface Application {
-  id: string; tenant_id: string; name: string; client_id: string; description?: string | null
+  id: string; tenant_id: string; name: string; client_id: string; permission_namespace: string
+  description?: string | null
   trusted: boolean; status: 'active' | 'disabled'; redirect_uris: string[]
   post_logout_redirect_uris: string[]; created_at: string
   registration_policy: 'disabled' | 'open'; registration_role_id?: string | null
@@ -37,15 +39,25 @@ const saving = ref(false)
 const editingId = ref<string | null>(null)
 const formOpen = ref(false)
 const formRef = ref<{ validate: () => Promise<unknown> }>()
+const permissionDrawerOpen = ref(false)
+const permissionDrawerApplication = ref<Application | null>(null)
 const secretOpen = ref(false)
 const secretTitle = ref('保存应用客户端密钥')
 const oneTimeSecret = ref('')
 let requestSequence = 0
 const form = reactive({
-  tenant_id: '', client_id: '', name: '', description: '', redirect_uris: '', post_logout_redirect_uris: '',
+  tenant_id: '', client_id: '', name: '', description: '', permission_namespace: '', redirect_uris: '', post_logout_redirect_uris: '',
   registration_policy: 'disabled' as 'disabled' | 'open', registration_role_id: '',
   registration_terms_version: '', registration_privacy_version: '',
 })
+
+// 与后端 default_namespace_from_client_id 对齐：取 Client ID 首段分隔符前的字母数字段
+function defaultNamespaceFromClientId(clientId: string): string {
+  const raw = clientId.trim()
+  if (!raw) return ''
+  const segment = raw.split(/[._-]/)[0]?.toLowerCase() || ''
+  return /^[a-z0-9][a-z0-9._-]{0,99}$/.test(segment) ? segment : ''
+}
 const activeTenantOptions = computed(() => props.tenants
   .filter(tenant => tenant.status === 'active' && canManageTenant(tenant.id))
   .map(tenant => ({ value: tenant.id, label: `${tenant.name} · ${tenant.kind === 'consumer' ? 'ToC 消费' : '组织/企业'}` })))
@@ -63,7 +75,8 @@ const rules = {
 const columns = [
   { title: '应用名称', dataIndex: 'name', key: 'name', width: 190 },
   { title: '所属租户', dataIndex: 'tenant_id', key: 'tenant_id', width: 170 },
-  { title: 'Client ID', dataIndex: 'client_id', key: 'client_id', width: 200 },
+  { title: 'Client ID', dataIndex: 'client_id', key: 'client_id', width: 180 },
+  { title: '权限命名空间', dataIndex: 'permission_namespace', key: 'permission_namespace', width: 140 },
   { title: '登录回调', dataIndex: 'redirect_uris', key: 'redirect_uris', width: 115 },
   { title: '登出回调', dataIndex: 'post_logout_redirect_uris', key: 'post_logout_redirect_uris', width: 115 },
   { title: '授权模式', dataIndex: 'trusted', key: 'trusted', width: 130 },
@@ -142,9 +155,14 @@ async function loadApplications(): Promise<void> {
   } finally { if (sequence === requestSequence) loading.value = false }
 }
 
+function openApplicationPermissions(application: Application): void {
+  permissionDrawerApplication.value = application
+  permissionDrawerOpen.value = true
+}
+
 function resetForm(): void {
   Object.assign(form, {
-    tenant_id: activeTenantOptions.value[0]?.value || '', client_id: '', name: '', description: '',
+    tenant_id: activeTenantOptions.value[0]?.value || '', client_id: '', name: '', description: '', permission_namespace: '',
     redirect_uris: '', post_logout_redirect_uris: '',
     registration_policy: 'disabled', registration_role_id: '',
     registration_terms_version: '', registration_privacy_version: '',
@@ -162,6 +180,7 @@ async function editApplication(application: Application): Promise<void> {
   editingId.value = application.id
   Object.assign(form, {
     tenant_id: application.tenant_id, client_id: application.client_id, name: application.name,
+    permission_namespace: application.permission_namespace,
     description: application.description || '', redirect_uris: application.redirect_uris.join('\n'),
     post_logout_redirect_uris: application.post_logout_redirect_uris.join('\n'),
     registration_policy: application.registration_policy || 'disabled',
@@ -220,6 +239,7 @@ async function saveApplication(): Promise<void> {
         tenant_id: form.tenant_id, client_id: form.client_id.trim(), name: form.name.trim(),
         description: form.description.trim() || null, redirect_uris: redirectUris,
         post_logout_redirect_uris: logoutUris,
+        permission_namespace: form.permission_namespace.trim() || defaultNamespaceFromClientId(form.client_id) || undefined,
       }
   try {
     const result = await api<{ client_secret?: string }>(applicationPath(isEditing ? `/applications/${editingId.value}` : '/applications'), {
@@ -313,6 +333,12 @@ watch(() => props.active, active => {
 watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as const, () => {
   if (props.active) hydrateFromShell()
 })
+
+watch(() => form.client_id, clientId => {
+  if (editingId.value) return
+  const derived = defaultNamespaceFromClientId(clientId)
+  if (derived) form.permission_namespace = derived
+})
 </script>
 
 <template>
@@ -348,6 +374,7 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
           <template v-else-if="column.key === 'registration_policy'"><a-tag :color="record.registration_policy === 'open' ? 'blue' : 'default'">{{ record.registration_policy === 'open' ? '开放' : '关闭' }}</a-tag></template>
           <template v-else-if="column.key === 'created_at'">{{ new Date(record.created_at).toLocaleString() }}</template>
           <template v-else-if="column.key === 'actions'"><a-space :size="2">
+            <a-button type="link" size="small" @click="openApplicationPermissions(record)">权限项</a-button>
             <a-button v-if="canManageApplication(record)" type="link" size="small" @click="editApplication(record)">编辑</a-button>
             <a-button v-if="canRotateSecret(record)" type="link" size="small" @click="confirmSecretRotation(record)">轮换密钥</a-button>
             <a-button v-if="apiPrefix === '/admin'" type="link" size="small" @click="confirmTrustChange(record)">{{ record.trusted ? '撤销信任' : '设为受信' }}</a-button>
@@ -364,12 +391,16 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
         <template v-if="editingId">
           <a-form-item label="所属租户"><a-input :value="tenantName(form.tenant_id)" disabled /></a-form-item>
           <a-form-item label="Client ID"><a-input :value="form.client_id" disabled /></a-form-item>
+          <a-form-item label="权限命名空间"><a-input :value="form.permission_namespace" disabled /></a-form-item>
           <a-form-item label="登录回调地址"><a-textarea :value="form.redirect_uris" :rows="3" disabled /></a-form-item>
           <a-form-item label="退出回调地址"><a-textarea :value="form.post_logout_redirect_uris || '未配置'" :rows="2" disabled /></a-form-item>
         </template>
         <template v-else>
           <a-form-item label="所属租户" name="tenant_id"><a-select v-model:value="form.tenant_id" :options="activeTenantOptions" placeholder="选择所属租户" /></a-form-item>
           <a-form-item label="Client ID" name="client_id"><a-input v-model:value="form.client_id" :maxlength="160" /></a-form-item>
+          <a-form-item label="权限命名空间" required>
+            <a-input v-model:value="form.permission_namespace" :maxlength="100" placeholder="默认随 Client ID 首段推导，创建后不可修改" />
+          </a-form-item>
           <a-form-item label="登录回调地址（每行一个，最多 20 个）" required><a-textarea v-model:value="form.redirect_uris" :rows="4" placeholder="https://app.example.com/auth/callback" /></a-form-item>
           <a-form-item label="退出回调地址（每行一个，最多 20 个）"><a-textarea v-model:value="form.post_logout_redirect_uris" :rows="3" placeholder="https://app.example.com/logout/callback" /></a-form-item>
         </template>
@@ -391,6 +422,13 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
         <a-alert :message="editingId ? '编辑不会修改租户、Client ID、回调白名单、密钥和信任状态。' : '请核对回调白名单后再创建。新应用默认要求用户确认；Client Secret 只展示一次。回调地址创建后不可通过当前 API 修改。'" :type="editingId ? 'info' : 'warning'" show-icon />
       </a-form>
     </a-modal>
+
+    <ApplicationPermissionDrawer
+      v-model:open="permissionDrawerOpen"
+      :application="permissionDrawerApplication"
+      :api-prefix="apiPrefix"
+      @changed="emit('changed')"
+    />
 
     <a-modal v-model:open="secretOpen" :title="secretTitle" ok-text="我已安全保存"
       :cancel-button-props="{ style: { display: 'none' } }" @ok="clearOneTimeSecret" @after-close="clearOneTimeSecret">

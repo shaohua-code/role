@@ -35,6 +35,16 @@ class PermissionSyncReport:
     failed: tuple[tuple[str, str], ...]
 
 
+def _derive_catalog_namespace(code: str) -> str:
+    """与 IAM 服务端 derive_catalog_namespace_value 对齐。"""
+    cleaned = code.strip()
+    if cleaned.startswith("iam."):
+        return "platform"
+    if "." not in cleaned:
+        raise ValueError(f"permission code must contain a namespace segment: {code!r}")
+    return cleaned.split(".", maxsplit=1)[0].lower()
+
+
 class IamAdminClient:
     """IAM 管理面最小客户端；仅覆盖权限目录 list/create 两个端点。
 
@@ -65,9 +75,16 @@ class IamAdminClient:
         resource_type: str,
         scope: str,
         description: str | None = None,
+        catalog_namespace: str | None = None,
     ) -> dict[str, Any]:
         """创建一条权限码；201 返回目录条目，409/422 等按 IamAdminError 抛出。"""
-        payload: dict[str, Any] = {"code": code, "resource_type": resource_type, "scope": scope}
+        namespace = catalog_namespace or _derive_catalog_namespace(code)
+        payload: dict[str, Any] = {
+            "code": code,
+            "catalog_namespace": namespace,
+            "resource_type": resource_type,
+            "scope": scope,
+        }
         if description is not None:
             payload["description"] = description
         return self._request("POST", self.permissions_endpoint, management_token, payload)
@@ -127,6 +144,7 @@ def sync_permission_manifest(
                 resource_type=entry["resource_type"],
                 scope=entry["scope"],
                 description=entry.get("description"),
+                catalog_namespace=entry.get("catalog_namespace"),
             )
             created.append(code)
         except IamAdminError as error:
@@ -160,6 +178,7 @@ def _validate_manifest(manifest: Sequence[Mapping[str, Any]]) -> list[dict[str, 
         resource_type = item.get("resource_type")
         scope = item.get("scope")
         description = item.get("description")
+        catalog_namespace = item.get("catalog_namespace")
         # 长度约束与后端 PermissionCreate 完全对齐，提前拦截无谓的 422。
         if not isinstance(code, str) or not 3 <= len(code) <= 180:
             raise ValueError(f"permission code must be a 3-180 char string: {code!r}")
@@ -169,6 +188,12 @@ def _validate_manifest(manifest: Sequence[Mapping[str, Any]]) -> list[dict[str, 
             raise ValueError(f"scope must be a 1-80 char string for {code}")
         if description is not None and (not isinstance(description, str) or len(description) > 500):
             raise ValueError(f"description must be a string of at most 500 chars for {code}")
+        derived_namespace = _derive_catalog_namespace(code)
+        if catalog_namespace is not None:
+            if not isinstance(catalog_namespace, str) or not 1 <= len(catalog_namespace) <= 100:
+                raise ValueError(f"catalog_namespace must be a 1-100 char string for {code}")
+            if catalog_namespace.strip().lower() != derived_namespace:
+                raise ValueError(f"catalog_namespace must match code prefix for {code}")
         if code in seen:
             # 同一码出现两次属清单自相矛盾；不允许静默去重掩盖清单错误。
             raise ValueError(f"duplicate permission code in manifest: {code}")
@@ -178,5 +203,6 @@ def _validate_manifest(manifest: Sequence[Mapping[str, Any]]) -> list[dict[str, 
             "resource_type": resource_type,
             "scope": scope,
             "description": description,
+            "catalog_namespace": catalog_namespace.strip().lower() if isinstance(catalog_namespace, str) else derived_namespace,
         })
     return entries

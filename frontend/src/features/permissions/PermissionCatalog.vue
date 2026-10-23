@@ -9,6 +9,7 @@ import AdminSearchField from '../../shared/components/AdminSearchField.vue'
 interface PermissionRecord {
   id: string
   code: string
+  catalog_namespace: string
   resource_type: string
   scope: string
   description: string | null
@@ -19,6 +20,7 @@ interface PermissionRecord {
 const props = defineProps<{ active: boolean }>()
 const permissions = ref<PermissionRecord[]>([])
 const searchText = ref('')
+const namespaceFilter = ref('')
 const loading = ref(false)
 const errorText = ref('')
 const createOpen = ref(false)
@@ -27,16 +29,23 @@ const changingPermissionId = ref('')
 const form = reactive({ code: '', resource_type: '', scope: '', description: '' })
 let requestSequence = 0
 
+const namespaceOptions = computed(() => {
+  const values = new Set(permissions.value.map(item => item.catalog_namespace))
+  return [{ value: '', label: '全部分组' }, ...[...values].sort().map(value => ({ value, label: value }))]
+})
+
 const filteredPermissions = computed(() => {
   const query = searchText.value.trim().toLocaleLowerCase()
-  if (!query) return permissions.value
-  return permissions.value.filter(permission =>
-    `${permission.code} ${permission.resource_type} ${permission.scope} ${permission.description || ''}`
-      .toLocaleLowerCase().includes(query),
-  )
+  return permissions.value.filter(permission => {
+    if (namespaceFilter.value && permission.catalog_namespace !== namespaceFilter.value) return false
+    if (!query) return true
+    return `${permission.code} ${permission.catalog_namespace} ${permission.resource_type} ${permission.scope} ${permission.description || ''}`
+      .toLocaleLowerCase().includes(query)
+  })
 })
 
 const columns = [
+  { title: '命名空间', dataIndex: 'catalog_namespace', key: 'catalog_namespace', width: 120 },
   { title: '权限编码', dataIndex: 'code', key: 'code', width: 260, ellipsis: true },
   { title: '资源类型', dataIndex: 'resource_type', key: 'resource_type', width: 180 },
   { title: '操作 Scope', dataIndex: 'scope', key: 'scope', width: 160 },
@@ -154,17 +163,21 @@ watch(() => props.active, active => {
   <AdminPageHeader
     eyebrow="PERMISSION REGISTRY"
     title="权限目录"
-    subtitle="维护稳定的资源操作编码；权限项被角色引用后将参与服务端默认拒绝判定。"
-  >
-    <template #extra>
-      <a-button type="primary" @click="openCreate">＋ 新建权限</a-button>
-    </template>
-  </AdminPageHeader>
+    subtitle="平台全览各产品命名空间下的稳定权限编码；业务权限的日常维护请在「应用管理 → 权限项」中按应用命名空间登记。"
+  />
 
   <a-card class="data-card" :bordered="false">
+    <a-alert
+      class="permission-hint"
+      type="info"
+      show-icon
+      message="业务权限与 OAuth 应用通过 permission_namespace 绑定。新建业务权限请进入对应应用的「权限项」抽屉；此页用于全览与 platform/运维登记。"
+    />
     <AdminTableToolbar :hint="`${filteredPermissions.length} 条权限 · 最多读取 1000 条`">
+      <a-select v-model:value="namespaceFilter" :options="namespaceOptions" class="permission-namespace-filter" placeholder="命名空间" />
       <AdminSearchField v-model="searchText" placeholder="搜索编码、资源、Scope 或说明" :submit-on-clear="false" />
       <template #actions>
+        <a-button type="link" @click="openCreate">平台直接登记</a-button>
         <a-button :loading="loading" @click="loadPermissions">刷新</a-button>
       </template>
     </AdminTableToolbar>
@@ -181,12 +194,12 @@ watch(() => props.active, active => {
           </a-button>
         </template>
       </template>
-      <template #emptyText><a-empty :description="searchText ? '没有匹配的权限项' : '暂无权限项，可先创建资源操作编码'" /></template>
+      <template #emptyText><a-empty :description="searchText || namespaceFilter ? '没有匹配的权限项' : '暂无权限项'" /></template>
     </a-table>
     <p class="permission-note">权限编码应保持稳定，不能编辑或删除。停用会保留既有角色授权并让服务端判权默认拒绝；恢复会重新激活历史授权。菜单显示本身不构成服务端授权。</p>
   </a-card>
 
-  <a-modal v-model:open="createOpen" title="创建权限项" ok-text="创建" cancel-text="取消" :confirm-loading="creating" @ok="createPermission">
+  <a-modal v-model:open="createOpen" title="平台登记权限项（运维）" ok-text="创建" cancel-text="取消" :confirm-loading="creating" @ok="createPermission">
     <a-form layout="vertical" class="create-form">
       <a-form-item label="权限编码" required help="建议使用 product.resource.action 格式；至少 3 个字符，最长 180 个字符。">
         <a-input v-model:value="form.code" :maxlength="180" placeholder="resume.resume.read" />
@@ -201,6 +214,8 @@ watch(() => props.active, active => {
 <style scoped>
 .permission-toolbar { flex-wrap: wrap; }
 .permission-search { width: min(100%, 420px); }
+.permission-hint { margin-bottom: 16px; }
+.permission-namespace-filter { min-width: 160px; }
 .permission-error { margin-bottom: 16px; }
 .permission-note { margin: 14px 0 0; color: var(--subtle); font-size: 12px; line-height: 1.6; }
 @media (max-width: 650px) {

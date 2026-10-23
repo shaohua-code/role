@@ -5,17 +5,24 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.v1.admin.common import audit, commit_or_conflict, flush_or_conflict, valid_redirect_uri
 from app.core.security import current_user, hash_password, is_platform_admin_user, platform_admin
 from app.db.session import get_db_session
 from app.models.application import Application, ApplicationTheme
-from app.models.authorization import Role
+from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import Tenant, User
 from app.models.oidc import OAuthRefreshToken
+from app.schemas.access_control import PermissionCreate
 from app.schemas.applications import ApplicationCreate, ApplicationStatusUpdate, ApplicationUpdate
+from app.services.permission_namespace import (
+    default_namespace_from_client_id,
+    normalize_namespace,
+    permission_matches_namespace,
+    resolve_permission_namespace,
+)
 from app.services.admin_authorization import (
     has_application_admin_access,
     list_readable_application_capabilities,
@@ -45,6 +52,7 @@ def list_applications(tenant_id: UUID | None = None, actor: User = Depends(curre
     stmt = stmt.order_by(Application.created_at.desc()).limit(500)
     rows = db.scalars(stmt).all()
     return [{"id": str(a.id), "tenant_id": str(a.tenant_id), "name": a.name, "client_id": a.client_id,
+             "permission_namespace": a.permission_namespace,
              "description": a.description, "trusted": a.trusted, "status": a.status,
              "registration_policy": a.registration_policy,
              "registration_role_id": str(a.registration_role_id) if a.registration_role_id else None,
@@ -68,7 +76,13 @@ def create_application(body: ApplicationCreate, request: Request, response: Resp
         raise HTTPException(422, "登录和退出回调地址必须使用 HTTPS；本地开发可使用 localhost")
     # 客户端密钥只生成并回传一次；持久化仅保存 Argon2 哈希，避免明文密钥泄露。
     client_secret = secrets.token_urlsafe(48)
+    permission_namespace = (
+        normalize_namespace(body.permission_namespace)
+        if body.permission_namespace
+        else default_namespace_from_client_id(body.client_id)
+    )
     row = Application(tenant_id=body.tenant_id, name=body.name, client_id=body.client_id,
+                      permission_namespace=permission_namespace,
                       description=body.description, redirect_uris=body.redirect_uris,
                       post_logout_redirect_uris=body.post_logout_redirect_uris,
                       trusted=False, client_secret_hash=hash_password(client_secret))
@@ -77,8 +91,99 @@ def create_application(body: ApplicationCreate, request: Request, response: Resp
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return {"id": str(row.id), "tenant_id": str(row.tenant_id), "name": row.name, "client_id": row.client_id,
+            "permission_namespace": row.permission_namespace,
             "client_secret": client_secret, "trusted": row.trusted, "status": row.status,
             "post_logout_redirect_uris": row.post_logout_redirect_uris}
+
+
+@router.get("/applications/{application_id}/permissions")
+def list_application_permission_catalog(
+    application_id: UUID,
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> list[dict]:
+    """返回与应用 permission_namespace 对齐的权限目录条目。"""
+    application = db.get(Application, application_id)
+    if not application or not has_application_admin_access(
+        actor, application.tenant_id, db, application_id=application.id,
+    ):
+        raise HTTPException(404, "应用不存在")
+    assigned_roles = (
+        select(
+            RolePermission.permission_id.label("permission_id"),
+            func.count(func.distinct(RolePermission.role_id)).label("assigned_role_count"),
+        )
+        .join(Role, Role.id == RolePermission.role_id)
+        .where(Role.application_id == application.id)
+        .group_by(RolePermission.permission_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(Permission, func.coalesce(assigned_roles.c.assigned_role_count, 0))
+        .outerjoin(assigned_roles, assigned_roles.c.permission_id == Permission.id)
+        .where(Permission.catalog_namespace == application.permission_namespace)
+        .order_by(Permission.code)
+        .limit(1000)
+    ).all()
+    return [
+        {
+            "id": str(permission.id),
+            "code": permission.code,
+            "catalog_namespace": permission.catalog_namespace,
+            "resource_type": permission.resource_type,
+            "scope": permission.scope,
+            "description": permission.description,
+            "status": permission.status,
+            "assigned_role_count": int(assigned_role_count),
+        }
+        for permission, assigned_role_count in rows
+    ]
+
+
+@router.post("/applications/{application_id}/permissions", status_code=201)
+def create_application_permission(
+    application_id: UUID,
+    body: PermissionCreate,
+    request: Request,
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> dict:
+    """在应用命名空间下登记权限；catalog_namespace 由服务端锁定。"""
+    application = db.get(Application, application_id)
+    if not application or not has_application_admin_access(
+        actor, application.tenant_id, db, manage=True, application_id=application.id,
+    ):
+        raise HTTPException(404, "应用不存在")
+    if not permission_matches_namespace(body.code, application.permission_namespace):
+        raise HTTPException(422, "权限编码必须属于当前应用的命名空间")
+    catalog_namespace = resolve_permission_namespace(
+        code=body.code,
+        catalog_namespace=application.permission_namespace,
+    )
+    row = Permission(
+        code=body.code.strip(),
+        catalog_namespace=catalog_namespace,
+        resource_type=body.resource_type.strip(),
+        scope=body.scope.strip(),
+        description=body.description.strip() if body.description else None,
+    )
+    db.add(row)
+    flush_or_conflict(db)
+    audit(db, actor, request, "permission.create", "permission", str(row.id), {
+        "code": row.code,
+        "catalog_namespace": row.catalog_namespace,
+        "application_id": str(application.id),
+    })
+    commit_or_conflict(db)
+    return {
+        "id": str(row.id),
+        "code": row.code,
+        "catalog_namespace": row.catalog_namespace,
+        "resource_type": row.resource_type,
+        "scope": row.scope,
+        "status": row.status,
+        "assigned_role_count": 0,
+    }
 
 
 @router.patch("/applications/{application_id}")
