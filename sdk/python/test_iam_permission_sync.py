@@ -46,6 +46,15 @@ class IamAdminClientTests(unittest.TestCase):
         self.assertEqual([item["code"] for item in items], ["demo.document.read"])
 
     @patch("iam_permission_sync.urlopen")
+    def test_list_permissions_unwraps_paged_wrapper(self, open_url) -> None:
+        open_url.return_value = _Response({
+            "items": [{"id": "p1", "code": "demo.document.read"}],
+            "total": 1, "limit": 1000, "offset": 0,
+        })
+        items = self.client.list_permissions("mgmt-token")
+        self.assertEqual([item["code"] for item in items], ["demo.document.read"])
+
+    @patch("iam_permission_sync.urlopen")
     def test_create_permission_posts_full_payload(self, open_url) -> None:
         open_url.return_value = _Response({"id": "p2", "code": "demo.document.create"})
         self.client.create_permission(

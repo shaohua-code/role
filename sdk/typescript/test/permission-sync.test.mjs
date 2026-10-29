@@ -35,6 +35,15 @@ test('listPermissions sends bearer token and normalizes trailing slash', async (
   } finally { restore() }
 })
 
+test('listPermissions unwraps paged wrapper', async () => {
+  const restore = fetchQueue([jsonResponse({ items: [{ id: 'p1', code: 'demo.a' }], total: 1, limit: 1000, offset: 0 })])
+  try {
+    const client = new IamAdminClient('https://iam.example/')
+    const items = await client.listPermissions('mgmt-token')
+    assert.deepEqual(items.map((item) => item.code), ['demo.a'])
+  } finally { restore() }
+})
+
 test('createPermission posts full payload', async () => {
   const calls = []
   const restore = fetchQueue([jsonResponse({ id: 'p2' })], calls)

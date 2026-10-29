@@ -15,6 +15,22 @@ interface UserProfile {
   created_at: string
   memberships: { tenant_id: string; tenant_name: string; tenant_status: string; membership_status: string; joined_at: string }[]
   role_bindings: { role_id: string; role_key: string; role_name: string; role_status: string; application_id: string | null; tenant_name: string; membership_status: string }[]
+  effective_permissions: {
+    code: string
+    description: string | null
+    surface: string
+    status: string
+    sources: {
+      source_type: 'direct' | 'group'
+      role_id: string
+      role_key: string
+      role_name: string
+      tenant_name: string
+      application_id: string | null
+      group_id: string | null
+      group_name: string | null
+    }[]
+  }[]
   sessions: { id: string; type: 'management' | 'oidc'; application_name: string; created_at: string; expires_at: string }[]
   recent_auth_events: { action: string; outcome: string; created_at: string }[]
 }
@@ -99,6 +115,26 @@ function formatTime(value: string): string {
               <span class="text-[var(--color-text-muted)]">{{ binding.tenant_name }}{{ binding.application_id ? ' · 应用角色' : '' }}</span>
               <a-tag v-if="binding.role_status !== 'active'" color="default">角色已停用</a-tag>
             </a-space>
+          </div>
+        </div>
+
+        <!-- G28 有效权限：码并集 + 直授/用户组来源 -->
+        <h3 class="mb-2 mt-4 text-sm font-semibold">有效权限（{{ (profile.effective_permissions || []).length }}）</h3>
+        <a-empty v-if="!(profile.effective_permissions || []).length" :image-style="{ height: '40px' }" description="暂无有效权限码" />
+        <div v-else class="grid gap-2">
+          <div v-for="item in profile.effective_permissions" :key="item.code"
+            class="rounded border border-[var(--color-border)] px-3 py-2 text-xs">
+            <div class="flex items-center justify-between gap-2">
+              <span class="min-w-0 truncate font-medium">{{ item.description || item.code }}</span>
+              <span class="shrink-0 font-mono text-[var(--color-text-muted)]">{{ item.code }}</span>
+            </div>
+            <div class="mt-1 flex flex-wrap gap-1">
+              <a-tag v-for="source in item.sources" :key="source.source_type + source.role_id + (source.group_id || '')">
+                {{ source.source_type === 'direct' ? '直授' : '用户组' }}
+                · {{ source.role_name }}
+                <template v-if="source.group_name"> · {{ source.group_name }}</template>
+              </a-tag>
+            </div>
           </div>
         </div>
 

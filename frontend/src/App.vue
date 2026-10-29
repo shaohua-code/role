@@ -15,6 +15,7 @@ import AppSidebar from '@/layout/AppSidebar.vue'
 import AppBreadcrumb from '@/layout/AppBreadcrumb.vue'
 import AuthEntry from '@/views/auth/AuthEntry.vue'
 import { NAV_ITEMS, PAGE_INFO as pageInfo, PAGE_PATHS, type PageKey } from '@/router/navigation'
+import { asPagedList } from '@/utils/paged'
 import {
   ApplicationManagement,
   ApplicationWorkspace,
@@ -135,9 +136,18 @@ const heldCodes = computed(() => capabilities.value ? allCodes(capabilities.valu
 // Wave 1 对齐 user-centent：「应用与权限」组以应用工作台为主入口。
 // 高级管理改造：应用/角色/权限三个列表页归入侧栏「高级管理」折叠组（低频全局能力），
 // 不再区分平台/租户模式做侧栏排除，能力满足即展示（租户侧 /roles 仍是「应用角色与成员」融合页入口）。
-const visibleNavigation = computed(() => consoleMode.value === 'no_access'
-  ? []
-  : NAV_ITEMS.filter(item => hasAnyCode(heldCodes.value, item.requiredPermissions)))
+const visibleNavigation = computed(() => {
+  if (consoleMode.value === 'no_access') return []
+  return NAV_ITEMS
+    .filter(item => hasAnyCode(heldCodes.value, item.requiredPermissions))
+    .map(item => {
+      // G27：租户模式 /roles 实际是应用角色+成员融合页，侧栏与平台「角色管理」消歧。
+      if (consoleMode.value === 'tenant' && item.key === 'roles') {
+        return { ...item, label: '应用角色与成员' }
+      }
+      return item
+    })
+})
 // 侧栏未展示（能力不满足）的页面不可直接访问；能力满足即可达（侧栏 + 深链共用同一能力守卫）。
 function isPageReachable(key: PageKey): boolean {
   const item = NAV_ITEMS.find(candidate => candidate.key === key)
@@ -173,11 +183,11 @@ async function loadDictionaries(force = false): Promise<void> {
   dictionariesLoading.value = true
   try {
     const [tenantRows, applicationRows, roles] = await Promise.all([
-      api<Row[]>('/admin/tenants'), api<Row[]>('/admin/applications'), api<Row[]>('/admin/roles'),
+      api<Row[]>('/admin/tenants'), api<Row[]>('/admin/applications'), api<Row[] | { items: Row[] }>('/admin/roles?limit=500'),
     ])
     tenants.value = tenantRows
     applications.value = applicationRows
-    roleOptions.value = roles
+    roleOptions.value = asPagedList(roles).items
     dictionariesNeedRetry.value = false
     dictionariesReady.value = true
     platformCatalogGeneration.value += 1
@@ -491,7 +501,7 @@ onUnmounted(() => {
           <router-view aria-hidden="true" class="hidden" />
           <a-card v-if="consoleMode === 'no_access'" :bordered="false">
             <a-alert type="error" show-icon message="当前账号尚未获得管理权限"
-              description="请联系管理员为你的角色授予相应的 iam.* 管理权限；应用成员请通过业务应用入口登录。" />
+              description="请联系管理员为你的角色授予管理台权限（五域管理码）；应用成员请通过业务应用入口登录。" />
           </a-card>
           <template v-else>
           <div v-if="visitedPages.has('overview')" v-show="page === 'overview'">
@@ -564,8 +574,6 @@ onUnmounted(() => {
             <RoleManagement
               v-else
               :active="page === 'roles'"
-              :shell-catalog-generation="platformCatalogGeneration"
-              :shell-roles="roleOptions"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
               :applications="applications.map(application => ({ id: String(application.id), tenant_id: String(application.tenant_id), name: String(application.name), status: String(application.status), permission_namespace: String(application.permission_namespace ?? '') }))"
               @changed="() => loadDictionaries(true)"

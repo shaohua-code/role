@@ -58,23 +58,23 @@ export interface PermissionScope {
 
 /** 作用域组定义：组序即展示序（平台 → 租户 → 应用 → 业务码）。 */
 export const PERMISSION_SCOPES: PermissionScope[] = [
-  { key: 'platform', label: '平台', hint: '租户与全局账号治理 / 平台总览 / 平台角色写（仅 L1）' },
-  { key: 'tenant', label: '租户', hint: '组织架构 / 角色目录读 / 权限目录写 / 任命应用管理员 / 模型目录写（L3）' },
+  { key: 'platform', label: '平台', hint: '租户与全局账号治理 / 平台总览 / 平台角色写 / 权限目录写（仅 L1）' },
+  { key: 'tenant', label: '租户', hint: '组织架构 / 角色目录读 / 任命应用管理员 / 模型目录写（L3）' },
   { key: 'app', label: '应用', hint: '应用与成员日常管理（L2 起，租户管理员全量兼容）' },
   { key: 'business', label: '业务码', hint: '应用命名空间业务码，强制数据范围' },
 ]
 
 const SCOPE_BY_KEY = new Map(PERMISSION_SCOPES.map(scope => [scope.key, scope]))
 
-/** 平台组 6 码：仅 L1（platform.admin）模板持有。 */
+/** 平台组 7 码：仅 L1（platform.admin）模板持有（含权限目录写）。 */
 const PLATFORM_SCOPE_CODES = new Set([
   'platform.overview.read', 'platform.tenant.read', 'platform.tenant.manage',
-  'platform.account.read', 'platform.account.manage', 'rbac.role.manage',
+  'platform.account.read', 'platform.account.manage', 'rbac.role.manage', 'rbac.permission.manage',
 ])
 
-/** 租户组 6 码：L3（tenant.admin）持有且 L2（app.admin）不持有。 */
+/** 租户组 5 码：L3（tenant.admin）持有且 L2（app.admin）不持有。 */
 const TENANT_SCOPE_CODES = new Set([
-  'org.read', 'org.manage', 'rbac.role.read', 'rbac.permission.manage', 'rbac.app_role.assign', 'ops.model.manage',
+  'org.read', 'org.manage', 'rbac.role.read', 'rbac.app_role.assign', 'ops.model.manage',
 ])
 
 /** 解析权限编码所属作用域组：平台/租户按静态归属表，其余管理码归应用，业务命名空间归业务码。 */
@@ -87,7 +87,7 @@ export function resolvePermissionScope(code: string): PermissionScope {
 
 // ===== P395 两类分组（PRD docs/prototypes/permission-hierarchy-view）：=====
 // 分类只有两种——「平台编码」（27 个管理面码，平台统一管理）与「应用业务编码」（应用命名空间业务码）。
-// 「平台 ⊃ 租户 ⊃ 应用」的层级关系不靠分组表达：它由模板码集天然承载（L1 持 27 ⊃ L3 持 21 ⊃ L2 持 15），
+// 「平台 ⊃ 租户 ⊃ 应用」的层级关系不靠分组表达：它由模板码集天然承载（L1 持 27 ⊃ L3 持 20 ⊃ L2 持 15），
 // 在行级以「层级起点」标记呈现（复用 resolvePermissionScope 的互斥归属）。
 
 export type PermissionClass = 'platform-class' | 'business'

@@ -6,6 +6,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
+import { getCachedCapabilities } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
@@ -32,19 +33,14 @@ interface ApplicationRecord {
   can_manage?: boolean
 }
 
-// 三步配权主路径（对齐蓝图）：页头副标题与空态引导共用同一文案口径。
+// 三步配权主路径：页头副标题与空态引导共用；业务码由应用管理员在工作台登记，不必找 L1。
 const MAIN_PATH_STEPS = [
-  '在「权限编码」Tab 维护本应用 code',
+  '在「权限编码」Tab 登记本应用业务码（应用管理员可直接新建）',
   '在「角色」Tab 为角色挂权限编码',
   '到「用户管理」为用户多选角色（生效权限 = 角色并集）',
 ] as const
 
 const router = useRouter()
-
-// 空态引导出口：跳应用管理列表（高级管理）。
-function goApplicationManagement(): void {
-  void router.push(PAGE_PATHS.applications)
-}
 
 const props = withDefaults(defineProps<{
   active: boolean
@@ -59,6 +55,16 @@ const props = withDefaults(defineProps<{
   shellApplications: null,
   shellCatalogGeneration: -1,
 })
+
+// L1 或持 app.manage 的租户/应用管理员可去应用管理创建；否则引导联系租户管理员，避免空态死路。
+const canCreateApplication = computed(() => {
+  if (getCachedCapabilities()?.platform_admin) return true
+  return props.tenants.some(tenant => tenant.can_manage_applications === true)
+})
+
+function goApplicationManagement(): void {
+  void router.push(PAGE_PATHS.applications)
+}
 
 const emit = defineEmits<{ changed: [] }>()
 
@@ -194,7 +200,7 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
       class="shrink-0"
       eyebrow="APPLICATION WORKSPACE"
       title="应用工作台"
-      subtitle="配权三步：①「权限编码」维护 code → ②「角色」挂码 → ③「用户管理」多选角色（并集生效）"
+      subtitle="配权三步：①「权限编码」登记业务码（应用管理员可新建）→ ②「角色」挂码 → ③「用户管理」多选角色（并集生效）"
     />
     <!-- Wave 4/收口：窄屏上下堆叠（树在上），lg 及以上保持左右布局（UI 检查 P348 修复）。 -->
     <!-- P358：桌面档左右两栏各自内滚、高度撑满视口底部，消除整页滚动。 -->
@@ -213,7 +219,8 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
           <AdminEmpty emoji="🧩" description="还没有可管理的应用">
             <div class="flex flex-col items-center gap-4">
               <AdminPathGuide :steps="MAIN_PATH_STEPS" title="创建应用后，按以下三步完成日常配权" />
-              <a-button type="primary" @click="goApplicationManagement">前往应用管理创建</a-button>
+              <a-button v-if="canCreateApplication" type="primary" @click="goApplicationManagement">前往应用管理创建</a-button>
+              <p v-else class="m-0 text-sm text-[var(--color-text-muted)]">请联系租户管理员创建应用，并任命你为应用管理员。</p>
             </div>
           </AdminEmpty>
         </a-card>

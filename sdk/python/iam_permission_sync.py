@@ -82,13 +82,19 @@ class IamAdminClient:
     def list_permissions(self, management_token: str) -> list[dict[str, Any]]:
         """返回权限目录条目列表；响应不是数组或缺 code 即契约错误（502）。"""
         body = self._request("GET", self.permissions_endpoint, management_token)
-        # 后端契约：GET /admin/permissions 返回裸数组（limit 1000，按 code 排序）。
-        if not isinstance(body, list) or any(
+        # G29：平台目录改为 {items,total,limit,offset}；应用侧与旧裸数组仍兼容。
+        if isinstance(body, dict) and isinstance(body.get("items"), list):
+            items = body["items"]
+        elif isinstance(body, list):
+            items = body
+        else:
+            raise IamAdminError(502, "IAM returned an invalid permission catalog response")
+        if any(
             not isinstance(item, dict) or not isinstance(item.get("code"), str) or not item["code"]
-            for item in body
+            for item in items
         ):
             raise IamAdminError(502, "IAM returned an invalid permission catalog response")
-        return body
+        return items
 
     def create_permission(
         self,

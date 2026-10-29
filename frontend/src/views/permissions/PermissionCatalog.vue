@@ -3,11 +3,13 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
 import { getCachedCapabilities } from '@/api/capabilities'
+import { FilterOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminStatBand from '@/components/AdminStatBand.vue'
 import AdminDetailDrawer from '@/components/AdminDetailDrawer.vue'
 import { PERMISSION_CLASSES, PERMISSION_DOMAINS, SCOPE_LEVEL_LABELS, SCOPE_LEVEL_ORDER, SCOPE_LEVEL_TIPS, isManagementCode, resolvePermissionClass, resolvePermissionDomain, resolvePermissionScope } from '@/utils/permissionGroups'
+import { asPagedList } from '@/utils/paged'
 
 interface PermissionRecord {
   id: string
@@ -27,6 +29,9 @@ const props = defineProps<{ active: boolean }>()
 // 绿场 §6.5 写死：权限目录写（登记/停用）仅 L1 持 rbac.permission.manage；L2/L3 只读。
 const canManageCatalog = computed(() => getCachedCapabilities()?.platform_admin === true)
 const permissions = ref<PermissionRecord[]>([])
+// G29：目录接口带 total；超过本页加载上限时提示，避免静默漏数据。
+const catalogTotal = ref(0)
+const catalogTruncated = computed(() => catalogTotal.value > permissions.value.length)
 const searchText = ref('')
 const namespaceFilter = ref('')
 // P395 两类分组：统计卡带按「全部 / 平台编码 / 应用业务编码」筛选（'' = 全部）
@@ -48,6 +53,8 @@ function toggleDomainChip(key: string): void {
     ? domainFilter.value.filter(item => item !== key)
     : [...domainFilter.value, key]
 }
+
+const extraFilterCount = computed(() => domainFilter.value.length + (namespaceFilter.value ? 1 : 0))
 const loading = ref(false)
 const errorText = ref('')
 const createOpen = ref(false)
@@ -165,7 +172,7 @@ async function openRefs(permission: PermissionRecord): Promise<void> {
   refsRoles.value = []
   refsLoading.value = true
   try {
-    const roles = await api<RefRoleRecord[]>('/admin/roles')
+    const roles = asPagedList(await api<RefRoleRecord[] | { items: RefRoleRecord[] }>('/admin/roles?limit=500')).items
     const matched = roles.filter(role => Array.isArray(role.permission_codes) && role.permission_codes.includes(permission.code))
     refsCache.set(permission.code, matched)
     if (refsPermission.value?.id === permission.id) refsRoles.value = matched
@@ -198,11 +205,16 @@ async function loadPermissions(): Promise<void> {
   // 目录刷新后引用角色缓存一并失效
   refsCache.clear()
   try {
-    const result = await api<PermissionRecord[]>('/admin/permissions')
-    if (sequence === requestSequence && props.active) permissions.value = result
+    const result = await api<PermissionRecord[] | { items: PermissionRecord[]; total: number }>('/admin/permissions?limit=1000')
+    if (sequence === requestSequence && props.active) {
+      const paged = asPagedList(result)
+      permissions.value = paged.items
+      catalogTotal.value = paged.total
+    }
   } catch (error) {
     if (sequence !== requestSequence) return
     permissions.value = []
+    catalogTotal.value = 0
     errorText.value = error instanceof Error ? error.message : '读取权限编码失败'
   } finally {
     if (sequence === requestSequence) loading.value = false
@@ -310,15 +322,21 @@ watch(() => props.active, active => {
 
 <template>
   <div class="permission-page">
-    <a-alert type="info" show-icon class="mb-3" message="高级列表：全局权限编码目录。编码裁剪菜单；接口鉴权看角色挂码。按应用维护请到「应用工作台 → 权限编码」。" />
-    <!-- P395 两类统计卡（账本式）：全部 / 平台编码 / 应用业务编码；P397 换用通用 AdminStatBand -->
+    <!-- P395 两类统计卡（账本式）：全部 / 平台编码 / 应用业务编码；日常主筛就是这两类 + 搜索 -->
     <AdminStatBand v-model="scopeFilter" numbered :stats="domainStats" />
+    <a-alert
+      v-if="catalogTruncated"
+      type="warning"
+      show-icon
+      class="mb-4"
+      :message="`共 ${catalogTotal} 条权限编码，当前只加载了前 ${permissions.length} 条`"
+    />
 
     <AdminListPage
       eyebrow="权限编码"
       title="权限编码"
-      subtitle="高级列表：全局权限编码目录。按应用维护请到「应用工作台 → 权限编码」。编码裁剪菜单；接口鉴权看角色挂码。"
-      hint="目录以登记为主；菜单显示不构成服务端授权。完整目录在本页；应用域编码也可在应用工作台维护。点卡片筛选平台/应用编码；点行查看引用角色。"
+      subtitle="全局权限编码目录。按应用维护请到「应用工作台 → 权限编码」。"
+      hint="编码裁剪管理台菜单；接口鉴权只看角色挂码。点卡片筛选平台/业务编码；点行查看引用角色。业务码请到应用工作台登记。"
       :columns="columns"
       :data-source="displayRows"
       :loading="loading"
@@ -331,29 +349,49 @@ watch(() => props.active, active => {
       empty-emoji="🔐"
       :empty-text="searchText || namespaceFilter || domainFilter.length || scopeFilter ? '没有匹配的权限项' : '暂无权限项'"
     >
-      <!-- P397 权限域多选 chips：色点 + 域名 + 计数，命中任一选中域即保留 -->
-      <div class="flex flex-wrap items-center gap-1">
-        <button
-          v-for="domain in domainChips"
-          :key="domain.key"
-          type="button"
-          :class="[
-            'inline-flex cursor-pointer items-center gap-1.5 border border-solid px-2 py-1 rounded-full text-xs transition-colors duration-150',
-            domainFilter.includes(domain.key)
-              ? 'border-[var(--color-text-primary)] bg-[var(--color-brand-subtle)] text-[var(--color-text-primary)]'
-              : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]',
-          ]"
-          @click="toggleDomainChip(domain.key)"
-        >
-          <span class="domain-dot" />
-          <span>{{ domain.label }}</span>
-          <span class="font-mono text-[10px] text-[var(--color-text-muted)] tabular-nums">{{ domain.count }}</span>
-        </button>
-      </div>
-      <a-select v-model:value="namespaceFilter" :options="namespaceOptions" class="admin-filter-wide" placeholder="命名空间" />
       <AdminSearchField v-model="searchText" placeholder="搜索编码、资源、Scope 或说明" :submit-on-clear="false" />
+      <a-popover trigger="click" placement="bottomLeft">
+        <template #content>
+          <div class="flex w-[320px] flex-col gap-3">
+            <div>
+              <div class="mb-2 text-xs text-[var(--color-text-muted)]">权限域</div>
+              <div class="flex flex-wrap items-center gap-1">
+                <button
+                  v-for="domain in domainChips"
+                  :key="domain.key"
+                  type="button"
+                  :class="[
+                    'inline-flex cursor-pointer items-center gap-1.5 border border-solid px-2 py-1 rounded-full text-xs transition-colors duration-150',
+                    domainFilter.includes(domain.key)
+                      ? 'border-[var(--color-text-primary)] bg-[var(--color-brand-subtle)] text-[var(--color-text-primary)]'
+                      : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]',
+                  ]"
+                  @click="toggleDomainChip(domain.key)"
+                >
+                  <span class="domain-dot" />
+                  <span>{{ domain.label }}</span>
+                  <span class="font-mono text-[10px] text-[var(--color-text-muted)] tabular-nums">{{ domain.count }}</span>
+                </button>
+              </div>
+            </div>
+            <div>
+              <div class="mb-2 text-xs text-[var(--color-text-muted)]">命名空间</div>
+              <a-select v-model:value="namespaceFilter" :options="namespaceOptions" class="w-full" placeholder="命名空间" />
+            </div>
+          </div>
+        </template>
+        <a-button>
+          <span class="inline-flex items-center gap-1">
+            <FilterOutlined />
+            更多筛选
+            <span v-if="extraFilterCount" class="font-mono text-xs text-[var(--color-text-muted)]">{{ extraFilterCount }}</span>
+          </span>
+        </a-button>
+      </a-popover>
       <template #actions>
-        <a-button v-if="canManageCatalog" type="link" @click="openCreate">平台直接登记</a-button>
+        <a-tooltip title="仅用于登记管理面五域编码；应用业务码请到应用工作台登记">
+          <a-button v-if="canManageCatalog" type="link" @click="openCreate">平台直接登记</a-button>
+        </a-tooltip>
         <a-button :loading="loading" @click="loadPermissions">刷新</a-button>
       </template>
       <template #bodyCell="{ column, record }">

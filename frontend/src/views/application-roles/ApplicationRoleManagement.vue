@@ -370,13 +370,13 @@ watch(memberQuery, () => { memberPage.value = 1 })
 <template>
   <section class="application-role-page">
     <AdminPageHeader
-      eyebrow="角色管理"
-      title="角色管理"
-      subtitle="按应用维护角色、业务权限和成员绑定。成员目录只展示已通过该应用角色授权的人。"
+      eyebrow="应用角色与成员"
+      title="应用角色与成员"
+      subtitle="按应用维护角色、业务权限和成员绑定。日常配权请走「应用工作台」；本页保留成员绑定。成员目录只展示已通过该应用角色授权的人。"
     />
 
     <a-card class="data-card" :bordered="false">
-      <AdminTableToolbar :hint="canManage ? '写入会记录审计；iam.* 管理权限不能通过应用角色新增。' : '当前只有读取权限；联系应用管理员申请角色管理权限。'">
+      <AdminTableToolbar :hint="canManage ? '写入会记录审计；五域管理码不能通过应用角色新增。' : '当前只有读取权限；联系应用管理员申请角色管理权限。'">
         <a-select v-model:value="applicationId" placeholder="选择已授权应用"
           :loading="loadingApplications" :options="applications.map(item => ({ value: item.id, label: `${item.name} · ${item.client_id}` }))" />
         <template #actions>
@@ -445,7 +445,7 @@ watch(memberQuery, () => { memberPage.value = 1 })
         </a-form-item>
         <a-form-item label="角色名称"><a-input v-model:value="roleForm.name" :maxlength="120" placeholder="例如简历编辑者" /></a-form-item>
         <a-form-item label="说明"><a-input v-model:value="roleForm.description" :maxlength="500" placeholder="说明这个应用角色的用途" /></a-form-item>
-        <a-alert type="info" show-icon message="角色限定当前应用" description="此页不会创建租户通用角色，也不能新增 iam.* 管理权限。成员必须先由租户管理员加入租户。" />
+        <a-alert type="info" show-icon message="角色限定当前应用" description="此页不会创建租户通用角色，也不能新增五域管理码。成员必须先由租户管理员加入租户。" />
       </a-form>
     </a-modal>
 

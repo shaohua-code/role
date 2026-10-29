@@ -1,5 +1,35 @@
 # 变更日志
 
+## 2026-10-29 IAM P403 — G27 入口消歧 / G28 有效权限 / G29 真分页 / G32 L3 模板 / G30 造数
+
+继续执行 P402 盘点未落地项。不上线包（G03 MFA / G04 注销 / 配额 / G05 A04）。无迁移、无 DeerFlow。
+
+- **G27：** 侧栏 L1 入口改「运营总览」；租户 `/roles` 标「应用角色与成员」，页头指向日常「应用工作台」。
+- **G28：** 用户详情 `effective_permissions`：有效权限码并集 + 直授/用户组来源。
+- **G29：** `GET /admin/roles`、`GET /admin/permissions` 返回 `{items,total,limit,offset}`；角色列表服务端真分页；权限目录带 total。SDK 兼容包装对象。
+- **G32：** L3 模板 21→20，剥 `rbac.permission.manage`；预置时剥离存量。平台目录写仍仅 L1。
+- **G30：** `docker compose exec api python -B manage.py seed-walkthrough` 已造 demo-app 与 `l2-admin`/`l3-admin`/`l4-member@demo.example.com`（密码 `Walkthrough#2026`）。
+- **验证：** 容器 unittest `test_role_hierarchy_guards` + `test_g16_g24` + `test_application_admin_access` **28/28 OK**；Python SDK `test_iam_permission_sync` **17/17 OK**；TS SDK permission-sync **16/16 pass**；宿主机 `npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器登录走查。
+
+## 2026-10-29 IAM P402 — 产品层缺点盘点 + 日常配权硬伤
+
+对照 PRD、配权说明书与现网代码做产品层盘点；G25–G32 入进度第 4 节。PRD §4.1 信息架构、G01①「审计人员」、§2.1 DeerFlow 试点口径标待裁决。第一刀只修日常配权断流，不重做五域码表、无迁移。
+
+- **产品裁决：** L3 `tenant.admin` 可建/改本租户全部应用（对齐 P383「租户管理员管当前租户下一切」）。
+- **后端：** `has_application_admin_access` 认 `tenant.admin` ∪ 钉住应用的 `app.admin`；`list_readable_application_capabilities` 对 L3 短接租户内全可管，与写路径对齐。
+- **前端：** 工作台「权限编码」新建按 `application.can_manage` 开放给 L2/L3（启停仍仅 L1）；空态三步写明应用管理员可登记业务码，无创建权时改为联系租户管理员；L4 `/no-access` 与应用角色页去掉过时 `iam.*`。
+- **验证：** 容器 `python -B -m unittest tests.test_application_admin_access` **3/3 OK**；宿主机 `npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器登录走查（自动化填登录凭据被拦截）；无 L2/L3 走查账号（未跑 `seed-walkthrough`）。
+
+## 2026-10-29 IAM P401 — 角色管理与权限编码交互梳理
+
+对照配权说明书与现网代码，补齐「高级管理 → 角色/权限编码」与「应用工作台角色/权限 Tab」的日常主路径断层；不改五域码表、不重做两类分组与授权弹窗、无迁移。
+
+- **角色列表服务端筛选：** `GET /admin/roles` 增 `application_id`，`q` 覆盖名称/标识/说明；高级角色页把 `q/kind/tenant_id/status` 接到 API（回车搜索）；工作台 RolesTab 平台模式改 `kind=application&application_id=`，不再拉全站 500 条再本地滤。
+- **角色行交互：** 修 `kind-application` 虚线边 CSS；权限列「N 项」可点开挂码；只读操作改为「查看权限」；工作台操作列收成「配置权限 + 更多」；高级「资源授权」改名为「实例资源授权」并与工作台资源树消歧；数据范围中文描述主行 + mono 码；新建角色成功后询问立刻挂码。
+- **权限编码降噪：** 目录页去掉与 subtitle/hint 重复的页顶 alert，五域 chips + 命名空间收进「更多筛选」；「平台直接登记」加 tooltip 引导业务码去工作台。工作台 Panel 改 `AdminTableToolbar`、描述主显、登记框 `addon-before` 锁定 namespace。
+- **后端越域 422：** `permission_namespace.assert_role_kind_grant_permissions` 与授权弹窗矩阵同口径（历史已持有豁免）；`PUT/preview .../roles/{id}/permissions` 拒绝新增越域码。
+- **验证：** 容器内 `python -B -m unittest tests.test_permission_namespace tests.test_role_hierarchy_guards` **19/19 OK**；`npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器走查（工作台选应用 → 登记码 → 建角色 → 挂码 → 高级列表筛选/点「N 项」；待用户登录复看）。
+
 ## 2026-10-29 IAM P400 — /model-usage 模型用量页重设计（新增聚合图表区）
 
 用户要求用 frontend-design / trae-design / build-web-data-visualization 插件能力重新设计模型用量页。经 dataviz 路由裁决：页面缺「时间变化」与「模型排名」两个分析层；后端只有总量 summary 无按日/按模型聚合，为保图表真实（不从前端分页数据造假聚合），同批补两个同口径只读聚合端点。

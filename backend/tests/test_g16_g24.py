@@ -25,7 +25,7 @@ from app.api.v1.admin.users import get_user_profile
 from app.core.config import get_settings
 from app.db.base import Base
 from app.models.application import Application, ApplicationTheme
-from app.models.authorization import Role, RoleBinding
+from app.models.authorization import Permission, Role, RoleBinding, RolePermission
 from app.models.groups import UserGroup, UserGroupMembership, UserGroupRole
 from app.models.identity import Tenant, TenantMembership, User, UserInvitation
 from app.models.organization import Organization
@@ -87,6 +87,38 @@ class G16G24BatchTests(unittest.TestCase):
         self.assertEqual(profile["role_bindings"][0]["role_key"], self.role.key)
         self.assertEqual(profile["sessions"], [])
         self.assertEqual(profile["recent_auth_events"], [])
+        self.assertEqual(profile["effective_permissions"], [])
+
+    def test_user_profile_effective_permissions_include_direct_and_group_sources(self) -> None:
+        """G28：有效权限码并集带来源（直授角色 / 用户组）。"""
+        direct_permission = Permission(
+            code="org.read", catalog_namespace="platform", resource_type="org",
+            scope="read", description="读取组织", surface="management", requires_data_scope=False,
+        )
+        group_permission = Permission(
+            code="org.group.read", catalog_namespace="platform", resource_type="org",
+            scope="read", description="读取用户组", surface="management", requires_data_scope=False,
+        )
+        group_role = Role(tenant_id=self.tenant.id, key=f"grole-{uuid4().hex[:6]}", name="组角色", kind="tenant")
+        group = UserGroup(tenant_id=self.tenant.id, key=f"g-{uuid4().hex[:6]}", name="演示组")
+        self.db.add_all([direct_permission, group_permission, group_role, group])
+        self.db.flush()
+        self.db.add_all([
+            RolePermission(role_id=self.role.id, permission_id=direct_permission.id),
+            RolePermission(role_id=group_role.id, permission_id=group_permission.id),
+            UserGroupMembership(group_id=group.id, membership_id=self.membership.id, tenant_id=self.tenant.id),
+            UserGroupRole(group_id=group.id, role_id=group_role.id, tenant_id=self.tenant.id),
+        ])
+        self.db.commit()
+        profile = get_user_profile(self.member.id, actor=self.actor, db=self.db)
+        by_code = {item["code"]: item for item in profile["effective_permissions"]}
+        self.assertIn("org.read", by_code)
+        self.assertIn("org.group.read", by_code)
+        direct_sources = {item["source_type"] for item in by_code["org.read"]["sources"]}
+        group_sources = {item["source_type"] for item in by_code["org.group.read"]["sources"]}
+        self.assertEqual(direct_sources, {"direct"})
+        self.assertEqual(group_sources, {"group"})
+        self.assertEqual(by_code["org.group.read"]["sources"][0]["group_name"], "演示组")
 
     def test_user_profile_returns_404_and_gates_non_admin(self) -> None:
         with self.assertRaises(HTTPException) as missing:

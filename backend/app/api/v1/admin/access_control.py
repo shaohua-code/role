@@ -35,6 +35,7 @@ from app.services.permission_impact import (
     preview_role_permissions,
 )
 from app.services.permission_namespace import (
+    assert_role_kind_grant_permissions,
     normalize_namespace,
     permission_matches_namespace,
     resolve_permission_namespace,
@@ -90,13 +91,17 @@ def simulate_authorization(body: AuthorizationSimulation, actor: User = Depends(
 def list_roles(q: str | None = Query(default=None, max_length=120),
                kind: str | None = Query(default=None),
                tenant_id: UUID | None = Query(default=None),
+               application_id: UUID | None = Query(default=None),
                status: str | None = Query(default=None),
+               limit: Annotated[int, Query(ge=1, le=500)] = 50,
+               offset: Annotated[int, Query(ge=0)] = 0,
                actor: User = Depends(current_user),
-               db: Session = Depends(get_db_session)) -> list[dict]:
+               db: Session = Depends(get_db_session)) -> dict:
     """角色列表；L3 的 rbac.role.read 只读其租户内角色（非 L1 强制范围过滤）。
 
-    q/kind/tenant_id/status 为可选服务端过滤；tenant_id 必须与 actor 租户范围取交集，
-    请求越范围租户时 403（与 ensure_tenant_in_actor_scope 同口径）。
+    q/kind/tenant_id/application_id/status 为可选服务端过滤；tenant_id 必须与 actor
+    租户范围取交集，请求越范围租户时 403（与 ensure_tenant_in_actor_scope 同口径）。
+    G29 返回 {items,total,limit,offset}，默认 50 条、上限 500，禁止静默截断。
     """
     ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], detail="缺少管理角色（原 rbac.role.read）")
     if kind not in (None, "platform", "tenant", "application"):
@@ -106,15 +111,17 @@ def list_roles(q: str | None = Query(default=None, max_length=120),
     tenant_scope = list_actor_management_tenant_ids(actor, db)
     if tenant_scope is not None:
         if not tenant_scope:
-            return []
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
         # 非 L1：请求的 tenant_id 必须落在自己的管理范围内，防止越租户探测
         if tenant_id is not None and tenant_id not in tenant_scope:
             raise HTTPException(403, "请求的租户不在你的管理范围内")
-    statement = select(Role).order_by(Role.created_at.desc()).limit(500)
+    statement = select(Role)
     if tenant_scope is not None:
         statement = statement.where(Role.tenant_id.in_(tenant_scope))
     if tenant_id is not None:
         statement = statement.where(Role.tenant_id == tenant_id)
+    if application_id is not None:
+        statement = statement.where(Role.application_id == application_id)
     if kind:
         statement = statement.where(Role.kind == kind)
     if status:
@@ -122,8 +129,11 @@ def list_roles(q: str | None = Query(default=None, max_length=120),
     search = q.strip()[:120] if q else ""
     if search:
         pattern = f"%{search}%"
-        statement = statement.where(Role.name.ilike(pattern) | Role.key.ilike(pattern))
-    rows = db.scalars(statement).all()
+        statement = statement.where(
+            Role.name.ilike(pattern) | Role.key.ilike(pattern) | Role.description.ilike(pattern),
+        )
+    total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+    rows = db.scalars(statement.order_by(Role.created_at.desc()).limit(limit).offset(offset)).all()
     # 权限码一次 join 聚合（仅当前结果集角色），修复逐角色查询的 N+1
     grant_rows = db.execute(
         select(RolePermission.role_id, Permission.code)
@@ -133,10 +143,11 @@ def list_roles(q: str | None = Query(default=None, max_length=120),
     codes_by_role: dict[UUID, list[str]] = {}
     for role_id, code in grant_rows:
         codes_by_role.setdefault(role_id, []).append(code)
-    return [{"id": str(r.id), "tenant_id": str(r.tenant_id), "application_id": str(r.application_id) if r.application_id else None,
+    items = [{"id": str(r.id), "tenant_id": str(r.tenant_id), "application_id": str(r.application_id) if r.application_id else None,
              "kind": r.kind, "key": r.key, "name": r.name, "description": r.description, "status": r.status,
              "permission_codes": sorted(codes_by_role.get(r.id, []))}
             for r in rows]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
 
 
 @router.get("/roles/{role_id}/holders")
@@ -206,7 +217,12 @@ def create_role(body: RoleCreate, request: Request, actor: User = Depends(curren
                 kind="application" if body.application_id else "tenant",
                 key=body.key, name=body.name, description=body.description)
     db.add(role); flush_or_conflict(db); audit(db, actor, request, "role.create", "role", str(role.id), {"tenant_id": str(role.tenant_id)}); commit_or_conflict(db)
-    return {"id": str(role.id), "key": role.key, "name": role.name, "tenant_id": str(role.tenant_id)}
+    return {
+        "id": str(role.id), "key": role.key, "name": role.name,
+        "tenant_id": str(role.tenant_id),
+        "application_id": str(role.application_id) if role.application_id else None,
+        "kind": role.kind, "status": role.status, "permission_codes": [],
+    }
 
 
 @router.post("/roles/{role_id}/clone", status_code=201)
@@ -526,9 +542,14 @@ def list_permissions(
     actor: User = Depends(current_user),
     catalog_namespace: Annotated[str | None, Query(max_length=100)] = None,
     application_id: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 1000,
+    offset: Annotated[int, Query(ge=0)] = 0,
     db: Session = Depends(get_db_session),
-) -> list[dict]:
-    """权限目录查询：可按应用命名空间或 catalog_namespace 过滤，附各权限关联角色数。"""
+) -> dict:
+    """权限目录查询：可按应用命名空间或 catalog_namespace 过滤，附各权限关联角色数。
+
+    G29 返回 {items,total,limit,offset}；默认 1000 条、上限 1000，total 暴露截断。
+    """
     ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], detail="缺少管理角色（原 rbac.permission.read）")
     namespace_filter: str | None = None
     if application_id is not None:
@@ -550,13 +571,14 @@ def list_permissions(
     statement = (
         select(Permission, func.coalesce(assigned_roles.c.assigned_role_count, 0))
         .outerjoin(assigned_roles, assigned_roles.c.permission_id == Permission.id)
-        .order_by(Permission.catalog_namespace, Permission.code)
-        .limit(1000)
     )
     if namespace_filter is not None:
         statement = statement.where(Permission.catalog_namespace == namespace_filter)
-    rows = db.execute(statement).all()
-    return [{"id": str(permission.id), "code": permission.code,
+    total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+    rows = db.execute(
+        statement.order_by(Permission.catalog_namespace, Permission.code).limit(limit).offset(offset),
+    ).all()
+    items = [{"id": str(permission.id), "code": permission.code,
              "catalog_namespace": permission.catalog_namespace,
              "resource_type": permission.resource_type, "scope": permission.scope,
              "description": permission.description, "status": permission.status,
@@ -564,6 +586,7 @@ def list_permissions(
              "requires_data_scope": permission.requires_data_scope,
              "assigned_role_count": int(assigned_role_count)}
             for permission, assigned_role_count in rows]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
 
 
 @router.post("/permissions", status_code=201)
@@ -666,6 +689,29 @@ def list_role_permissions(role_id: UUID, actor: User = Depends(current_user),
             for grant, permission in rows]
 
 
+def _assert_role_permission_scope(role: Role, permission_ids: list[UUID], db: Session) -> None:
+    """按角色 kind + 应用命名空间拒绝新增越域码；历史已持有豁免。"""
+    current_ids = set(db.scalars(select(RolePermission.permission_id).where(
+        RolePermission.role_id == role.id,
+        RolePermission.resource_id.is_(None),
+    )).all())
+    proposed = db.scalars(select(Permission).where(
+        Permission.id.in_(permission_ids),
+    )).all() if permission_ids else []
+    if len(proposed) != len(set(permission_ids)):
+        raise HTTPException(422, "权限目录中存在无效权限")
+    application_namespace = None
+    if role.application_id:
+        application = db.get(Application, role.application_id)
+        application_namespace = application.permission_namespace if application else None
+    assert_role_kind_grant_permissions(
+        kind=role.kind,
+        application_namespace=application_namespace,
+        proposed=proposed,
+        current_ids=current_ids,
+    )
+
+
 @router.post("/roles/{role_id}/permissions/preview")
 def preview_role_permission_update(role_id: UUID, body: RolePermissionsPreview,
                                    actor: User = Depends(current_user),
@@ -678,6 +724,7 @@ def preview_role_permission_update(role_id: UUID, body: RolePermissionsPreview,
         raise HTTPException(404, "角色不存在")
     # 非 L1 只能预览其租户范围内的角色授权变更。
     ensure_tenant_in_actor_scope(actor, db, role.tenant_id)
+    _assert_role_permission_scope(role, body.permission_ids, db)
     try:
         return preview_role_permissions(role_id, body.permission_ids, db)
     except LookupError as error:
@@ -702,6 +749,7 @@ def replace_role_permissions(role_id: UUID, body: RolePermissionsUpdate, request
         if authority_ids & set(body.permission_ids):
             forbidden = sorted(AUTHORITY_MANAGE_CODES)
             raise HTTPException(422, f"自定义角色不可包含授权类权限：{', '.join(forbidden)}")
+    _assert_role_permission_scope(role, body.permission_ids, db)
     try:
         impact = apply_role_permissions(
             role_id, body.permission_ids, body.expected_current_permission_ids, db,

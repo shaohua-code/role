@@ -6,6 +6,7 @@ import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
 import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
 import AdminSearchField from '@/components/AdminSearchField.vue'
+import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 
 interface ApplicationRef {
   id: string
@@ -46,18 +47,22 @@ const changingPermissionId = ref('')
 const form = reactive({ code: '', resource_type: '', scope: '', description: '' })
 let requestSequence = 0
 
-// 绿场 §6.5：权限登记/停用是 rbac.permission.manage（仅 L1）；L2 应用管理员只读目录。
-const canManageCatalog = computed(() => Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('rbac.permission.manage'))
+// 业务码登记：L1（rbac.permission.manage）或钉住该应用的管理者（L2 app.admin / L3 本租户，以后端 can_manage 为准）。
+const canRegisterCatalog = computed(() => {
+  if (Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('rbac.permission.manage')) return true
+  return props.application?.can_manage === true
+})
+// 启停仍走平台目录 PATCH /admin/permissions/{id}/status，仅 L1。
+const canChangeStatus = computed(() => Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('rbac.permission.manage'))
 
 function applicationPath(path: string): string {
   return `${props.apiPrefix}${path}`
 }
 
 const columns = [
-  { title: '权限编码', dataIndex: 'code', key: 'code', width: 220 },
+  { title: '权限编码', dataIndex: 'code', key: 'code', width: 280 },
   { title: '资源类型', dataIndex: 'resource_type', key: 'resource_type', width: 120 },
   { title: 'Scope', dataIndex: 'scope', key: 'scope', width: 100 },
-  { title: '说明', dataIndex: 'description', key: 'description', ellipsis: true },
   { title: '已授角色', dataIndex: 'assigned_role_count', key: 'assigned_role_count', width: 90 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 90 },
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 100, fixed: 'right' as const },
@@ -107,6 +112,14 @@ function openCreate(): void {
   createOpen.value = true
 }
 
+function fullPermissionCode(): string {
+  const namespace = props.application?.permission_namespace || ''
+  const raw = form.code.trim().replace(/^\.+/, '')
+  if (!raw) return ''
+  if (raw === namespace || raw.startsWith(`${namespace}.`)) return raw
+  return `${namespace}.${raw}`
+}
+
 async function createPermission(): Promise<void> {
   if (!props.application) return
   creating.value = true
@@ -114,7 +127,7 @@ async function createPermission(): Promise<void> {
     await api(applicationPath(`/applications/${props.application.id}/permissions`), {
       method: 'POST',
       body: JSON.stringify({
-        code: form.code.trim(),
+        code: fullPermissionCode(),
         resource_type: form.resource_type.trim(),
         scope: form.scope.trim(),
         description: form.description.trim() || null,
@@ -169,17 +182,13 @@ watch([() => props.active, () => props.application?.id], ([active]) => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <a-alert
-      v-if="application"
-      type="info"
-      show-icon
-      :message="`命名空间：${application.permission_namespace}（权限编码须以该前缀登记）`"
-    />
-    <div class="flex flex-wrap items-center gap-3">
-      <AdminSearchField v-model="searchText" placeholder="搜索编码、资源类型或说明" class="min-w-[200px] flex-1" />
-      <a-button v-if="canManageCatalog" type="primary" @click="openCreate">新建权限</a-button>
-      <a-button :loading="loading" @click="loadPermissions">刷新</a-button>
-    </div>
+    <AdminTableToolbar :hint="`命名空间 ${application?.permission_namespace || ''}：业务编码须以该前缀登记，前缀已锁定不可改。`">
+      <AdminSearchField v-model="searchText" placeholder="搜索编码、资源类型或说明" />
+      <template #actions>
+        <a-button :loading="loading" :disabled="!application" @click="loadPermissions">刷新</a-button>
+        <a-button v-if="canRegisterCatalog" type="primary" @click="openCreate">新建权限</a-button>
+      </template>
+    </AdminTableToolbar>
     <a-table
       :columns="columns"
       :data-source="filteredPermissions"
@@ -190,12 +199,18 @@ watch([() => props.active, () => props.application?.id], ([active]) => {
       :scroll="{ x: 640 }"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'status'">
+        <template v-if="column.key === 'code'">
+          <div class="flex min-w-0 flex-col gap-0.5">
+            <span class="truncate text-[13px] text-[var(--color-text-primary)]">{{ record.description || record.code }}</span>
+            <span class="font-mono text-xs text-[var(--color-text-muted)]">{{ record.code }}</span>
+          </div>
+        </template>
+        <template v-else-if="column.key === 'status'">
           <a-tag :color="record.status === 'active' ? 'success' : 'default'">{{ record.status === 'active' ? '启用' : '停用' }}</a-tag>
         </template>
         <template v-else-if="column.key === 'actions'">
           <a-button
-            v-if="canManageCatalog"
+            v-if="canChangeStatus"
             type="link"
             size="small"
             :loading="changingPermissionId === record.id"
@@ -209,11 +224,13 @@ watch([() => props.active, () => props.application?.id], ([active]) => {
 
     <a-modal v-model:open="createOpen" title="登记应用权限" ok-text="创建" cancel-text="取消" :confirm-loading="creating" @ok="createPermission">
       <a-form layout="vertical">
-        <a-form-item label="命名空间">
-          <a-input :value="application?.permission_namespace" disabled />
-        </a-form-item>
-        <a-form-item label="权限编码" required>
-          <a-input v-model:value="form.code" :placeholder="`${application?.permission_namespace}.resource.action`" :maxlength="180" />
+        <a-form-item label="权限编码" required help="前缀已锁定为本应用命名空间；只需填写 resource.action">
+          <a-input
+            v-model:value="form.code"
+            :addon-before="`${application?.permission_namespace}.`"
+            placeholder="resource.action"
+            :maxlength="180"
+          />
         </a-form-item>
         <a-form-item label="资源类型" required>
           <a-input v-model:value="form.resource_type" :maxlength="100" />

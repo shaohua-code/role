@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import type { TablePaginationConfig } from 'ant-design-vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
 import { cachedHas } from '@/api/capabilities'
@@ -7,6 +8,7 @@ import { DownOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import RolePermissionGrantModal from '@/components/RolePermissionGrantModal.vue'
+import { asPagedList } from '@/utils/paged'
 
 interface TenantOption { id: string; name: string; status: string }
 interface ApplicationOption { id: string; tenant_id: string; name: string; status: string; permission_namespace?: string }
@@ -21,24 +23,20 @@ interface RoleRecord {
   status: string
   permission_codes: string[]
 }
-interface PermissionRecord { id: string; code: string; resource_type: string; scope: string; status: 'active' | 'disabled' }
+interface PermissionRecord { id: string; code: string; description?: string | null; resource_type: string; scope: string; status: 'active' | 'disabled' }
 /** API 中通用授权与资源实例授权共用的视图；资源编辑器只操作非空 resource_id。 */
 interface RolePermissionGrant { permission_id: string; code: string; description?: string | null; resource_id: string | null }
 interface ResourcePermissionGrant extends RolePermissionGrant { resource_id: string }
 interface DataScopePolicy { permission_id: string; scope_type: string; organization_ids: string[] }
-interface DataScopeEntry { permission_id: string; permission_code: string; scope_type: string; organization_ids: string[] }
+interface DataScopeEntry { permission_id: string; permission_code: string; permission_description: string; scope_type: string; organization_ids: string[] }
 
 const props = defineProps<{
   active: boolean
   tenants: TenantOption[]
   applications: ApplicationOption[]
-  shellRoles?: RoleRecord[] | null
-  shellCatalogGeneration?: number
 }>()
 const emit = defineEmits<{ changed: [] }>()
 const canManageRoles = computed(() => cachedHas('rbac.role.manage'))
-
-let hydratedCatalogGeneration = -1
 
 const roles = ref<RoleRecord[]>([])
 // undefined 才能触发 Select 的 placeholder；'' 会被当作已选值导致空框无占位文案
@@ -50,9 +48,19 @@ const kindOptions = [
   { value: 'tenant', label: '租户角色' },
   { value: 'application', label: '应用角色' },
 ]
+const statusFilter = ref<string | undefined>(undefined)
+const statusOptions = [
+  { value: 'active', label: '启用' },
+  { value: 'disabled', label: '停用' },
+]
 const searchText = ref('')
+const submittedQuery = ref('')
 const loading = ref(false)
 const errorText = ref('')
+// G29 角色列表走服务端真分页，不再用前端切片冒充完整目录。
+const listPage = ref(1)
+const listPageSize = ref(20)
+const listTotal = ref(0)
 const editorOpen = ref(false)
 const savingRole = ref(false)
 const editingRole = ref<RoleRecord | null>(null)
@@ -108,15 +116,10 @@ const tenantOptions = computed(() => props.tenants.map(tenant => ({ value: tenan
 const applicationOptions = computed(() => props.applications
   .filter(application => application.tenant_id === form.tenant_id && application.status === 'active')
   .map(application => ({ value: application.id, label: application.name })))
-const filteredRoles = computed(() => {
-  const query = searchText.value.trim().toLocaleLowerCase()
-  return roles.value.filter(role => {
-    const matchesTenant = !tenantFilter.value || role.tenant_id === tenantFilter.value
-    const matchesKind = !kindFilter.value || role.kind === kindFilter.value
-    const matchesQuery = !query || `${role.name} ${role.key} ${role.description || ''}`.toLocaleLowerCase().includes(query)
-    return matchesTenant && matchesKind && matchesQuery
-  })
-})
+// 服务端筛选是否生效：有任一条件就不能复用壳层全量 500 条
+function hasServerFilters(): boolean {
+  return Boolean(submittedQuery.value || tenantFilter.value || kindFilter.value || statusFilter.value)
+}
 
 const columns = [
   { title: '角色名称', dataIndex: 'name', key: 'name', width: 168, ellipsis: true },
@@ -187,30 +190,45 @@ function deleteRole(role: RoleRecord): void {
   })
 }
 
-function hydrateFromShell(): boolean {
-  if (props.shellRoles == null) return false
-  const generation = props.shellCatalogGeneration ?? -1
-  if (generation < 0 || generation === hydratedCatalogGeneration) return false
-  roles.value = props.shellRoles
-  hydratedCatalogGeneration = generation
-  return true
-}
-
 async function loadRoles(): Promise<void> {
   if (!props.active) return
   const sequence = ++requestSequence
   loading.value = true
   errorText.value = ''
   try {
-    const result = await api<RoleRecord[]>('/admin/roles')
-    if (sequence === requestSequence && props.active) roles.value = result
+    const params = new URLSearchParams()
+    if (submittedQuery.value) params.set('q', submittedQuery.value)
+    if (kindFilter.value) params.set('kind', kindFilter.value)
+    if (tenantFilter.value) params.set('tenant_id', tenantFilter.value)
+    if (statusFilter.value) params.set('status', statusFilter.value)
+    params.set('limit', String(listPageSize.value))
+    params.set('offset', String((listPage.value - 1) * listPageSize.value))
+    const result = await api<RoleRecord[] | { items: RoleRecord[]; total: number }>(`/admin/roles?${params}`)
+    if (sequence === requestSequence && props.active) {
+      const paged = asPagedList(result)
+      roles.value = paged.items
+      listTotal.value = paged.total
+    }
   } catch (error) {
     if (sequence !== requestSequence) return
     roles.value = []
+    listTotal.value = 0
     errorText.value = error instanceof Error ? error.message : '读取角色目录失败'
   } finally {
     if (sequence === requestSequence) loading.value = false
   }
+}
+
+function onSearch(query: string): void {
+  submittedQuery.value = query
+  listPage.value = 1
+  void loadRoles()
+}
+
+function onTableChange(pagination: TablePaginationConfig): void {
+  listPage.value = pagination.current || 1
+  listPageSize.value = pagination.pageSize || 20
+  void loadRoles()
 }
 
 function openCreate(): void {
@@ -281,6 +299,8 @@ function validateRoleForm(): boolean {
 async function saveRole(): Promise<void> {
   if (!validateRoleForm()) return
   const editing = editingRole.value
+  // 新建成功后要立刻挂码，先记下作用域，避免关弹窗后表单被清空
+  const createdApplicationId = form.application_id || null
   const payload = editing
     ? { name: form.name.trim(), description: form.description.trim() || null }
     : {
@@ -292,13 +312,31 @@ async function saveRole(): Promise<void> {
       }
   savingRole.value = true
   try {
-    await api(editing ? `/admin/roles/${editing.id}` : '/admin/roles', {
+    const created = await api<RoleRecord>(editing ? `/admin/roles/${editing.id}` : '/admin/roles', {
       method: editing ? 'PATCH' : 'POST', body: JSON.stringify(payload),
     })
     message.success(editing ? '角色已更新' : '角色已创建')
     editorOpen.value = false
     await loadRoles()
     emit('changed')
+    if (!editing && created?.id) {
+      Modal.confirm({
+        title: '角色已创建，现在配置权限？',
+        content: '为该角色挂上权限编码后，成员才能真正获得能力。',
+        okText: '去挂码',
+        cancelText: '稍后',
+        onOk: () => {
+          openGrantEditor({
+            ...created,
+            application_id: created.application_id ?? createdApplicationId,
+            kind: created.kind || (createdApplicationId ? 'application' : 'tenant'),
+            description: created.description ?? null,
+            status: created.status || 'active',
+            permission_codes: created.permission_codes || [],
+          })
+        },
+      })
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : editing ? '更新角色失败' : '创建角色失败')
   } finally {
@@ -420,7 +458,7 @@ async function openResourceGrantEditor(role: RoleRecord): Promise<void> {
   resourceGrantDialogOpen.value = true
   resourceGrantLoading.value = true
   try {
-    const permissions = await api<PermissionRecord[]>('/admin/permissions')
+    const permissions = asPagedList(await api<PermissionRecord[] | { items: PermissionRecord[] }>('/admin/permissions?limit=1000')).items
     resourcePermissionOptions.value = permissions.filter(permission => permission.status === 'active')
     await loadResourcePermissionGrants()
   } catch (error) {
@@ -508,7 +546,7 @@ async function openDataScopeEditor(role: RoleRecord): Promise<void> {
   dataScopeRoleId.value = role.id
   try {
     const [permissions, organizations, configured] = await Promise.all([
-      api<PermissionRecord[]>('/admin/permissions'),
+      api<PermissionRecord[] | { items: PermissionRecord[] }>('/admin/permissions?limit=1000').then(result => asPagedList(result).items),
       api<{ id: string; key: string; name: string; status: string }[]>(`/admin/organizations?tenant_id=${encodeURIComponent(role.tenant_id)}`),
       api<{ permission_id: string; scope_type: string; organization_ids: string[] }[]>(`/admin/roles/${role.id}/data-scopes`),
     ])
@@ -521,6 +559,7 @@ async function openDataScopeEditor(role: RoleRecord): Promise<void> {
       return {
         permission_id: permission.id,
         permission_code: permission.code,
+        permission_description: permission.description?.trim() || '',
         scope_type: policy?.scope_type || '',
         organization_ids: policy?.organization_ids || [],
       }
@@ -570,13 +609,12 @@ function applicationName(id: string | null): string {
 
 watch(() => props.active, active => {
   if (!active) return
-  // 平台壳已预拉角色目录时复用，避免路由激活重复请求 /admin/roles。
-  if (hydrateFromShell()) return
   void loadRoles()
 }, { immediate: true })
 
-watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, () => {
-  if (props.active) hydrateFromShell()
+watch([tenantFilter, kindFilter, statusFilter], () => {
+  listPage.value = 1
+  if (props.active) void loadRoles()
 })
 </script>
 
@@ -585,25 +623,27 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
     eyebrow="角色管理"
     title="角色管理"
     subtitle="维护角色定义并把权限码挂载到角色，前端用码控制、后端只判角色。"
-    :hint="`授权遵循默认拒绝；数据范围按同一权限的多角色策略取并集，缺少有效策略时默认拒绝。当前 ${filteredRoles.length} 条角色 · 最多读取 500 条`"
+    :hint="`授权遵循默认拒绝；数据范围按同一权限的多角色策略取并集，缺少有效策略时默认拒绝。共 ${listTotal} 条角色`"
     :columns="columns"
-    :data-source="filteredRoles"
+    :data-source="roles"
     :loading="loading"
     row-key="id"
     class="scroll-actions-on-mobile"
     :scroll="{ x: 1076, y: 'calc(100vh - 430px)' }"
-    :pagination="{ pageSize: 10, showSizeChanger: true }"
+    :pagination="{ current: listPage, pageSize: listPageSize, total: listTotal, showSizeChanger: true, showTotal: (total: number) => `共 ${total} 条` }"
+    @table-change="onTableChange"
     :error-text="errorText"
     empty-emoji="🎭"
-    :empty-text="searchText || tenantFilter || kindFilter ? '没有匹配条件的角色' : '暂无角色，可创建角色后配置权限'"
+    :empty-text="hasServerFilters() ? '没有匹配条件的角色' : '暂无角色，可创建角色后配置权限'"
   >
     <template #header-extra>
       <a-button v-if="canManageRoles" type="primary" @click="openCreate">＋ 新建角色</a-button>
     </template>
-    <AdminSearchField v-model="searchText" placeholder="搜索角色名称、标识或说明" :submit-on-clear="false" />
-    <a-select v-model:value="tenantFilter" allow-clear show-search option-filter-prop="label" placeholder="全部租户" :options="tenantOptions" />
+    <AdminSearchField v-model="searchText" placeholder="搜索角色名称、标识或说明" @search="onSearch" />
+    <a-select v-model:value="tenantFilter" allow-clear show-search option-filter-prop="label" placeholder="全部租户" :options="tenantOptions" class="admin-filter-wide" />
     <!-- P386 作用域筛选：平台/租户/应用三级角色分流查看 -->
-    <a-select v-model:value="kindFilter" allow-clear placeholder="全部类型" :options="kindOptions" class="role-kind-filter" />
+    <a-select v-model:value="kindFilter" allow-clear placeholder="全部类型" :options="kindOptions" />
+    <a-select v-model:value="statusFilter" allow-clear placeholder="全部状态" :options="statusOptions" />
     <template #actions>
       <a-button :loading="loading" @click="loadRoles">刷新</a-button>
     </template>
@@ -619,7 +659,9 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
       <template v-else-if="column.key === 'application_id'">{{ applicationName(record.application_id ? String(record.application_id) : null) }}</template>
       <template v-else-if="column.key === 'permission_codes'">
         <a-tooltip :title="Array.isArray(record.permission_codes) ? record.permission_codes.join('、') || '尚未授予权限' : ''">
-          <a-tag>{{ Array.isArray(record.permission_codes) ? `${record.permission_codes.length} 项` : '0 项' }}</a-tag>
+          <a-button type="link" size="small" class="px-0" @click="openGrantEditor(record as RoleRecord)">
+            {{ Array.isArray(record.permission_codes) ? `${record.permission_codes.length} 项` : '0 项' }}
+          </a-button>
         </a-tooltip>
       </template>
       <template v-else-if="column.key === 'status'">
@@ -635,7 +677,7 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
           </a-button>
           <template #overlay>
             <a-menu @click="onRowMenuClick($event, record as RoleRecord)">
-              <a-menu-item key="resource">资源授权</a-menu-item>
+              <a-menu-item key="resource">实例资源授权</a-menu-item>
               <a-menu-item key="dataScope">数据范围</a-menu-item>
               <a-menu-item key="holders">查看持有者</a-menu-item>
               <a-menu-item key="clone">复制</a-menu-item>
@@ -645,7 +687,7 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
             </a-menu>
           </template>
         </a-dropdown>
-        <a-button v-if="!canManageRoles" type="link" size="small" :danger="record.status === 'active'" @click="confirmStatusChange(record as RoleRecord)">{{ record.status === 'active' ? '停用' : '启用' }}</a-button>
+        <a-button v-if="!canManageRoles" type="link" size="small" @click="openGrantEditor(record as RoleRecord)">查看权限</a-button>
       </template>
     </template>
   </AdminListPage>
@@ -736,18 +778,18 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
     :lock-authority-codes="grantRoleKey !== '' && !TEMPLATE_ROLE_KEYS.has(grantRoleKey)"
     :role-kind="grantRoleKind"
     :role-namespace="grantRoleNamespace"
-    catalog-path="/admin/permissions"
+    catalog-path="/admin/permissions?limit=1000"
     :grants-path="grantRoleId ? `/admin/roles/${grantRoleId}/permissions` : ''"
     @saved="onGrantsSaved"
   />
 
-  <a-modal v-model:open="resourceGrantDialogOpen" title="配置资源级授权" width="820px" :footer="null">
+  <a-modal v-model:open="resourceGrantDialogOpen" title="配置实例资源授权" width="820px" :footer="null">
     <div class="resource-grant-editor">
       <a-alert
         type="info"
         show-icon
-        message="资源级权限按 permission code + resource ID 精确匹配"
-        description="资源 ID 使用业务系统自己的稳定标识（例如业务对象的 UUID）。不填资源 ID 的通用授权仍覆盖该权限范围；业务服务必须在查询时执行这个条件。"
+        message="实例资源授权按权限编码 + 资源 ID 精确匹配，与工作台「配置资源」（应用资源树）不是一回事"
+        description="资源 ID 使用业务系统自己的稳定标识（例如业务对象的 UUID）。日常菜单/按钮授权请走应用工作台「配置资源」。"
       />
       <a-alert v-if="resourceGrantError" type="error" show-icon :message="resourceGrantError" />
       <div class="resource-grant-form">
@@ -801,7 +843,10 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
     <a-alert class="scope-modal-help" type="info" show-icon message="策略按同一权限的多角色结果取并集。未配置有效数据范围的业务请求默认拒绝。" />
     <div v-if="!dataScopeEntries.length" class="scope-empty">请先为该角色配置至少一项权限，再添加对应的数据范围。</div>
     <div v-for="entry in dataScopeEntries" :key="entry.permission_id" class="scope-policy-row">
-      <strong>{{ entry.permission_code }}</strong>
+      <div class="flex min-w-0 flex-col">
+        <strong>{{ entry.permission_description || entry.permission_code }}</strong>
+        <span class="font-mono text-xs text-[var(--color-text-muted)]">{{ entry.permission_code }}</span>
+      </div>
       <a-select v-model:value="entry.scope_type" allow-clear placeholder="不授予数据范围" :options="[{ value: 'tenant', label: '当前租户全部数据' }, { value: 'self', label: '仅本人数据' }, { value: 'organization', label: '所属组织' }, { value: 'organization_tree', label: '所属组织及下级' }, { value: 'selected_organizations', label: '指定组织' }]" />
       <a-select v-if="entry.scope_type === 'selected_organizations'" v-model:value="entry.organization_ids" mode="multiple" :options="dataScopeOrganizationOptions" placeholder="选择允许访问的组织" />
     </div>
@@ -862,7 +907,7 @@ watch(() => [props.shellCatalogGeneration, props.shellRoles?.length] as const, (
   border: 1px solid var(--color-border);
 }
 .kind-chip.kind-platform { color: var(--color-text-primary); border-color: var(--color-border-strong); font-weight: 600; }
-.kind-chip.kind-app { border-style: dashed; }
+.kind-chip.kind-application { border-style: dashed; }
 .scope-hint { margin-bottom: 16px; }
 /* P390 作用域向导三卡：平台禁选置灰，选中黑边浅底（与授权弹窗卡片语言一致） */
 .scope-wizard { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }

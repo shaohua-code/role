@@ -17,7 +17,7 @@ import {
   UserOutlined,
 } from '@/plugins/icons'
 
-/** Admin page keys. 接入向导已下线；工作台为主入口，列表页进「高级管理」。 */
+/** Admin page keys. 接入向导已下线；运营总览为 L1 入口，日常主路径是两个工作台，列表页进「高级管理」。 */
 export type PageKey = 'overview' | 'tenants' | 'applications' | 'application_workspace' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'organization_workspace' | 'tenant_access' | 'roles' | 'permissions' | 'authorization_simulation' | 'models' | 'model_usage' | 'themes' | 'audit'
 
 /** Sidebar groups aligned with user-centent IA + 高级收口。 */
@@ -71,7 +71,7 @@ export const NAV_GROUPS: NavGroupMeta[] = [
  * 散页列表（应用/角色/权限编码/组织/用户组）降级到「高级管理」，路由与深链保留。
  */
 export const NAV_ITEMS: NavigationItem[] = [
-  { key: 'overview', icon: AppstoreOutlined, label: '工作台', group: 'root', requiredPermissions: ['platform.overview.read'] },
+  { key: 'overview', icon: AppstoreOutlined, label: '运营总览', group: 'root', requiredPermissions: ['platform.overview.read'] },
 
   { key: 'organization_workspace', icon: ApartmentOutlined, label: '组织工作台', group: 'identity', requiredPermissions: ['org.read', 'org.group.read'] },
   { key: 'users', icon: UserOutlined, label: '用户管理', group: 'identity', requiredPermissions: ['platform.account.read', 'org.member.read'] },
@@ -100,7 +100,7 @@ export const TENANT_MERGED_PAGES: Partial<Record<PageKey, PageKey>> = {
 }
 
 export const PAGE_INFO: Record<PageKey, { title: string }> = {
-  overview: { title: '工作台' },
+  overview: { title: '运营总览' },
   tenants: { title: '租户管理' },
   applications: { title: '应用管理' },
   application_workspace: { title: '应用工作台' },

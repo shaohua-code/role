@@ -7,6 +7,7 @@ import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
 import { ExclamationCircleOutlined } from '@/plugins/icons'
 import { isManagementCode, PERMISSION_CLASSES, SCOPE_LEVEL_LABELS, SCOPE_LEVEL_ORDER, SCOPE_LEVEL_TIPS, permissionNamespace, resolvePermissionClass, resolvePermissionScope } from '@/utils/permissionGroups'
+import { asPagedList } from '@/utils/paged'
 
 interface PermissionRecord { id: string; code: string; description?: string | null; status: 'active' | 'disabled' }
 interface PermissionGrant { permission_id: string; resource_id: string | null }
@@ -27,7 +28,7 @@ const props = withDefaults(defineProps<{
   roleName?: string
   catalogPath: string
   grantsPath: string
-  // 应用侧规则：iam.* 管理码禁止新增（只能保留/撤销）；平台侧规则：仅停用码禁选
+  // 应用侧规则：五域管理码禁止新增（只能保留/撤销）；平台侧规则：仅停用码禁选
   disableIamCodes?: boolean
   // 管理员不能管理管理员：自定义角色禁选授权权码（已持有的也会被强制取消，后端同口径 422 兜底）
   lockAuthorityCodes?: boolean
@@ -196,7 +197,7 @@ async function loadGrants(): Promise<void> {
   impactPreviewKey.value = ''
   try {
     const [catalog, grants] = await Promise.all([
-      api<PermissionRecord[]>(props.catalogPath),
+      api<PermissionRecord[] | { items: PermissionRecord[] }>(props.catalogPath).then(result => asPagedList(result).items),
       api<PermissionGrant[]>(props.grantsPath),
     ])
     if (!open.value) return

@@ -1,5 +1,9 @@
 # 后端技术、目录与接口说明
 
+**2026-10-29 P403：** G27 入口消歧、G28 用户有效权限、G29 角色/权限真分页、G32 L3 模板剥 `rbac.permission.manage`（20 码）。`GET /admin/roles` 与 `GET /admin/permissions` 改为 `{items,total,limit,offset}`；`GET /admin/users/{id}/profile` 追加 `effective_permissions`。无迁移。
+
+**2026-10-29 P402：** 产品裁决 L3 可建/改本租户应用。`has_application_admin_access` 认 `tenant.admin` ∪ 钉住应用的 `app.admin`；`list_readable_application_capabilities` 对 L3 短接租户内全可管。新增 `tests/test_application_admin_access.py`。无迁移。
+
 **2026-10-17 P312 授权批量判定端点：** 新增 `POST /api/v1/authorization/check-batch`——`AuthorizationCheckBatch` schema（`permission_codes` 1–32 个、去重校验）+ 逐码复用 `/check` 同一判定路径（抽出 `_public_decision` 共享响应逻辑，无批量旁路）；配套契约测试 `tests/test_authorization_check_batch.py` 6 例。前端管理台租户控制台改为单次批量调用（消除每 membership 5 路逐码请求）。验证：一次性容器契约测试 6/6；dev 容器运行时冒烟 401/200 且与单码 `/check` 输出逐字节一致；`vue-tsc`/Vite build 通过；`verify-local.ps1` 全量套件见 [CHANGELOG](../CHANGELOG.md) 2026-10-17 P312/P314。无 schema/迁移。
 
 **2026-10-16 P298 模型用量筛选：** `summary` 与 `events` 增加可选 `model_id`、`outcome`、`created_from`、`created_to`（UTC 自然日，结束日含当天；开始晚于结束返回 400）。待核对列表不变。无 schema/迁移。API 容器契约测试 6/6；开发库集成测试未跑。只读确认 current=head=0031、ready 200。币种和失败原因字段仍没有。详见[验收记录](../docs/验收记录.md)。
@@ -338,9 +342,11 @@ AI 简历 Express 是首个接入服务：已显式绑定 IAM 的账户在简历
 - 角色复制通过 `RoleCloneRequest.copy_authorizations` 逐次选择授权策略，默认 `false`；启用时只复制状态为 active 的权限授予（保留 `resource_id`）及同权限数据范围，停用权限的历史授予不进入新副本。源角色状态为 disabled 时副本继续 disabled。六项隔离 SQLite 测试覆盖默认清空、显式复制、停用权限过滤、成员/组绑定隔离、重复 key 事务回滚及源角色不存在；真实 PostgreSQL 并发及浏览器写入仍待专项验收。
 - `POST /api/v1/authorization/check`：认证用户在其有效租户成员关系下执行默认拒绝 RBAC 判定；仅对允许的 OIDC 请求附带已验签上下文 `application_id`，供受信业务服务关联用量，不能从请求体伪造。
 - `POST /api/v1/admin/authorization/simulate`：仅平台管理员可调用；指定成员与授权请求后，调用共享 `app/services/authorization.py` 规则评估器，返回判定、检查原因、命中角色与可选数据范围。此接口不写授权/审计数据；业务 `/authorization/check` 仍仅返回 `decision`，不泄露诊断明细。
-- `GET /api/v1/admin/roles/{id}/permissions` 返回角色通用及资源实例授权；`POST /api/v1/admin/roles/{id}/permissions/preview` 只读比较拟保存的通用权限，统计直接绑定及活动用户组继承的去重活动成员，逐权限扣除适用范围内其它活动角色的通用授权覆盖，并列出失去最后一条授权时将删除的数据范围策略。实例级授权、逐业务资源和数据范围没有逐项求值，人数仍是潜在覆盖估算，不代表精确净差异。
-- `PUT /api/v1/admin/roles/{id}/permissions` 锁定角色并原子替换通用授权、清理已无任何授权依托的数据范围，单事务写审计；必须带预览时的 `expected_current_permission_ids`，若预览后并发变更则返回 409。资源实例授权保留。旧单项 PUT/DELETE API 仍兼容。
-- `GET/POST /api/v1/admin/permissions` 返回稳定编码、状态及引用角色数；`PATCH /api/v1/admin/permissions/{id}/status` 要求 `expected_status` 并在同事务写审计。停用权限被在线 RBAC 判定排除，新角色不能授予；已有授权和数据范围保留。恢复会使剩余历史授权重新生效。
+- `GET /api/v1/admin/roles` 支持可选 `q/kind/tenant_id/application_id/status` 服务端过滤，返回 `{items,total,limit,offset}`（默认 50、上限 500）；`q` 匹配名称、标识或说明。
+- `GET /api/v1/admin/users/{id}/profile` 聚合资料、成员关系、角色绑定、有效权限码并集（直授/用户组来源）、活动会话与最近认证事件。
+- `GET /api/v1/admin/roles/{id}/permissions` 返回角色通用及资源实例授权；`POST /api/v1/admin/roles/{id}/permissions/preview` 只读比较拟保存的通用权限，统计直接绑定及活动用户组继承的去重活动成员，逐权限扣除适用范围内其它活动角色的通用授权覆盖，并列出失去最后一条授权时将删除的数据范围策略。实例级授权、逐业务资源和数据范围没有逐项求值，人数仍是潜在覆盖估算，不代表精确净差异。预览与保存均按角色 `kind` 拒绝**新增**越域码（与授权弹窗矩阵一致，历史已持有允许保留/撤销）。
+- `PUT /api/v1/admin/roles/{id}/permissions` 锁定角色并原子替换通用授权、清理已无任何授权依托的数据范围，单事务写审计；必须带预览时的 `expected_current_permission_ids`，若预览后并发变更则返回 409。越域新增返回 422。资源实例授权保留。旧单项 PUT/DELETE API 仍兼容。
+- `GET/POST /api/v1/admin/permissions` 返回稳定编码、状态及引用角色数；列表为 `{items,total,limit,offset}`（默认/上限 1000）。`PATCH /api/v1/admin/permissions/{id}/status` 要求 `expected_status` 并在同事务写审计。停用权限被在线 RBAC 判定排除，新角色不能授予；已有授权和数据范围保留。恢复会使剩余历史授权重新生效。SDK `list_permissions` 兼容包装对象与旧裸数组。
 - 鉴权依赖严格分开验证管理会话 HS256 和 OIDC RS256 access token；两种 JWT 都必须带唯一随机 `jti` 且未在撤销表中。OIDC token 必须为 `token_use=access_token` 且 `aud == client_id`，并在线检查用户、活动租户/应用、租户成员和至少一个匹配角色。停用、撤销角色或撤销 token 会立即拒绝后续在线授权接口请求；OIDC token 不能调用平台管理员接口。
 - OIDC access token 包含 `tenant_id`，授权检查中的 tenant/application 被绑定到签发上下文；`application_id` 可省略（后端使用 token 对应应用），提交其它应用或租户会默认拒绝。允许结果会回传该 token 绑定的 `application_id`，便于受信业务后端向内部模型用量 API 提交可信关联。HS256 管理令牌保留现有管理 API 行为。
 - `GET/POST/PATCH /api/v1/admin/organizations`：按租户维护组织父子关系和启停；父节点、成员组织关系有数据库复合外键确保同租户。列表响应含 `parent_id`（组织工作台前端拼层级树用，旧字段 `parent_name` 保留）。

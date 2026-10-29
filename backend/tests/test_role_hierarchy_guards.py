@@ -4,7 +4,7 @@
 1. 平台侧 replace_role_permissions：自定义角色含授权权码 → 422；模板角色放行；
 2. 租户应用侧 replace_application_role_permissions：自定义应用角色同样 422；
 3. clone_role：克隆产物为自定义角色时剥离授权权码；
-4. 预置模板：L3 恰好 21 码（覆盖全部授权权码）、L2 恰好 15 码、L4 零管理面码，且幂等。
+4. 预置模板：L3 恰好 20 码（覆盖全部授权权码；平台目录写 rbac.permission.manage 仅 L1）、L2 恰好 15 码、L4 零管理面码，且幂等。
 """
 
 import unittest
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.api.v1.admin.access_control import clone_role, replace_role_permissions
+from app.api.v1.admin.access_control import clone_role, list_roles, replace_role_permissions
 from app.api.v1.tenant_admin.application_roles import replace_application_role_permissions
 from app.db.base import Base
 from app.models.application import Application
@@ -40,7 +40,7 @@ from app.services.role_provisioning import (
 def _seed_permission_catalog(db: Session) -> dict[str, Permission]:
     """为模板码全集建立目录行；IAM 管理面码不强制数据范围。"""
     rows = []
-    for code in sorted(set(L3_PERMISSION_CODES) | set(L2_PERMISSION_CODES)):
+    for code in sorted(set(L3_PERMISSION_CODES) | set(L2_PERMISSION_CODES) | {"rbac.permission.manage"}):
         rows.append(Permission(
             code=code,
             catalog_namespace="iam",
@@ -180,12 +180,82 @@ class RoleHierarchyGuardTests(unittest.TestCase):
 
     # ---- 模板预置码数 ----
 
+    def _add_permission(self, code: str, catalog_namespace: str) -> Permission:
+        row = Permission(
+            code=code,
+            catalog_namespace=catalog_namespace,
+            resource_type=code.rsplit(".", 1)[0],
+            scope=code.rsplit(".", 1)[-1],
+            surface="management" if catalog_namespace == "platform" else "business",
+            requires_data_scope=catalog_namespace != "platform",
+        )
+        self.db.add(row)
+        self.db.flush()
+        self.catalog[code] = row
+        return row
+
+    def test_tenant_role_rejects_new_platform_scope_on_replace(self) -> None:
+        """租户角色不可新增 L1 专属码（与授权弹窗隐藏组一致）。"""
+        self._add_permission("platform.tenant.read", "platform")
+        role = self.make_role("ops.manager")
+        body = RolePermissionsUpdate(
+            permission_ids=[self.pid("app.read"), self.pid("platform.tenant.read")],
+            expected_current_permission_ids=[],
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            replace_role_permissions(role.id, body, self.request, actor=self.actor, db=self.db)
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertIn("该角色作用域不可新增权限", str(ctx.exception.detail))
+        self.assertEqual(self.held_codes(role), set())
+
+    def test_application_role_keeps_historical_out_of_scope_on_replace(self) -> None:
+        """历史已持有的越域码允许保留；新增其他应用业务码 422。"""
+        self._add_permission("otherapp.item.read", "otherapp")
+        role = self.make_role("viewer", kind="application", application_id=self.application.id)
+        self.grant_codes(role, "org.read")
+        keep_body = RolePermissionsUpdate(
+            permission_ids=[self.pid("org.read")],
+            expected_current_permission_ids=[self.pid("org.read")],
+        )
+        result = replace_role_permissions(role.id, keep_body, self.request, actor=self.actor, db=self.db)
+        self.assertFalse(result["changed"])
+        self.assertEqual(self.held_codes(role), {"org.read"})
+        reject_body = RolePermissionsUpdate(
+            permission_ids=[self.pid("org.read"), self.pid("otherapp.item.read")],
+            expected_current_permission_ids=[self.pid("org.read")],
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            replace_role_permissions(role.id, reject_body, self.request, actor=self.actor, db=self.db)
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(self.held_codes(role), {"org.read"})
+
+    def test_list_roles_filters_by_application_id(self) -> None:
+        app_role = self.make_role("viewer", kind="application", application_id=self.application.id)
+        other = Application(
+            tenant_id=self.tenant.id, client_id=f"client-{uuid4().hex[:8]}",
+            name="另一应用", permission_namespace="otherapp",
+            redirect_uris=["https://b.example.test/cb"], status="active",
+        )
+        self.db.add(other)
+        self.db.flush()
+        other_role = self.make_role("other.viewer", kind="application", application_id=other.id)
+        tenant_role = self.make_role("ops.manager", kind="tenant")
+        result = list_roles(
+            q=None, kind="application", tenant_id=None, application_id=self.application.id,
+            status=None, actor=self.actor, db=self.db,
+        )
+        ids = {row["id"] for row in result["items"]}
+        self.assertIn(str(app_role.id), ids)
+        self.assertNotIn(str(other_role.id), ids)
+        self.assertNotIn(str(tenant_role.id), ids)
+
     def test_provisioned_template_role_code_counts(self) -> None:
         tenant_role = provision_tenant_admin_role(self.db, self.tenant.id)
         app_admin = provision_application_admin_role(self.db, self.tenant.id, self.application.id)
         app_member = provision_application_member_role(self.db, self.tenant.id, self.application.id)
         self.assertEqual(self.held_codes(tenant_role), set(L3_PERMISSION_CODES))
-        self.assertEqual(len(self.held_codes(tenant_role)), 21)
+        self.assertEqual(len(self.held_codes(tenant_role)), 20)
+        self.assertNotIn("rbac.permission.manage", self.held_codes(tenant_role))
         # L3 是授权者来源：覆盖全部四个授权权码。
         self.assertTrue(AUTHORITY_MANAGE_CODES <= self.held_codes(tenant_role))
         self.assertEqual(self.held_codes(app_admin), set(L2_PERMISSION_CODES))
@@ -196,8 +266,32 @@ class RoleHierarchyGuardTests(unittest.TestCase):
         provision_tenant_admin_role(self.db, self.tenant.id)
         provision_application_admin_role(self.db, self.tenant.id, self.application.id)
         self.db.expire_all()
-        self.assertEqual(len(self.held_codes(tenant_role)), 21)
+        self.assertEqual(len(self.held_codes(tenant_role)), 20)
         self.assertEqual(len(self.held_codes(app_admin)), 15)
+
+    def test_provision_tenant_admin_strips_permission_manage(self) -> None:
+        """G32：存量 L3 上的 rbac.permission.manage 在再次预置时被剥离。"""
+        tenant_role = provision_tenant_admin_role(self.db, self.tenant.id)
+        self.db.add(RolePermission(role_id=tenant_role.id, permission_id=self.pid("rbac.permission.manage")))
+        self.db.flush()
+        self.assertIn("rbac.permission.manage", self.held_codes(tenant_role))
+        provision_tenant_admin_role(self.db, self.tenant.id)
+        self.db.expire_all()
+        self.assertNotIn("rbac.permission.manage", self.held_codes(tenant_role))
+        self.assertEqual(len(self.held_codes(tenant_role)), 20)
+
+    def test_list_roles_returns_paged_wrapper(self) -> None:
+        """G29：角色列表带 total，limit 截断当前页而不是静默丢弃。"""
+        self.make_role("ops.one", kind="tenant")
+        self.make_role("ops.two", kind="tenant")
+        result = list_roles(
+            q=None, kind="tenant", tenant_id=self.tenant.id, application_id=None,
+            status=None, limit=1, offset=0, actor=self.actor, db=self.db,
+        )
+        self.assertEqual(result["limit"], 1)
+        self.assertEqual(result["offset"], 0)
+        self.assertGreaterEqual(result["total"], 2)
+        self.assertEqual(len(result["items"]), 1)
 
 
 if __name__ == "__main__":

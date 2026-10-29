@@ -64,19 +64,21 @@ def has_application_admin_access(
     rotate_secret: bool = False,
     application_id: UUID | None = None,
 ) -> bool:
-    """L1 代管；否则须持钉住该应用（或租户内任一应用，若未指定）的 app.admin。
+    """L1 代管；L3 管本租户全部应用；否则须持钉住该应用（或租户内任一应用，若未指定）的 app.admin。
 
+    P402：与列表 can_manage（app.manage 码）对齐，承认 tenant.admin。
     rotate_secret / manage 保留签名；敏感轮换在 require_application_admin_access 内
     额外做轻量码 check（app.secret.rotate）。
     """
     del manage
     from app.services.rbac_guards import user_has_any_role, user_has_management_code
-    from app.services.role_provisioning import L2_ROLE_KEY
+    from app.services.role_provisioning import L2_ROLE_KEY, L3_ROLE_KEY
 
     if is_platform_admin_user(actor, db):
         return True
+    # L3 租户角色 application_id 为空，user_has_any_role 在指定应用时仍命中。
     if not user_has_any_role(
-        actor, db, (L2_ROLE_KEY,), tenant_id=tenant_id, application_id=application_id,
+        actor, db, (L3_ROLE_KEY, L2_ROLE_KEY), tenant_id=tenant_id, application_id=application_id,
     ):
         return False
     if rotate_secret:
@@ -111,10 +113,13 @@ def list_readable_application_capabilities(
     tenant_id: UUID,
     db: Session,
 ) -> dict[UUID, dict[str, bool]]:
-    """批量筛选可读应用：L1 全量；否则按有效 app.admin 角色钉住的应用（及租户级码兼容）。
+    """批量筛选可读应用：L1 全量；L3 本租户全可管；否则按有效角色钉住的应用（及租户级码兼容）。
 
     列表用有效角色并集；单项写/轮换仍走 has_application_admin_access。
     """
+    from app.services.rbac_guards import user_has_any_role
+    from app.services.role_provisioning import L3_ROLE_KEY
+
     if is_platform_admin_user(actor, db):
         applications = db.scalars(select(Application).where(Application.tenant_id == tenant_id)).all()
         return {
@@ -132,6 +137,14 @@ def list_readable_application_capabilities(
     ))
     if not active_tenant or not membership:
         return {}
+
+    # L3 与写路径对齐：不依赖模板是否仍持 app.manage 码。
+    if user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
+        applications = db.scalars(select(Application).where(Application.tenant_id == tenant_id)).all()
+        return {
+            application.id: {"can_manage": True, "can_rotate_secret": True}
+            for application in applications
+        }
 
     applications = db.scalars(select(Application).where(
         Application.tenant_id == tenant_id,

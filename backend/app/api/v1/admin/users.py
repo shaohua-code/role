@@ -12,12 +12,14 @@ from app.api.v1.admin.common import audit, commit_or_conflict, flush_or_conflict
 from app.core.security import current_user, hash_password
 from app.db.session import get_db_session
 from app.models.application import Application
-from app.models.authorization import Role, RoleBinding
+from app.models.authorization import Permission, Role, RoleBinding, RolePermission
+from app.models.groups import UserGroup, UserGroupRole
 from app.models.identity import (AuditEvent, PasswordResetToken, RefreshSession, Tenant,
                                  TenantMembership, User)
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRefreshToken
 from app.schemas.auth import AdminPasswordReset, AdminUserCreate, UserStatusUpdate
 from app.services.backchannel_logout import deliver_backchannel_logout, deliver_for_user
+from app.services.effective_roles import ancestor_group_cte, authorized_role_ids_statement
 from app.services.rbac_guards import ensure_roles
 from app.services.role_provisioning import L1_ROLE_KEY, L2_ROLE_KEY, L3_ROLE_KEY
 
@@ -148,6 +150,105 @@ def revoke_user_session(
     return {"user_id": str(user_id), "session_type": session_type,
             "session_id": str(session_id), "revoked_at": revoked_at}
 
+def list_user_effective_permissions(db: Session, user_id: UUID) -> list[dict]:
+    """G28 有效权限码并集 + 来源（直授角色 / 用户组继承）。
+
+    只统计活动成员身份、活动角色、活动权限；组停用不参与继承（与 list_effective_roles 同口径）。
+    """
+    membership_rows = db.execute(
+        select(TenantMembership, Tenant)
+        .join(Tenant, Tenant.id == TenantMembership.tenant_id)
+        .where(TenantMembership.user_id == user_id, TenantMembership.status == "active")
+        .order_by(Tenant.name)
+    ).all()
+    aggregated: dict[str, dict] = {}
+    for membership, tenant in membership_rows:
+        role_ids = list(db.scalars(authorized_role_ids_statement(membership.id, tenant.id)).all())
+        if not role_ids:
+            continue
+        roles = list(db.scalars(
+            select(Role).where(Role.id.in_(role_ids), Role.status == "active"),
+        ).all())
+        if not roles:
+            continue
+        role_by_id = {role.id: role for role in roles}
+        direct_ids = set(db.scalars(
+            select(RoleBinding.role_id).where(
+                RoleBinding.membership_id == membership.id,
+                RoleBinding.role_id.in_(list(role_by_id)),
+            )
+        ).all())
+        ancestor_groups = ancestor_group_cte(membership.id, tenant.id)
+        group_rows = db.execute(
+            select(UserGroupRole.role_id, UserGroup)
+            .join(UserGroup, UserGroup.id == UserGroupRole.group_id)
+            .where(
+                UserGroupRole.role_id.in_(list(role_by_id)),
+                UserGroupRole.tenant_id == tenant.id,
+                UserGroup.status == "active",
+                UserGroup.id.in_(select(ancestor_groups.c.group_id)),
+            )
+            .order_by(UserGroup.name)
+        ).all()
+        groups_by_role: dict[UUID, list[UserGroup]] = {}
+        for role_id, group in group_rows:
+            groups_by_role.setdefault(role_id, []).append(group)
+        grant_rows = db.execute(
+            select(Permission, RolePermission.role_id)
+            .join(RolePermission, RolePermission.permission_id == Permission.id)
+            .where(
+                RolePermission.role_id.in_(list(role_by_id)),
+                Permission.status == "active",
+            )
+            .order_by(Permission.code)
+        ).all()
+        for permission, role_id in grant_rows:
+            role = role_by_id[role_id]
+            entry = aggregated.setdefault(permission.code, {
+                "code": permission.code,
+                "description": permission.description,
+                "surface": permission.surface,
+                "status": permission.status,
+                "sources": [],
+            })
+            seen = {
+                (item["source_type"], item["role_id"], item.get("group_id"))
+                for item in entry["sources"]
+            }
+            if role.id in direct_ids:
+                marker = ("direct", str(role.id), None)
+                if marker not in seen:
+                    entry["sources"].append({
+                        "source_type": "direct",
+                        "role_id": str(role.id),
+                        "role_key": role.key,
+                        "role_name": role.name,
+                        "tenant_id": str(tenant.id),
+                        "tenant_name": tenant.name,
+                        "application_id": str(role.application_id) if role.application_id else None,
+                        "group_id": None,
+                        "group_name": None,
+                    })
+                    seen.add(marker)
+            for group in groups_by_role.get(role.id, []):
+                marker = ("group", str(role.id), str(group.id))
+                if marker in seen:
+                    continue
+                entry["sources"].append({
+                    "source_type": "group",
+                    "role_id": str(role.id),
+                    "role_key": role.key,
+                    "role_name": role.name,
+                    "tenant_id": str(tenant.id),
+                    "tenant_name": tenant.name,
+                    "application_id": str(role.application_id) if role.application_id else None,
+                    "group_id": str(group.id),
+                    "group_name": group.name,
+                })
+                seen.add(marker)
+    return [aggregated[code] for code in sorted(aggregated)]
+
+
 @router.get("/users/{user_id}/profile")
 def get_user_profile(user_id: UUID, actor: User = Depends(current_user),
                      db: Session = Depends(get_db_session)) -> dict:
@@ -155,6 +256,7 @@ def get_user_profile(user_id: UUID, actor: User = Depends(current_user),
 
     复用现有数据源拼装（sessions 复用 list_user_sessions），不新增任何授权语义；
     PRD IAM-USER-006 要求的一体详情由本端点承载，前端详情抽屉单次拉取。
+    G28 追加有效权限码并集与来源（直授 / 用户组）。
     """
     ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.read）")
     user = db.get(User, user_id)
@@ -197,6 +299,7 @@ def get_user_profile(user_id: UUID, actor: User = Depends(current_user),
             "joined_at": membership.created_at,
         } for membership, tenant in membership_rows],
         "role_bindings": bindings,
+        "effective_permissions": list_user_effective_permissions(db, user_id),
         "sessions": list_user_sessions(user_id, actor=actor, db=db)["items"],
         "recent_auth_events": recent_auth_events,
     }

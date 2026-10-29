@@ -2,15 +2,17 @@
 // 工作台「角色」Tab：列出当前应用的角色、新建、挂码；平台模式另提供资源树与数据范围（对齐角色列表能力）。
 // 平台模式过滤全局角色目录（/admin/roles 按应用 scope），应用模式走租户应用角色目录。
 import { computed, reactive, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api'
 import { cachedHas } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
+import { DownOutlined } from '@/plugins/icons'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 import RolePermissionGrantModal from '@/components/RolePermissionGrantModal.vue'
 import RoleResourceGrantModal from '../components/RoleResourceGrantModal.vue'
+import { asPagedList } from '@/utils/paged'
 
 interface ApplicationRef {
   id: string
@@ -29,9 +31,9 @@ interface RoleRecord {
   permission_codes: string[]
   application_id?: string | null
 }
-interface PermissionRecord { id: string; code: string; resource_type: string; scope: string; status: 'active' | 'disabled' }
+interface PermissionRecord { id: string; code: string; description?: string | null; resource_type: string; scope: string; status: 'active' | 'disabled' }
 interface DataScopePolicy { permission_id: string; scope_type: string; organization_ids: string[] }
-interface DataScopeEntry { permission_id: string; permission_code: string; scope_type: string; organization_ids: string[] }
+interface DataScopeEntry { permission_id: string; permission_code: string; permission_description: string; scope_type: string; organization_ids: string[] }
 
 const props = withDefaults(defineProps<{
   active?: boolean
@@ -78,15 +80,18 @@ const canCreate = computed(() => canManage.value && props.application?.status ==
 const columns = [
   { title: '角色名称', dataIndex: 'name', key: 'name', width: 180, ellipsis: true },
   { title: '角色标识', dataIndex: 'key', key: 'key', width: 200, ellipsis: true },
-  { title: '权限编码', dataIndex: 'permission_codes', key: 'permission_codes' },
+  { title: '权限编码', dataIndex: 'permission_codes', key: 'permission_codes', width: 120 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 90 },
-  { title: '操作', dataIndex: 'actions', key: 'actions', width: 280, fixed: 'right' as const },
+  { title: '操作', dataIndex: 'actions', key: 'actions', width: 180, fixed: 'right' as const },
 ]
 
 function rolesPath(): string {
-  return isPlatform.value
-    ? '/admin/roles'
-    : `/tenant-admin/applications/${props.application?.id}/roles`
+  if (isPlatform.value) {
+    const applicationId = props.application?.id || ''
+    const params = new URLSearchParams({ kind: 'application', application_id: applicationId, limit: '500' })
+    return `/admin/roles?${params}`
+  }
+  return `/tenant-admin/applications/${props.application?.id}/roles`
 }
 
 async function loadRoles(): Promise<void> {
@@ -98,13 +103,9 @@ async function loadRoles(): Promise<void> {
   const sequence = ++requestSequence
   loading.value = true
   try {
-    const rows = await api<RoleRecord[]>(rolesPath())
+    const rows = asPagedList(await api<RoleRecord[] | { items: RoleRecord[] }>(rolesPath())).items
     if (sequence !== requestSequence) return
-    // 平台目录是全量角色列表，这里只保留当前应用范围的角色。
-    roles.value = isPlatform.value
-      ? rows.filter(role => role.application_id === props.application?.id)
-      : rows
-    // 上报角色数给父级概览统计条
+    roles.value = rows
     emit('stats', roles.value.length)
   } catch (error) {
     if (sequence === requestSequence) {
@@ -142,7 +143,11 @@ async function saveRole(): Promise<void> {
   saving.value = true
   try {
     // 平台角色需要显式指定租户与应用范围；应用角色天然限定当前应用。
-    await api(rolesPath(), {
+    // 创建走 POST 集合路径，不能带 list 用的 kind/application_id 查询串
+    const createPath = isPlatform.value
+      ? '/admin/roles'
+      : `/tenant-admin/applications/${application.id}/roles`
+    const created = await api<RoleRecord>(createPath, {
       method: 'POST',
       body: JSON.stringify(isPlatform.value
         ? {
@@ -158,10 +163,19 @@ async function saveRole(): Promise<void> {
             description: form.description.trim() || null,
           }),
     })
-    message.success('角色已创建，可点击「配置权限」完成挂码')
+    message.success('角色已创建')
     createOpen.value = false
     await loadRoles()
     emit('changed')
+    if (created?.id) {
+      Modal.confirm({
+        title: '角色已创建，现在配置权限？',
+        content: '为该角色挂上权限编码后，成员才能真正获得能力。',
+        okText: '去挂码',
+        cancelText: '稍后',
+        onOk: () => openGrantEditor(created),
+      })
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '创建角色失败')
   } finally {
@@ -189,7 +203,7 @@ async function openDataScopeEditor(role: RoleRecord): Promise<void> {
   dataScopeRoleName.value = role.name
   try {
     const [permissions, organizations, configured] = await Promise.all([
-      api<PermissionRecord[]>('/admin/permissions'),
+      api<PermissionRecord[] | { items: PermissionRecord[] }>('/admin/permissions?limit=1000').then(result => asPagedList(result).items),
       api<{ id: string; key: string; name: string; status: string }[]>(`/admin/organizations?tenant_id=${encodeURIComponent(props.application.tenant_id)}`),
       api<{ permission_id: string; scope_type: string; organization_ids: string[] }[]>(`/admin/roles/${role.id}/data-scopes`),
     ])
@@ -202,6 +216,7 @@ async function openDataScopeEditor(role: RoleRecord): Promise<void> {
       return {
         permission_id: permission.id,
         permission_code: permission.code,
+        permission_description: permission.description?.trim() || '',
         scope_type: policy?.scope_type || '',
         organization_ids: policy?.organization_ids || [],
       }
@@ -253,7 +268,7 @@ async function onGrantsSaved(): Promise<void> {
 const grantCatalogPath = computed(() => {
   if (!grantRoleId.value || !props.application) return ''
   return isPlatform.value
-    ? '/admin/permissions'
+    ? '/admin/permissions?limit=1000'
     : `/tenant-admin/applications/${props.application.id}/permissions?role_id=${encodeURIComponent(grantRoleId.value)}`
 })
 const grantGrantsPath = computed(() => {
@@ -291,10 +306,9 @@ watch(() => [props.active, props.application?.id] as const, ([active]) => {
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'permission_codes'">
-          <template v-if="record.permission_codes?.length">
-            <a-tag v-for="code in record.permission_codes" :key="code" class="font-mono">{{ code }}</a-tag>
-          </template>
-          <span v-else class="text-xs text-[var(--color-text-muted)]">未挂码</span>
+          <a-button type="link" size="small" class="px-0" @click="openGrantEditor(record as RoleRecord)">
+            {{ record.permission_codes?.length ? `${record.permission_codes.length} 项` : '未挂码' }}
+          </a-button>
         </template>
         <template v-else-if="column.key === 'status'">
           <a-tag :color="record.status === 'active' ? 'green' : 'default'">{{ record.status === 'active' ? '启用' : '停用' }}</a-tag>
@@ -302,8 +316,19 @@ watch(() => [props.active, props.application?.id] as const, ([active]) => {
         <template v-else-if="column.key === 'actions'">
           <span class="inline-flex flex-wrap items-center gap-x-1">
             <a-button type="link" size="small" @click="openGrantEditor(record as RoleRecord)">{{ canManage ? '配置权限' : '查看权限' }}</a-button>
-            <a-button v-if="isPlatform" type="link" size="small" @click="openResourceEditor(record as RoleRecord)">配置资源</a-button>
-            <a-button v-if="isPlatform && canManage" type="link" size="small" @click="openDataScopeEditor(record as RoleRecord)">数据范围</a-button>
+            <a-dropdown v-if="isPlatform">
+              <a-button type="link" size="small" class="inline-flex items-center gap-1">
+                更多
+                <DownOutlined class="text-[11px]" />
+              </a-button>
+              <template #overlay>
+                <a-menu>
+                  <a-menu-item key="resource" @click="openResourceEditor(record as RoleRecord)">配置资源</a-menu-item>
+                  <a-menu-item v-if="canManage" key="dataScope" @click="openDataScopeEditor(record as RoleRecord)">数据范围</a-menu-item>
+                  <a-menu-item key="advanced" @click="goAdvancedRoles">高级角色列表</a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
           </span>
         </template>
       </template>
@@ -354,7 +379,10 @@ watch(() => [props.active, props.application?.id] as const, ([active]) => {
       <a-alert class="mb-3" type="info" show-icon message="数据范围按同权限多角色取并集；未配置有效范围的权限默认拒绝访问。" />
       <div v-if="!dataScopeEntries.length" class="text-sm text-[var(--color-text-muted)]">请先为该角色配置至少一项权限，再添加对应的数据范围。</div>
       <div v-for="entry in dataScopeEntries" :key="entry.permission_id" class="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-start">
-        <strong class="font-mono text-sm">{{ entry.permission_code }}</strong>
+        <div class="flex min-w-0 flex-col">
+          <strong class="truncate text-sm text-[var(--color-text-primary)]">{{ entry.permission_description || entry.permission_code }}</strong>
+          <span class="font-mono text-xs text-[var(--color-text-muted)]">{{ entry.permission_code }}</span>
+        </div>
         <div class="flex flex-col gap-2">
           <a-select v-model:value="entry.scope_type" allow-clear placeholder="不授予数据范围" :options="[{ value: 'tenant', label: '当前租户全部数据' }, { value: 'self', label: '仅本人数据' }, { value: 'organization', label: '所属组织' }, { value: 'organization_tree', label: '所属组织及下级' }, { value: 'selected_organizations', label: '指定组织' }]" />
           <a-select v-if="entry.scope_type === 'selected_organizations'" v-model:value="entry.organization_ids" mode="multiple" :options="dataScopeOrganizationOptions" placeholder="选择允许访问的组织" />

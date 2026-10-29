@@ -16,13 +16,8 @@ from app.models.groups import UserGroup, UserGroupMembership, UserGroupRole
 from app.models.identity import TenantMembership, User
 
 
-def authorized_role_ids_statement(membership_id: UUID, tenant_id: UUID) -> Select:
-    """直连绑定与活跃用户组角色（含嵌套父组递归，G24）的并集。
-
-    组停用时保留配置但不参与继承；组层级沿 parent_group_id 向上递归——
-    成员所属组及其全部祖先组挂的角色均生效（与主流目录的嵌套组语义一致）。
-    组层级在写入时强制无环（服务层校验 + 复合外键），递归必然终止。
-    """
+def ancestor_group_cte(membership_id: UUID, tenant_id: UUID):
+    """成员所属活跃组及其全部祖先组（G24 嵌套）。组停用不参与继承。"""
     group_tree = (
         select(UserGroup.id.label("group_id"), UserGroup.parent_group_id.label("parent_group_id"))
         .join(
@@ -38,7 +33,7 @@ def authorized_role_ids_statement(membership_id: UUID, tenant_id: UUID) -> Selec
         .cte(name="group_tree", recursive=True)
     )
     # 递归沿 parent_group_id 向上：候选组的 ID 等于树内某节点的父 ID，即候选组是父组。
-    ancestor_groups = group_tree.union_all(
+    return group_tree.union_all(
         select(UserGroup.id, UserGroup.parent_group_id).join(
             group_tree, UserGroup.id == group_tree.c.parent_group_id,
         ).where(
@@ -46,6 +41,16 @@ def authorized_role_ids_statement(membership_id: UUID, tenant_id: UUID) -> Selec
             UserGroup.status == "active",
         )
     )
+
+
+def authorized_role_ids_statement(membership_id: UUID, tenant_id: UUID) -> Select:
+    """直连绑定与活跃用户组角色（含嵌套父组递归，G24）的并集。
+
+    组停用时保留配置但不参与继承；组层级沿 parent_group_id 向上递归——
+    成员所属组及其全部祖先组挂的角色均生效（与主流目录的嵌套组语义一致）。
+    组层级在写入时强制无环（服务层校验 + 复合外键），递归必然终止。
+    """
+    ancestor_groups = ancestor_group_cte(membership_id, tenant_id)
     inherited_role_ids = (
         select(UserGroupRole.role_id)
         .join(UserGroup, UserGroup.id == UserGroupRole.group_id)

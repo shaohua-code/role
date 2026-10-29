@@ -77,6 +77,62 @@ def is_platform_catalog_namespace(catalog_namespace: str) -> bool:
     return normalize_namespace(catalog_namespace) == PLATFORM_NAMESPACE
 
 
+# 与前端 permissionGroups.ts / RolePermissionGrantModal 同一套作用域矩阵：
+# 仅 L1 模板持有 → platform；L3 有而 L2 无 → tenant；其余管理面码 → app；非五域前缀 → business。
+PLATFORM_SCOPE_CODES: frozenset[str] = frozenset({
+    "platform.overview.read", "platform.tenant.read", "platform.tenant.manage",
+    "platform.account.read", "platform.account.manage", "rbac.role.manage",
+})
+TENANT_SCOPE_CODES: frozenset[str] = frozenset({
+    "org.read", "org.manage", "rbac.role.read", "rbac.permission.manage",
+    "rbac.app_role.assign", "ops.model.manage",
+})
+# tenant 角色不可新增 L1 专属码与业务码；application 角色不可新增 L1 专属码与 L3 起租户治理码。
+HIDDEN_SCOPES_BY_KIND: dict[str, frozenset[str]] = {
+    "platform": frozenset(),
+    "tenant": frozenset({"platform", "business"}),
+    "application": frozenset({"platform", "tenant"}),
+}
+
+
+def is_management_code(code: str) -> bool:
+    """管理面码判定：五域前缀任一命中即管理码。"""
+    return code.startswith(MANAGEMENT_DOMAIN_PREFIXES)
+
+
+def resolve_permission_scope_key(code: str) -> str:
+    """解析权限编码所属作用域组（platform / tenant / app / business）。"""
+    if not is_management_code(code):
+        return "business"
+    if code in PLATFORM_SCOPE_CODES:
+        return "platform"
+    if code in TENANT_SCOPE_CODES:
+        return "tenant"
+    return "app"
+
+
+def assert_role_kind_grant_permissions(
+    *,
+    kind: str,
+    application_namespace: str | None,
+    proposed: list,
+    current_ids: set,
+) -> None:
+    """按角色 kind 拒绝新增越域码；历史已持有允许保留或撤销（与授权弹窗豁免一致）。"""
+    hidden = HIDDEN_SCOPES_BY_KIND.get(kind, frozenset())
+    app_namespace = normalize_namespace(application_namespace) if application_namespace else None
+    for permission in proposed:
+        if permission.id in current_ids:
+            continue
+        scope_key = resolve_permission_scope_key(permission.code)
+        if scope_key in hidden:
+            raise HTTPException(422, f"该角色作用域不可新增权限：{permission.code}")
+        # 应用角色的业务码必须落在本应用命名空间（编码首段）
+        if kind == "application" and scope_key == "business" and app_namespace:
+            if not permission_matches_namespace(permission.code, app_namespace):
+                raise HTTPException(422, "权限不属于当前应用命名空间")
+
+
 def assert_application_grant_permissions(
     application_permission_namespace: str,
     proposed: list,

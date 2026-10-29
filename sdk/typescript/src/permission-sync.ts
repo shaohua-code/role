@@ -83,15 +83,20 @@ export class IamAdminClient {
   /** 返回权限目录条目列表；响应不是数组或缺 code 即契约错误（502）。 */
   async listPermissions(managementToken: string): Promise<Array<Record<string, unknown>>> {
     const body = await this.request('GET', managementToken)
-    // 后端契约：GET /admin/permissions 返回裸数组（limit 1000，按 code 排序）。
-    if (!Array.isArray(body) || body.some((item) => {
+    // G29：平台目录改为 {items,total,limit,offset}；应用侧与旧裸数组仍兼容。
+    const items = Array.isArray(body)
+      ? body
+      : (body && typeof body === 'object' && Array.isArray((body as { items?: unknown }).items)
+        ? (body as { items: unknown[] }).items
+        : null)
+    if (!Array.isArray(items) || items.some((item) => {
       const record = item as Record<string, unknown> | null
       return !record || typeof record !== 'object'
         || typeof record.code !== 'string' || record.code.length === 0
     })) {
       throw new IamAdminError(502, 'IAM returned an invalid permission catalog response')
     }
-    return body as Array<Record<string, unknown>>
+    return items as Array<Record<string, unknown>>
   }
 
   /** 创建一条权限码；201 返回目录条目，409/422 等按 IamAdminError 抛出。 */

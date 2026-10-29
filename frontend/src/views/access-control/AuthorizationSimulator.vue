@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
 import AdminEmpty from '@/components/AdminEmpty.vue'
+import { asPagedList } from '@/utils/paged'
 
 type Row = Record<string, unknown>
 
@@ -85,7 +86,7 @@ async function loadOptions(): Promise<void> {
       needTenantFetch ? api<Row[]>('/admin/tenants') : Promise.resolve(props.seedTenants),
       needTenantFetch ? api<Row[]>('/admin/users') : loadTenantMembers(),
       needApplicationFetch ? api<Row[]>('/admin/applications') : Promise.resolve(props.seedApplications),
-      api<Row[]>('/admin/permissions'),
+      api<Row[] | { items: Row[] }>('/admin/permissions?limit=1000').then(result => asPagedList(result).items),
     ])
     tenants.value = tenantRows.filter(row => row.status === 'active')
     users.value = userRows

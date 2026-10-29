@@ -9,6 +9,7 @@ import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 import UserDetailDrawer from '@/components/UserDetailDrawer.vue'
+import { asPagedList } from '@/utils/paged'
 
 interface TenantOption { id: string; name: string; status: string }
 interface UserRecord {
@@ -368,7 +369,7 @@ async function openRoleBinding(user: UserRecord): Promise<void> {
       api<Array<{ tenant_id: string; tenant_name: string; membership_status: string; tenant_status: string }>>(
         `/admin/users/${user.id}/memberships`,
       ),
-      api<RoleOption[]>('/admin/roles'),
+      api<RoleOption[] | { items: RoleOption[] }>('/admin/roles?limit=500').then(result => asPagedList(result).items),
     ])
     const tenantIds = new Set(activeTenants.value.map(tenant => tenant.id))
     roleTenantOptions.value = userMemberships

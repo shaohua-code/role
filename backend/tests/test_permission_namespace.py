@@ -13,9 +13,11 @@ from app.models.authorization import Permission
 from app.models.identity import Tenant
 from app.services.permission_namespace import (
     assert_application_grant_permissions,
+    assert_role_kind_grant_permissions,
     default_namespace_from_client_id,
     derive_catalog_namespace_value,
     permission_matches_namespace,
+    resolve_permission_scope_key,
 )
 
 
@@ -35,6 +37,50 @@ class PermissionNamespaceUnitTests(unittest.TestCase):
 
     def test_default_namespace_from_client_id(self) -> None:
         self.assertEqual(default_namespace_from_client_id("deerflow-web"), "deerflow")
+
+
+class RoleKindGrantGuardTests(unittest.TestCase):
+    def _permission(self, code: str, namespace: str = "platform") -> Permission:
+        row = Permission(
+            code=code,
+            catalog_namespace=namespace,
+            resource_type=code.rsplit(".", 1)[0],
+            scope=code.rsplit(".", 1)[-1],
+        )
+        row.id = uuid4()
+        return row
+
+    def test_scope_key_matrix(self) -> None:
+        self.assertEqual(resolve_permission_scope_key("platform.tenant.read"), "platform")
+        self.assertEqual(resolve_permission_scope_key("org.read"), "tenant")
+        self.assertEqual(resolve_permission_scope_key("app.read"), "app")
+        self.assertEqual(resolve_permission_scope_key("demoapp.item.read"), "business")
+
+    def test_tenant_role_rejects_new_platform_scope(self) -> None:
+        permission = self._permission("platform.tenant.read")
+        with self.assertRaises(HTTPException) as ctx:
+            assert_role_kind_grant_permissions(
+                kind="tenant", application_namespace=None,
+                proposed=[permission], current_ids=set(),
+            )
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_tenant_role_keeps_historical_platform_scope(self) -> None:
+        permission = self._permission("platform.tenant.read")
+        assert_role_kind_grant_permissions(
+            kind="tenant", application_namespace=None,
+            proposed=[permission], current_ids={permission.id},
+        )
+
+    def test_application_role_rejects_other_namespace(self) -> None:
+        permission = self._permission("otherapp.item.read", "otherapp")
+        with self.assertRaises(HTTPException) as ctx:
+            assert_role_kind_grant_permissions(
+                kind="application", application_namespace="demoapp",
+                proposed=[permission], current_ids=set(),
+            )
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertIn("不属于当前应用命名空间", str(ctx.exception.detail))
 
 
 class DefaultNamespaceHttpTests(unittest.TestCase):

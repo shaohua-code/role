@@ -7,15 +7,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.authorization import Permission, Role, RolePermission
 
 # L1 平台超管：全部管理面码（由 seed_greenfield 授予）。
 L1_ROLE_KEY = "platform.admin"
-# L3 租户组织管理员：当前租户下的一切——应用/权限码/模型/主题/审计全域管理 + 组织成员协作；
-# 专属边界（user.*/tenant.*/platform.overview.read）由种子只授 L1 保证。
+# L3 租户组织管理员：当前租户下的一切——应用/业务权限码/模型/主题/审计全域管理 + 组织成员协作；
+# 平台权限目录写（rbac.permission.manage）仅 L1；专属边界（account.*/tenant.*/overview）由种子只授 L1。
 L3_ROLE_KEY = "tenant.admin"
 L3_PERMISSION_CODES: tuple[str, ...] = (
     "org.read",
@@ -33,13 +33,14 @@ L3_PERMISSION_CODES: tuple[str, ...] = (
     "rbac.app_role.manage",
     "rbac.role.read",
     "rbac.permission.read",
-    "rbac.permission.manage",
     "ops.model.read",
     "ops.model.manage",
     "ops.theme.manage",
     "ops.audit.read",
     "ops.authz.simulate",
 )
+# G32：存量 L3 可能仍持有该码；预置时显式剥离（_grant_codes 只增不减）。
+L3_REVOKED_PERMISSION_CODES: tuple[str, ...] = ("rbac.permission.manage",)
 # L2 应用管理员模板：钉死单应用的一切相关管理——应用配置/密钥 + 角色/成员/邀请/组/主题/审计；
 # 组织域（organization.*）归 L3，应用生命周期（创建/删除）同样归 L3。
 L2_ROLE_KEY = "app.admin"
@@ -135,14 +136,31 @@ def _grant_codes(db: Session, role: Role, codes: tuple[str, ...]) -> None:
             db.add(RolePermission(role_id=role.id, permission_id=permission_id))
 
 
+def _revoke_codes(db: Session, role: Role, codes: tuple[str, ...]) -> None:
+    """从模板角色剥离已不再属于模板的码；目录缺失时静默跳过。"""
+    if not codes:
+        return
+    permission_ids = set(db.scalars(
+        select(Permission.id).where(Permission.code.in_(codes)),
+    ).all())
+    if not permission_ids:
+        return
+    db.execute(delete(RolePermission).where(
+        RolePermission.role_id == role.id,
+        RolePermission.permission_id.in_(permission_ids),
+    ))
+
+
 def provision_tenant_admin_role(db: Session, tenant_id: UUID) -> Role:
     """租户开通时预置 L3 组织管理员角色（幂等）。"""
     role, _ = _ensure_role(
         db, tenant_id=tenant_id, application_id=None, kind="tenant",
         key=L3_ROLE_KEY, name="租户管理员",
-        description="L3：当前租户下的一切——应用、权限码、模型、主题、组织、成员、用户组、审计；可任命应用管理员",
+        description="L3：当前租户下的一切——应用、业务权限码、模型、主题、组织、成员、用户组、审计；可任命应用管理员。平台权限目录写仍仅 L1",
     )
     _grant_codes(db, role, L3_PERMISSION_CODES)
+    # G32：平台目录写仅 L1，存量 L3 上的 rbac.permission.manage 必须剥掉。
+    _revoke_codes(db, role, L3_REVOKED_PERMISSION_CODES)
     db.flush()
     return role
 
