@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -24,8 +24,8 @@ from app.services.rbac_guards import PLATFORM_MANAGEMENT_CODES
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
     L3_ROLE_KEY,
-    provision_application_admin_role,
-    provision_application_member_role,
+    L4_ROLE_KEY,
+    provision_application_platform_roles,
     provision_tenant_admin_role,
 )
 
@@ -53,7 +53,7 @@ MANAGEMENT_PERMISSION_DESCRIPTIONS: dict[str, str] = {
     "app.secret.rotate": "轮换客户端密钥",
     "rbac.app_role.read": "应用角色与成员读",
     "rbac.app_role.manage": "应用角色 CRUD、成员 bind/unbind",
-    "rbac.app_role.assign": "任命/撤职应用管理员（仅 key=app.admin）",
+    "rbac.app_role.assign": "任命/撤职多应用管理员或应用管理员",
     "org.invite.manage": "邀请创建/撤销",
     "ops.audit.read": "审计查询",
     "ops.authz.simulate": "鉴权模拟",
@@ -174,8 +174,7 @@ def seed_demo_tenant(db: Session, *, with_demo_application: bool = False) -> Non
             db.add(application)
             db.flush()
             print("已创建演示应用 demo-app")
-        provision_application_admin_role(db, tenant.id, application.id)
-        provision_application_member_role(db, tenant.id, application.id)
+        provision_application_platform_roles(db, tenant.id, application.id)
 
 
 def run_seed(*, demo_tenant: bool = False, demo_application: bool = False) -> None:
@@ -231,8 +230,7 @@ def seed_walkthrough_accounts(db: Session) -> None:
         db.add(application)
         db.flush()
         print("已创建演示应用 demo-app")
-    l2_role = provision_application_admin_role(db, demo_tenant.id, application.id)
-    l4_role = provision_application_member_role(db, demo_tenant.id, application.id)
+    _, l2_role, l4_role = provision_application_platform_roles(db, demo_tenant.id, application.id)
     l3_role = provision_tenant_admin_role(db, demo_tenant.id)
 
     # 业务码登记：与应用命名空间对齐，强制行级数据范围（缺策略时 evaluate_access 拒绝）。
@@ -247,24 +245,46 @@ def seed_walkthrough_accounts(db: Session) -> None:
         db.flush()
         print(f"已登记业务码 {WALKTHROUGH_BUSINESS_CODE}（business + 强制 data_scope）")
 
-    # L4 授权业务码并配 self 数据范围（§2.4 写死 self）。
+    # P405：业务码挂在自定义应用角色上，不挂 app.member。
+    reader = db.scalar(select(Role).where(
+        Role.tenant_id == demo_tenant.id,
+        Role.application_id == application.id,
+        Role.key == "demo.reader",
+    ))
+    if reader is None:
+        reader = Role(
+            tenant_id=demo_tenant.id, application_id=application.id, kind="application",
+            key="demo.reader", name="文档只读", description="走查用应用角色：读取文档",
+        )
+        db.add(reader)
+        db.flush()
+        print("已创建应用角色 demo.reader")
     granted = db.scalar(select(RolePermission).where(
-        RolePermission.role_id == l4_role.id,
+        RolePermission.role_id == reader.id,
         RolePermission.permission_id == business_permission.id,
     ))
     if granted is None:
-        db.add(RolePermission(role_id=l4_role.id, permission_id=business_permission.id))
-        print("已为 L4 app.member 授予 demo.document.read")
+        db.add(RolePermission(role_id=reader.id, permission_id=business_permission.id))
+        print("已为应用角色 demo.reader 授予 demo.document.read")
     scope = db.scalar(select(RoleDataScope).where(
-        RoleDataScope.role_id == l4_role.id,
+        RoleDataScope.role_id == reader.id,
         RoleDataScope.permission_id == business_permission.id,
     ))
     if scope is None:
         db.add(RoleDataScope(
-            tenant_id=demo_tenant.id, role_id=l4_role.id,
+            tenant_id=demo_tenant.id, role_id=reader.id,
             permission_id=business_permission.id, scope_type="self", organization_ids=[],
         ))
-        print("已为 L4 配置 demo.document.read 的 self 数据范围")
+        print("已为 demo.reader 配置 demo.document.read 的 self 数据范围")
+    # 清掉历史上误挂在 app.member 上的业务码。
+    db.execute(delete(RolePermission).where(
+        RolePermission.role_id == l4_role.id,
+        RolePermission.permission_id == business_permission.id,
+    ))
+    db.execute(delete(RoleDataScope).where(
+        RoleDataScope.role_id == l4_role.id,
+        RoleDataScope.permission_id == business_permission.id,
+    ))
 
     # 三个走查账号：统一密码，分别绑 L2/L3/L4；全部幂等（已存在则只补缺失的绑定）。
     # 邮箱用 example.com 子域——.test 属 IANA 保留 TLD，会被 pydantic 邮箱校验拒绝。
@@ -294,6 +314,14 @@ def seed_walkthrough_accounts(db: Session) -> None:
         if binding is None:
             db.add(RoleBinding(membership_id=membership.id, role_id=role.id))
             print(f"已绑定 {role.key} → {email}")
+        # L4 同时持有应用角色，才能拿到业务码 / 菜单。
+        if role.key == L4_ROLE_KEY:
+            reader_binding = db.scalar(select(RoleBinding).where(
+                RoleBinding.membership_id == membership.id, RoleBinding.role_id == reader.id,
+            ))
+            if reader_binding is None:
+                db.add(RoleBinding(membership_id=membership.id, role_id=reader.id))
+                print(f"已绑定 demo.reader → {email}")
     print(f"走查账号就绪（统一密码见 seed_greenfield.WALKTHROUGH_PASSWORD）")
 
 

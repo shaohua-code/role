@@ -1,10 +1,10 @@
-"""P383 角色分层守卫隔离测试：授权权码禁选 / 克隆剥离 / 模板码数（内存 SQLite）。
+"""角色分层守卫隔离测试：P405 两类角色 + 五级模板码数（内存 SQLite）。
 
-覆盖三级防线：
-1. 平台侧 replace_role_permissions：自定义角色含授权权码 → 422；模板角色放行；
-2. 租户应用侧 replace_application_role_permissions：自定义应用角色同样 422；
-3. clone_role：克隆产物为自定义角色时剥离授权权码；
-4. 预置模板：L3 恰好 20 码（覆盖全部授权权码；平台目录写 rbac.permission.manage 仅 L1）、L2 恰好 15 码、L4 零管理面码，且幂等。
+覆盖：
+1. 自定义平台角色可以持有授权权码（P405 去掉 P383 锁）；
+2. 应用角色可挂操作者看得见的管理面码，看不见的码 422；
+3. clone_role：自定义角色克隆保留授权权码；
+4. 预置模板：五 key；L3 恰好 20 码、多应用管理员 16 码、L2 恰好 15 码、L4 零管理面码，且幂等。
 """
 
 import unittest
@@ -25,6 +25,8 @@ from app.models.identity import Tenant, User
 from app.schemas.access_control import RoleCloneRequest, RolePermissionsUpdate
 from app.services.role_provisioning import (
     AUTHORITY_MANAGE_CODES,
+    L2M_PERMISSION_CODES,
+    L2M_ROLE_KEY,
     L2_PERMISSION_CODES,
     L2_ROLE_KEY,
     L3_PERMISSION_CODES,
@@ -33,6 +35,7 @@ from app.services.role_provisioning import (
     is_custom_role,
     provision_application_admin_role,
     provision_application_member_role,
+    provision_multi_app_admin_role,
     provision_tenant_admin_role,
 )
 
@@ -114,26 +117,25 @@ class RoleHierarchyGuardTests(unittest.TestCase):
     # ---- is_custom_role 语义 ----
 
     def test_is_custom_role_semantics(self) -> None:
-        """四个模板 key 均视为模板角色，其余 key 一律自定义。"""
-        for key in ("platform.admin", L3_ROLE_KEY, L2_ROLE_KEY, "app.member"):
+        """五个模板 key 均视为模板角色，其余 key 一律自定义。"""
+        for key in ("platform.admin", L3_ROLE_KEY, L2M_ROLE_KEY, L2_ROLE_KEY, "app.member"):
             self.assertFalse(is_custom_role(Role(key=key)), key)
         self.assertTrue(is_custom_role(Role(key="ops.manager")))
-        self.assertEqual(len(TEMPLATE_ROLE_KEYS), 4)
+        self.assertEqual(len(TEMPLATE_ROLE_KEYS), 5)
 
     # ---- 平台侧 replace 守卫 ----
 
-    def test_custom_role_rejects_authority_codes_on_replace(self) -> None:
+    def test_custom_role_allows_authority_codes_on_replace(self) -> None:
+        """P405：看得见就能配，自定义平台角色可以挂授权权码。"""
         role = self.make_role("ops.manager")
         body = RolePermissionsUpdate(
             permission_ids=[self.pid("app.read"), self.pid("org.member.manage")],
             expected_current_permission_ids=[],
         )
-        with self.assertRaises(HTTPException) as ctx:
-            replace_role_permissions(role.id, body, self.request, actor=self.actor, db=self.db)
-        self.assertEqual(ctx.exception.status_code, 422)
-        self.assertIn("自定义角色不可包含授权类权限", str(ctx.exception.detail))
-        # 守卫发生在授权落库之前：角色授权保持为空。
-        self.assertEqual(self.held_codes(role), set())
+        result = replace_role_permissions(role.id, body, self.request, actor=self.actor, db=self.db)
+        self.assertTrue(result["changed"])
+        self.db.expire_all()
+        self.assertEqual(self.held_codes(role), {"app.read", "org.member.manage"})
 
     def test_template_role_allows_authority_codes_on_replace(self) -> None:
         """模板角色是授权者的来源：L3 key 挂授权权码不受限。"""
@@ -149,33 +151,31 @@ class RoleHierarchyGuardTests(unittest.TestCase):
 
     # ---- 租户应用侧 replace 守卫 ----
 
-    def test_custom_application_role_rejects_authority_codes(self) -> None:
+    def test_custom_application_role_allows_visible_management_codes(self) -> None:
         role = self.make_role("ops.manager", kind="application", application_id=self.application.id)
         body = RolePermissionsUpdate(
             permission_ids=[self.pid("org.member.manage")],
             expected_current_permission_ids=[],
         )
-        with self.assertRaises(HTTPException) as ctx:
-            replace_application_role_permissions(
-                self.application.id, role.id, body, self.request, actor=self.actor, db=self.db,
-            )
-        self.assertEqual(ctx.exception.status_code, 422)
-        self.assertIn("自定义角色不可包含授权类权限", str(ctx.exception.detail))
+        result = replace_application_role_permissions(
+            self.application.id, role.id, body, self.request, actor=self.actor, db=self.db,
+        )
+        self.assertTrue(result["changed"])
+        self.assertIn("org.member.manage", self.held_codes(role))
 
     # ---- 克隆剥离 ----
 
-    def test_clone_strips_authority_codes_from_custom_clone(self) -> None:
-        """克隆产物 key 非模板 → 复制授权时强制剥离授权权码，业务码保留。"""
+    def test_clone_keeps_authority_codes_on_custom_clone(self) -> None:
+        """P405：克隆自定义平台角色时保留授权权码。"""
         source = self.make_role("ops.manager")
         self.grant_codes(source, "app.read", "org.member.manage")
         body = RoleCloneRequest(key="ops.manager.copy", name="运维副本", copy_authorizations=True)
         result = clone_role(source.id, body, self.request, actor=self.actor, db=self.db)
-        self.assertEqual(result["copied_permission_grant_count"], 1)
+        self.assertEqual(result["copied_permission_grant_count"], 2)
         self.db.expire_all()
         clone = self.db.get(Role, UUID(result["id"]))
         self.assertTrue(is_custom_role(clone))
-        self.assertEqual(self.held_codes(clone), {"app.read"})
-        # 源角色的授权保持原样，剥离只作用于副本。
+        self.assertEqual(self.held_codes(clone), {"app.read", "org.member.manage"})
         self.assertEqual(self.held_codes(source), {"app.read", "org.member.manage"})
 
     # ---- 模板预置码数 ----
@@ -194,19 +194,17 @@ class RoleHierarchyGuardTests(unittest.TestCase):
         self.catalog[code] = row
         return row
 
-    def test_tenant_role_rejects_new_platform_scope_on_replace(self) -> None:
-        """租户角色不可新增 L1 专属码（与授权弹窗隐藏组一致）。"""
+    def test_custom_platform_role_allows_l1_platform_scope_on_replace(self) -> None:
+        """自定义平台角色：超管可挂全部管理码，不再被 kind=tenant 藏掉 L1 专属码。"""
         self._add_permission("platform.tenant.read", "platform")
         role = self.make_role("ops.manager")
         body = RolePermissionsUpdate(
             permission_ids=[self.pid("app.read"), self.pid("platform.tenant.read")],
             expected_current_permission_ids=[],
         )
-        with self.assertRaises(HTTPException) as ctx:
-            replace_role_permissions(role.id, body, self.request, actor=self.actor, db=self.db)
-        self.assertEqual(ctx.exception.status_code, 422)
-        self.assertIn("该角色作用域不可新增权限", str(ctx.exception.detail))
-        self.assertEqual(self.held_codes(role), set())
+        result = replace_role_permissions(role.id, body, self.request, actor=self.actor, db=self.db)
+        self.assertTrue(result["changed"])
+        self.assertEqual(self.held_codes(role), {"app.read", "platform.tenant.read"})
 
     def test_application_role_keeps_historical_out_of_scope_on_replace(self) -> None:
         """历史已持有的越域码允许保留；新增其他应用业务码 422。"""
@@ -251,22 +249,25 @@ class RoleHierarchyGuardTests(unittest.TestCase):
 
     def test_provisioned_template_role_code_counts(self) -> None:
         tenant_role = provision_tenant_admin_role(self.db, self.tenant.id)
+        multi_admin = provision_multi_app_admin_role(self.db, self.tenant.id, self.application.id)
         app_admin = provision_application_admin_role(self.db, self.tenant.id, self.application.id)
         app_member = provision_application_member_role(self.db, self.tenant.id, self.application.id)
         self.assertEqual(self.held_codes(tenant_role), set(L3_PERMISSION_CODES))
         self.assertEqual(len(self.held_codes(tenant_role)), 20)
         self.assertNotIn("rbac.permission.manage", self.held_codes(tenant_role))
-        # L3 是授权者来源：覆盖全部四个授权权码。
         self.assertTrue(AUTHORITY_MANAGE_CODES <= self.held_codes(tenant_role))
+        self.assertEqual(self.held_codes(multi_admin), set(L2M_PERMISSION_CODES))
+        self.assertEqual(len(self.held_codes(multi_admin)), 16)
+        self.assertIn("rbac.app_role.assign", self.held_codes(multi_admin))
         self.assertEqual(self.held_codes(app_admin), set(L2_PERMISSION_CODES))
         self.assertEqual(len(self.held_codes(app_admin)), 15)
-        # L4 不携带任何管理面码。
         self.assertEqual(self.held_codes(app_member), set())
-        # 幂等：重复预置不产生重复授权。
         provision_tenant_admin_role(self.db, self.tenant.id)
+        provision_multi_app_admin_role(self.db, self.tenant.id, self.application.id)
         provision_application_admin_role(self.db, self.tenant.id, self.application.id)
         self.db.expire_all()
         self.assertEqual(len(self.held_codes(tenant_role)), 20)
+        self.assertEqual(len(self.held_codes(multi_admin)), 16)
         self.assertEqual(len(self.held_codes(app_admin)), 15)
 
     def test_provision_tenant_admin_strips_permission_manage(self) -> None:

@@ -15,6 +15,7 @@ interface ResourceRecord {
   code: string
   name: string
   description: string | null
+  icon?: string | null
   status: 'active' | 'disabled'
 }
 
@@ -25,15 +26,21 @@ interface ResourceNode {
   record: ResourceRecord
 }
 
-const props = defineProps<{
-  open: boolean
-  applicationId: string
-  roleId: string
-  roleName: string
-  apiPrefix?: string
-}>()
+const props = withDefaults(defineProps<{
+  applicationId?: string
+  roleId?: string
+  roleName?: string
+  // 嵌进应用权限抽屉时去掉外层 Modal。
+  embedded?: boolean
+}>(), {
+  applicationId: '',
+  roleId: '',
+  roleName: '',
+  embedded: false,
+})
 
-const emit = defineEmits<{ 'update:open': [value: boolean]; saved: [] }>()
+const emit = defineEmits<{ saved: [] }>()
+const open = defineModel<boolean>('open', { default: false })
 
 const resources = ref<ResourceRecord[]>([])
 const checkedIds = ref<string[]>([])
@@ -46,7 +53,8 @@ const saving = ref(false)
 const resourcePathCodes = computed(() => buildResourcePathCodes(resources.value))
 
 function applicationPath(path: string): string {
-  return `${props.apiPrefix ?? '/admin'}${path}`
+  // 资源树只挂 /admin，鉴权已按应用管理员访问权过滤，租户台同样走这条。
+  return `/admin${path}`
 }
 
 // 平铺资源组装成树；排序 sort 升序、code 兜底（后端已排好，这里保持返回顺序）。
@@ -141,7 +149,7 @@ async function saveAssign(): Promise<void> {
     })
     message.success(`已保存「${props.roleName}」的资源授权`)
     emit('saved')
-    emit('update:open', false)
+    if (!props.embedded) open.value = false
   } catch (error) {
     message.error(error instanceof Error ? error.message : '保存资源授权失败')
   } finally {
@@ -149,24 +157,29 @@ async function saveAssign(): Promise<void> {
   }
 }
 
-watch(() => props.open, (open) => {
-  if (open && props.applicationId && props.roleId) {
+watch(open, visible => {
+  if (visible && props.applicationId && props.roleId) {
     searchText.value = ''
     void loadData()
   }
-})
+}, { immediate: true })
 </script>
 
 <template>
-  <a-modal :open="open" title="配置资源权限" ok-text="保存授权" cancel-text="取消"
-    :confirm-loading="saving" :width="560" @ok="saveAssign" @cancel="emit('update:open', false)">
+  <component
+    :is="embedded ? 'div' : 'a-modal'"
+    v-bind="embedded ? {} : { open, title: '配置资源权限', okText: '保存授权', cancelText: '取消', confirmLoading: saving, width: 560 }"
+    @ok="saveAssign"
+    @cancel="open = false"
+    @update:open="value => open = value"
+  >
     <div class="flex flex-col gap-3">
-      <a-alert type="info" show-icon class="mb-0"
+      <a-alert v-if="!embedded" type="info" show-icon class="mb-0"
         :message="`为角色「${roleName}」勾选可见的菜单、按钮与数据规则；保存为全量替换，服务端自动补齐父级菜单。`"
       />
       <a-input v-model:value="searchText" placeholder="搜索名称或编码" allow-clear />
       <a-spin :spinning="loading">
-        <div class="max-h-96 min-h-40 overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
+        <div class="max-h-80 min-h-40 overflow-y-auto rounded-lg border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
           <a-tree
             v-if="resourceTree.length"
             v-model:checked-keys="checkedIds"
@@ -191,7 +204,10 @@ watch(() => props.open, (open) => {
           <AdminEmpty v-else-if="!loading" emoji="🧭" description="该应用还没有资源节点，请先到「资源权限」Tab 登记" />
         </div>
       </a-spin>
-      <div class="text-xs text-[var(--color-text-muted)]">已勾选 {{ checkedIds.length }} 个节点（含自动携带的父级）</div>
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-xs text-[var(--color-text-muted)]">已勾选 {{ checkedIds.length }} 个节点（含自动携带的父级）</span>
+        <a-button v-if="embedded" type="primary" :loading="saving" @click="saveAssign">保存资源授权</a-button>
+      </div>
     </div>
-  </a-modal>
+  </component>
 </template>

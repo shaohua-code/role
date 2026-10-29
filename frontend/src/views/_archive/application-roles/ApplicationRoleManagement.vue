@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { isManagementCode } from '@/utils/permissionGroups'
+import { PERMISSION_SCOPES, resolvePermissionScope } from '@/utils/permissionGroups'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
@@ -27,7 +27,22 @@ interface RoleRecord {
   status: 'active' | 'disabled'
   permission_codes: string[]
 }
-interface PermissionRecord { id: string; code: string; resource_type: string; scope: string; status: 'active' | 'disabled' }
+interface PermissionRecord {
+  id: string
+  code: string
+  description?: string | null
+  resource_type: string
+  scope: string
+  status: 'active' | 'disabled'
+}
+interface PermissionOption {
+  label: string
+  value: string
+  code: string
+  description: string
+  scope: string
+  disabled?: boolean
+}
 interface RoleAssignment { id: string; key: string; name: string; status: string; sources: ('direct' | 'group')[] }
 interface MemberRecord { user_id: string; email: string | null; display_name: string; roles: RoleAssignment[] }
 interface PermissionImpact {
@@ -60,7 +75,7 @@ const roleForm = reactive({ key: '', name: '', description: '' })
 const permissionDialogOpen = ref(false)
 const permissionSaving = ref(false)
 const permissionLoading = ref(false)
-const permissionOptions = ref<Array<{ label: string; value: string; disabled?: boolean }>>([])
+const permissionOptions = ref<PermissionOption[]>([])
 const permissionIds = ref<string[]>([])
 const permissionImpact = ref<PermissionImpact | null>(null)
 const permissionPreviewKey = ref('')
@@ -97,6 +112,23 @@ const memberColumns = computed(() => [
 const permissionSelectionKey = computed(() => [...permissionIds.value].sort().join('|'))
 const previewIsCurrent = computed(() => Boolean(permissionImpact.value)
   && permissionPreviewKey.value === permissionSelectionKey.value)
+// 按租户 / 应用 / 业务码分组，方便在权限平台页勾选看得见的管理码。
+const permissionGroups = computed(() => {
+  const buckets = new Map<string, PermissionOption[]>()
+  for (const option of permissionOptions.value) {
+    const list = buckets.get(option.scope) || []
+    list.push(option)
+    buckets.set(option.scope, list)
+  }
+  return PERMISSION_SCOPES
+    .filter(scope => (buckets.get(scope.key) || []).length)
+    .map(scope => ({
+      key: scope.key,
+      label: scope.label,
+      hint: scope.hint,
+      options: buckets.get(scope.key) || [],
+    }))
+})
 
 async function loadApplications(): Promise<void> {
   if (!props.active) return
@@ -245,8 +277,9 @@ async function openPermissionEditor(role: RoleRecord): Promise<void> {
   permissionPreviewKey.value = ''
   permissionLoading.value = true
   try {
+    const catalogQuery = new URLSearchParams({ role_id: role.id, include_management: 'true' })
     const [catalog, grants] = await Promise.all([
-      api<PermissionRecord[]>(`/tenant-admin/applications/${application.id}/permissions?${new URLSearchParams({ role_id: role.id })}`),
+      api<PermissionRecord[]>(`/tenant-admin/applications/${application.id}/permissions?${catalogQuery}`),
       api<Array<{ permission_id: string; resource_id: string | null }>>(
         `/tenant-admin/applications/${application.id}/roles/${role.id}/permissions`,
       ),
@@ -255,11 +288,17 @@ async function openPermissionEditor(role: RoleRecord): Promise<void> {
     const currentSet = new Set(currentIds)
     permissionOptions.value = catalog
       .filter(permission => permission.status === 'active' || currentSet.has(permission.id))
-      .map(permission => ({
-        label: `${permission.code}${permission.status === 'disabled' ? '（停用，仅可撤销）' : ''}`,
-        value: permission.id,
-        disabled: isManagementCode(permission.code) && !currentSet.has(permission.id),
-      }))
+      .map(permission => {
+        const description = (permission.description || '').trim()
+        return {
+          label: description || permission.code,
+          value: permission.id,
+          code: permission.code,
+          description,
+          scope: resolvePermissionScope(permission.code).key,
+          disabled: permission.status !== 'active' && !currentSet.has(permission.id),
+        }
+      })
     permissionIds.value = currentIds
     permissionDialogOpen.value = true
   } catch (error) {
@@ -326,7 +365,7 @@ async function bindMember(): Promise<void> {
       body: JSON.stringify({ email: memberEmail.value.trim(), role_id: memberRoleId.value }),
     })
     memberEmail.value = ''
-    message.success('成员应用角色已绑定')
+    message.success('已分配应用角色，并同时成为该应用的平台成员')
     await Promise.all([loadMembers(1), loadRoles()])
   } catch (error) {
     message.error(error instanceof Error ? error.message : '绑定应用角色失败；非租户成员需先由租户管理员邀请')
@@ -372,11 +411,11 @@ watch(memberQuery, () => { memberPage.value = 1 })
     <AdminPageHeader
       eyebrow="应用角色与成员"
       title="应用角色与成员"
-      subtitle="按应用维护角色、业务权限和成员绑定。日常配权请走「应用工作台」；本页保留成员绑定。成员目录只展示已通过该应用角色授权的人。"
+      subtitle="本页给当前应用的角色配置你看得见的租户/应用管理权限，以及本应用业务码。五级平台模板仍在「高级管理 → 角色」。"
     />
 
     <a-card class="data-card" :bordered="false">
-      <AdminTableToolbar :hint="canManage ? '写入会记录审计；五域管理码不能通过应用角色新增。' : '当前只有读取权限；联系应用管理员申请角色管理权限。'">
+      <AdminTableToolbar :hint="canManage ? '写入会记录审计。可挂你看得见的租户/应用管理码与本应用业务码；分配应用角色时会同时成为该应用的平台成员。' : '当前只有读取权限；联系应用管理员申请角色管理权限。'">
         <a-select v-model:value="applicationId" placeholder="选择已授权应用"
           :loading="loadingApplications" :options="applications.map(item => ({ value: item.id, label: `${item.name} · ${item.client_id}` }))" />
         <template #actions>
@@ -414,7 +453,7 @@ watch(memberQuery, () => { memberPage.value = 1 })
             <a-input v-model:value="memberEmail" class="member-email" type="email" autocomplete="off" placeholder="输入已加入本租户的成员邮箱" />
             <a-select v-model:value="memberRoleId" class="member-role" placeholder="选择启用的应用角色" :options="roleSelectOptions" />
             <a-button type="primary" :loading="memberSaving" :disabled="!canAssign" @click="bindMember">绑定角色</a-button>
-            <span class="member-hint">同一用户可多次绑定不同角色；成员列表会展示全部应用角色。</span>
+            <span class="member-hint">会同时成为该应用的平台成员；已有则跳过。同一用户可绑定多个应用角色。</span>
           </div>
           <AdminTableToolbar hint="用户组继承的角色会标记为「用户组」；直接移除后若仍有继承，授权仍然有效。">
             <AdminSearchField v-model="memberQuery" placeholder="搜索已授权成员，回车查询" @search="() => loadMembers(1)" />
@@ -445,15 +484,27 @@ watch(memberQuery, () => { memberPage.value = 1 })
         </a-form-item>
         <a-form-item label="角色名称"><a-input v-model:value="roleForm.name" :maxlength="120" placeholder="例如简历编辑者" /></a-form-item>
         <a-form-item label="说明"><a-input v-model:value="roleForm.description" :maxlength="500" placeholder="说明这个应用角色的用途" /></a-form-item>
-        <a-alert type="info" show-icon message="角色限定当前应用" description="此页不会创建租户通用角色，也不能新增五域管理码。成员必须先由租户管理员加入租户。" />
+        <a-alert type="info" show-icon message="角色限定当前应用" description="此页不会创建五级平台模板。成员必须先由租户管理员加入租户。" />
       </a-form>
     </a-modal>
 
     <a-modal v-model:open="permissionDialogOpen" :title="`${canManage ? '配置' : '查看'}「${permissionRole?.name || '应用角色'}」权限`" width="760px"
       :footer="null" :confirm-loading="permissionSaving">
       <a-spin :spinning="permissionLoading">
-        <a-alert class="page-alert" type="info" show-icon message="这里只能新增业务权限；IAM 管理权限只可保留或撤销。" />
-        <a-checkbox-group v-model:value="permissionIds" :disabled="!canManage" class="permission-list" :options="permissionOptions" />
+        <a-alert class="page-alert" type="info" show-icon message="可勾选你看得见的租户管理码、应用管理码；本应用业务码也可挂。看不见的码不会出现。" />
+        <a-checkbox-group v-model:value="permissionIds" :disabled="!canManage" class="flex max-h-[48vh] w-full flex-col gap-4 overflow-auto py-3">
+          <div v-for="group in permissionGroups" :key="group.key" class="flex flex-col gap-2">
+            <p class="m-0 text-sm font-medium text-[var(--color-text-primary)]">{{ group.label }}</p>
+            <p class="m-0 text-xs text-[var(--color-text-secondary)]">{{ group.hint }}</p>
+            <a-checkbox v-for="option in group.options" :key="option.value" :value="option.value" :disabled="option.disabled">
+              <span class="flex flex-col">
+                <span>{{ option.label }}</span>
+                <span class="font-mono text-xs text-[var(--color-text-muted)]">{{ option.code }}</span>
+              </span>
+            </a-checkbox>
+          </div>
+          <AdminEmpty v-if="!permissionGroups.length" emoji="🔐" description="当前没有可配的权限编码。租户管理员可看到租户码，应用管理员可看到应用码。" />
+        </a-checkbox-group>
         <div v-if="canManage" class="modal-actions">
           <a-button :loading="impactLoading" @click="previewPermissionChanges">预览影响</a-button>
           <a-button type="primary" :loading="permissionSaving" :disabled="!previewIsCurrent || impactLoading" @click="savePermissionChanges">确认保存</a-button>

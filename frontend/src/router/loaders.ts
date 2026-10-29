@@ -20,7 +20,6 @@ export const ModelGovernancePage = loadFeature(() => import('@/views/models/Mode
 export const TenantManagement = loadFeature(() => import('@/views/tenants/TenantManagement.vue'))
 export const ApplicationManagement = loadFeature(() => import('@/views/applications/ApplicationManagement.vue'))
 export const ApplicationWorkspace = loadFeature(() => import('@/views/application-workspace/index.vue'))
-export const ApplicationRoleManagement = loadFeature(() => import('@/views/application-roles/ApplicationRoleManagement.vue'))
 export const AuditLogPage = loadFeature(() => import('@/views/audit/AuditLogPage.vue'))
 export const InvitationManagement = loadFeature(() => import('@/views/invitations/InvitationManagement.vue'))
 export const RoleManagement = loadFeature(() => import('@/views/roles/RoleManagement.vue'))

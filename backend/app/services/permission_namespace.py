@@ -82,9 +82,10 @@ def is_platform_catalog_namespace(catalog_namespace: str) -> bool:
 PLATFORM_SCOPE_CODES: frozenset[str] = frozenset({
     "platform.overview.read", "platform.tenant.read", "platform.tenant.manage",
     "platform.account.read", "platform.account.manage", "rbac.role.manage",
+    "rbac.permission.manage",
 })
 TENANT_SCOPE_CODES: frozenset[str] = frozenset({
-    "org.read", "org.manage", "rbac.role.read", "rbac.permission.manage",
+    "org.read", "org.manage", "rbac.role.read",
     "rbac.app_role.assign", "ops.model.manage",
 })
 # tenant 角色不可新增 L1 专属码与业务码；application 角色不可新增 L1 专属码与 L3 起租户治理码。
@@ -137,15 +138,21 @@ def assert_application_grant_permissions(
     application_permission_namespace: str,
     proposed: list,
     current_ids: set,
+    grantable_management_codes: frozenset[str] | None = None,
 ) -> None:
-    """应用角色只能新增同命名空间的业务权限，不能新增 platform/iam 目录项。"""
+    """应用角色可挂：本应用业务码，以及操作者看得见的租户/应用管理码。
+
+    grantable_management_codes=None 表示平台超管，管理面不限制。
+    """
     namespace = normalize_namespace(application_permission_namespace)
     for permission in proposed:
         if permission.id in current_ids:
             continue
-        if is_platform_catalog_namespace(permission.catalog_namespace):
-            raise HTTPException(403, "应用管理员不能新增 IAM 管理权限")
+        if is_management_code(permission.code) or getattr(permission, "surface", None) == "management":
+            if grantable_management_codes is not None and permission.code not in grantable_management_codes:
+                raise HTTPException(422, f"不能配置你没有的权限：{permission.code}")
+            continue
         if permission.catalog_namespace != namespace:
             raise HTTPException(422, "权限不属于当前应用命名空间")
-        if permission.code.startswith("iam."):
-            raise HTTPException(403, "应用管理员不能新增 IAM 管理权限")
+        if not permission_matches_namespace(permission.code, namespace):
+            raise HTTPException(422, "权限不属于当前应用命名空间")

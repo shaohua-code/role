@@ -98,7 +98,7 @@ class ApplicationPermissionCatalogTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.session.close()
 
-    def test_assert_application_grant_permissions_blocks_platform(self) -> None:
+    def test_assert_application_grant_permissions_blocks_invisible_management(self) -> None:
         tenant_id = uuid4()
         app = Application(
             tenant_id=tenant_id,
@@ -113,8 +113,20 @@ class ApplicationPermissionCatalogTests(unittest.TestCase):
             resource_type="application",
             scope="read",
         )
-        with self.assertRaises(HTTPException):
-            assert_application_grant_permissions("demo", [platform_permission], set())
+        with self.assertRaises(HTTPException) as ctx:
+            assert_application_grant_permissions("demo", [platform_permission], set(), frozenset())
+        self.assertIn("不能配置你没有的权限", str(ctx.exception.detail))
+
+    def test_assert_application_grant_permissions_allows_visible_management(self) -> None:
+        tenant_id = uuid4()
+        platform_permission = Permission(
+            code="app.read",
+            catalog_namespace="platform",
+            resource_type="application",
+            scope="read",
+        )
+        assert_application_grant_permissions("demo", [platform_permission], set(), frozenset({"app.read"}))
+        assert_application_grant_permissions("demo", [platform_permission], set(), None)
 
     def test_catalog_namespace_filtering(self) -> None:
         tenant = Tenant(id=uuid4(), name="T", slug="t", status="active", kind="organization")

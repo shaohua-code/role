@@ -20,7 +20,7 @@ from app.schemas.groups import (
     UserGroupUpdate,
 )
 from app.services.rbac_guards import ensure_roles, bump_membership_versions
-from app.services.role_provisioning import L1_ROLE_KEY, L2_ROLE_KEY, L3_ROLE_KEY
+from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(prefix="/groups", tags=["用户组管理"])
 
@@ -60,7 +60,7 @@ def _validate_parent_group(db: Session, group: UserGroup | None, tenant_id: UUID
 def list_user_groups(tenant_id: UUID | None = None, actor: User = Depends(current_user),
                      db: Session = Depends(get_db_session)) -> list[dict]:
     """列出租户用户组和组成员/角色数量；两类关联数通过聚合查询避免逐行访问数据库。"""
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=tenant_id, detail="缺少管理角色（原 org.group.read）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 org.group.read）")
     member_counts = (select(UserGroupMembership.group_id.label("group_id"),
                              func.count(UserGroupMembership.membership_id).label("member_count"))
                      .group_by(UserGroupMembership.group_id).subquery())
@@ -85,7 +85,7 @@ def list_user_groups(tenant_id: UUID | None = None, actor: User = Depends(curren
 def create_user_group(body: UserGroupCreate, request: Request,
                       actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """创建租户内用户组，唯一键冲突统一走受控的 409 响应。"""
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=body.tenant_id, detail="缺少管理角色（原 org.group.manage）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=body.tenant_id, detail="缺少管理角色（原 org.group.manage）")
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant:
         raise HTTPException(404, "租户不存在")
@@ -116,7 +116,7 @@ def update_user_group(group_id: UUID, body: UserGroupUpdate, request: Request,
     row = db.get(UserGroup, group_id)
     if not row:
         raise HTTPException(404, "用户组不存在")
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=row.tenant_id, detail="缺少管理角色（原 org.group.manage）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=row.tenant_id, detail="缺少管理角色（原 org.group.manage）")
     changes = body.model_dump(exclude_unset=True)
     # G24 组嵌套：变更父组需同租户、启用且不成环。
     if "parent_group_id" in changes:
@@ -146,7 +146,7 @@ def set_user_group_status(group_id: UUID, status: str, request: Request,
     row = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not row:
         raise HTTPException(404, "用户组不存在")
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=row.tenant_id, detail="缺少管理角色（原 org.group.manage）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=row.tenant_id, detail="缺少管理角色（原 org.group.manage）")
     if row.status != status:
         row.status = status
         # 组启停改变成员有效角色，bump 让组内成员旧 OIDC 凭证立即失效。
@@ -164,7 +164,7 @@ def delete_user_group(group_id: UUID, request: Request,
     group = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.manage）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.manage）")
     # 组删除改变成员有效角色：先对组内成员统一 bump，再级联删除两张关联表。
     bump_membership_versions(db, _group_member_membership_ids(db, group))
     audit(db, actor, request, "user_group.delete", "user_group", str(group.id),
@@ -180,7 +180,7 @@ def list_user_group_members(group_id: UUID, actor: User = Depends(current_user),
     group = db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.read）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.read）")
     assigned_ids = set(db.scalars(select(UserGroupMembership.membership_id).where(
         UserGroupMembership.group_id == group.id,
         UserGroupMembership.tenant_id == group.tenant_id,
@@ -201,7 +201,7 @@ def replace_user_group_members(group_id: UUID, body: UserGroupMembersUpdate, req
     group = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.manage）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.manage）")
     requested_ids = set(body.user_ids)
     memberships = db.scalars(select(TenantMembership).where(
         TenantMembership.tenant_id == group.tenant_id,
@@ -239,7 +239,7 @@ def list_user_group_roles(group_id: UUID, actor: User = Depends(current_user),
     group = db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.read）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.read）")
     assigned_ids = set(db.scalars(select(UserGroupRole.role_id).where(
         UserGroupRole.group_id == group.id, UserGroupRole.tenant_id == group.tenant_id,
     )).all())
@@ -258,7 +258,7 @@ def replace_user_group_roles(group_id: UUID, body: UserGroupRolesUpdate, request
     group = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.manage）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=group.tenant_id, detail="缺少管理角色（原 org.group.manage）")
     requested_ids = set(body.role_ids)
     roles = db.scalars(select(Role).where(
         Role.tenant_id == group.tenant_id,

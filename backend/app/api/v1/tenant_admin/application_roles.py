@@ -1,5 +1,6 @@
 """应用管理员的角色和成员入口；所有对象都由 URL 中的应用范围约束。"""
 
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -7,7 +8,7 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.admin.common import audit, commit_or_conflict, flush_or_conflict
-from app.core.security import current_user
+from app.core.security import current_user, is_platform_admin_user
 from app.db.session import get_db_session
 from app.models.application import Application
 from app.models.authorization import Permission, Role, RoleBinding, RolePermission
@@ -27,37 +28,76 @@ from app.services.permission_impact import (
     apply_role_permissions,
     preview_role_permissions,
 )
-from app.services.permission_namespace import assert_application_grant_permissions, permission_matches_namespace
-from app.services.role_provisioning import AUTHORITY_MANAGE_CODES, is_custom_role
-from app.services.rbac_guards import bump_membership_versions, user_has_management_code
+from app.services.permission_namespace import (
+    assert_application_grant_permissions,
+    is_management_code,
+    permission_matches_namespace,
+)
+from app.services.role_provisioning import (
+    L2M_ROLE_KEY,
+    L2_ROLE_KEY,
+    L3_ROLE_KEY,
+    L4_ROLE_KEY,
+    TEMPLATE_ROLE_KEYS,
+    is_application_class_role,
+)
+from app.services.rbac_guards import (
+    actor_grantable_management_codes,
+    bump_membership_versions,
+    user_has_any_role,
+)
 
 
 router = APIRouter(tags=["应用角色与成员"])
 
-# L3「任命应用管理员」专用角色 key：assign 权限只允许绑定/解绑这个角色。
-APP_ADMIN_ROLE_KEY = "app.admin"
-
-
 def _ensure_app_role_binding_permission(
     actor: User, db: Session, application: Application, role: Role,
 ) -> None:
-    """应用角色成员 bind/unbind 的双层判权。
-
-    - L2 持 rbac.app_role.manage：可管理本应用任意角色的成员；
-    - L3 持 rbac.app_role.assign：仅能任命/撤职 key=app.admin 的应用管理员；
-    - 两者皆无 → 403。
-    """
-    if user_has_management_code(
-        actor, db, "rbac.app_role.manage",
-        tenant_id=application.tenant_id, application_id=application.id,
-    ):
+    """P405 任命链：L3 可任命多应用/应用管理员；多应用管理员可再任命应用管理员；应用管理员不能任命管理员。"""
+    if is_platform_admin_user(actor, db):
         return
-    if role.key == APP_ADMIN_ROLE_KEY and user_has_management_code(
-        actor, db, "rbac.app_role.assign",
-        tenant_id=application.tenant_id, application_id=application.id,
-    ):
+    tenant_id = application.tenant_id
+    app_id = application.id
+    if user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
         return
+    is_multi = user_has_any_role(
+        actor, db, (L2M_ROLE_KEY,), tenant_id=tenant_id, application_id=app_id,
+    )
+    is_single = user_has_any_role(
+        actor, db, (L2_ROLE_KEY,), tenant_id=tenant_id, application_id=app_id,
+    )
+    if is_multi:
+        if role.key == L2M_ROLE_KEY:
+            raise HTTPException(403, "多应用管理员不能任命多应用管理员")
+        return
+    if is_single:
+        if role.key in {L2M_ROLE_KEY, L2_ROLE_KEY}:
+            raise HTTPException(403, "应用管理员不能任命应用管理员")
+        if role.key == L4_ROLE_KEY or is_application_class_role(role):
+            return
+        raise HTTPException(403, "缺少应用角色成员管理权限")
     raise HTTPException(403, "缺少应用角色成员管理权限")
+
+
+def _ensure_application_member_binding(
+    db: Session, application: Application, membership_id,
+) -> None:
+    """给平台成员分配应用角色时，自动补绑该应用的 app.member（已有则跳过）。"""
+    member_role = db.scalar(select(Role).where(
+        Role.tenant_id == application.tenant_id,
+        Role.application_id == application.id,
+        Role.key == L4_ROLE_KEY,
+        Role.status == "active",
+    ))
+    if member_role is None:
+        return
+    existing = db.scalar(select(RoleBinding.id).where(
+        RoleBinding.membership_id == membership_id,
+        RoleBinding.role_id == member_role.id,
+    ))
+    if existing:
+        return
+    db.add(RoleBinding(membership_id=membership_id, role_id=member_role.id))
 
 
 def _authorized_application(application_id: UUID, actor: User, db: Session, *, manage: bool = False) -> Application:
@@ -131,9 +171,10 @@ def _reject_ineligible_application_permissions(
     application: Application,
     role: Role,
     proposed_permission_ids: list[UUID],
+    actor: User,
     db: Session,
 ) -> None:
-    """应用角色只能绑定同命名空间业务权限，不能新增 IAM/platform 目录项。"""
+    """本应用业务码 + 操作者已有的租户/应用管理码；超出可见集 422。"""
     current_ids = set(db.scalars(select(RolePermission.permission_id).where(
         RolePermission.role_id == role.id,
         RolePermission.resource_id.is_(None),
@@ -143,7 +184,12 @@ def _reject_ineligible_application_permissions(
     ).with_for_update()).all() if proposed_permission_ids else []
     if len(proposed) != len(set(proposed_permission_ids)):
         raise HTTPException(422, "权限目录中存在无效权限")
-    assert_application_grant_permissions(application.permission_namespace, proposed, current_ids)
+    assert_application_grant_permissions(
+        application.permission_namespace,
+        proposed,
+        current_ids,
+        actor_grantable_management_codes(actor, db),
+    )
 
 
 @router.get("/applications/{application_id}/roles")
@@ -152,13 +198,14 @@ def list_application_roles(
     actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> list[dict]:
-    """只返回当前授权应用的角色；租户通用和其他应用角色均不会暴露。"""
+    """只返回当前应用的自定义应用角色；五级平台模板不出现在工作台。"""
     application = _authorized_application(application_id, actor, db)
     roles = db.scalars(
         select(Role)
         .where(
             Role.tenant_id == application.tenant_id,
             Role.application_id == application.id,
+            Role.key.notin_(TEMPLATE_ROLE_KEYS),
         )
         .order_by(Role.created_at.desc())
         .limit(500)
@@ -178,6 +225,8 @@ def create_application_role(
     application = _authorized_application(application_id, actor, db, manage=True)
     if application.status != "active":
         raise HTTPException(409, "请先启用应用，再创建角色")
+    if body.key in TEMPLATE_ROLE_KEYS:
+        raise HTTPException(422, "不能把系统预置平台角色建成应用角色")
     role = Role(
         tenant_id=application.tenant_id,
         application_id=application.id,
@@ -261,10 +310,11 @@ def set_application_role_status(
 def list_application_permissions(
     application_id: UUID,
     role_id: UUID = Query(...),
+    include_management: Annotated[bool, Query()] = False,
     actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> list[dict]:
-    """只为当前应用内指定角色返回业务候选与其历史授权，避免角色间目录信息泄漏。"""
+    """本应用业务码；include_management 时并上操作者可授的租户/应用管理码。"""
     application = _authorized_application(application_id, actor, db)
     role = _authorized_role(application, role_id, actor, db)
     currently_assigned_ids = set(db.scalars(select(RolePermission.permission_id).where(
@@ -272,8 +322,18 @@ def list_application_permissions(
     )).all())
     namespace = application.permission_namespace
     catalog_clauses = [
-        and_(Permission.status == "active", Permission.catalog_namespace == namespace),
+        and_(
+            Permission.status == "active",
+            Permission.catalog_namespace == namespace,
+            Permission.surface == "business",
+        ),
     ]
+    grantable = actor_grantable_management_codes(actor, db) if include_management else frozenset()
+    if include_management:
+        management_filters = [Permission.status == "active", Permission.surface == "management"]
+        if grantable is not None:
+            management_filters.append(Permission.code.in_(list(grantable) or ["__none__"]))
+        catalog_clauses.append(and_(*management_filters))
     if currently_assigned_ids:
         catalog_clauses.append(Permission.id.in_(currently_assigned_ids))
     rows = db.scalars(
@@ -282,13 +342,29 @@ def list_application_permissions(
         .order_by(Permission.code)
         .limit(1000)
     ).all()
-    return [{"id": str(permission.id), "code": permission.code,
-             "catalog_namespace": permission.catalog_namespace,
-             "resource_type": permission.resource_type, "scope": permission.scope,
-             "description": permission.description, "status": permission.status}
-            for permission in rows
-            if permission_matches_namespace(permission.code, namespace)
-            or permission.id in currently_assigned_ids]
+    payload: list[dict] = []
+    for permission in rows:
+        assigned = permission.id in currently_assigned_ids
+        management = is_management_code(permission.code) or permission.surface == "management"
+        if assigned:
+            pass
+        elif management:
+            if not include_management:
+                continue
+            if grantable is not None and permission.code not in grantable:
+                continue
+        elif not permission_matches_namespace(permission.code, namespace):
+            continue
+        payload.append({
+            "id": str(permission.id),
+            "code": permission.code,
+            "catalog_namespace": permission.catalog_namespace,
+            "resource_type": permission.resource_type,
+            "scope": permission.scope,
+            "description": permission.description,
+            "status": permission.status,
+        })
+    return payload
 
 
 @router.get("/applications/{application_id}/roles/{role_id}/permissions")
@@ -324,7 +400,7 @@ def preview_application_role_permissions(
     """预览替换角色权限的影响（授予/回收码、待删数据范围策略），不写库。"""
     application = _authorized_application(application_id, actor, db, manage=True)
     role = _authorized_role(application, role_id, actor, db, manage=True, lock=True)
-    _reject_ineligible_application_permissions(application, role, body.permission_ids, db)
+    _reject_ineligible_application_permissions(application, role, body.permission_ids, actor, db)
     try:
         return preview_role_permissions(role.id, body.permission_ids, db)
     except LookupError as error:
@@ -342,18 +418,12 @@ def replace_application_role_permissions(
     actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
-    """只替换角色的通用业务权限；不改动实例级授权或数据范围策略。"""
+    """替换角色通用授权：本应用业务码 + 操作者可授的租户/应用管理码。"""
     application = _authorized_application(application_id, actor, db, manage=True)
     role = _authorized_role(application, role_id, actor, db, manage=True, lock=True)
-    # 管理员不能管理管理员：自定义角色强制不可持有授权权码（模板角色不受限）。
-    if is_custom_role(role):
-        authority_ids = set(db.scalars(
-            select(Permission.id).where(Permission.code.in_(AUTHORITY_MANAGE_CODES)),
-        ).all())
-        if authority_ids & set(body.permission_ids):
-            forbidden = sorted(AUTHORITY_MANAGE_CODES)
-            raise HTTPException(422, f"自定义角色不可包含授权类权限：{', '.join(forbidden)}")
-    _reject_ineligible_application_permissions(application, role, body.permission_ids, db)
+    if not is_application_class_role(role):
+        raise HTTPException(422, "平台角色不能在应用工作台挂应用权限")
+    _reject_ineligible_application_permissions(application, role, body.permission_ids, actor, db)
     try:
         impact = apply_role_permissions(
             role.id,
@@ -384,6 +454,7 @@ def replace_application_role_permissions(
 def list_application_members(
     application_id: UUID,
     q: str | None = Query(default=None, max_length=120),
+    role_id: UUID | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     actor: User = Depends(current_user),
@@ -391,11 +462,15 @@ def list_application_members(
 ) -> dict:
     """只列出已通过该应用角色取得授权的成员，避免暴露完整租户用户目录。"""
     application = _authorized_application(application_id, actor, db)
+    # 角色行「配置成员」只看持有指定应用角色的人，避免分页把别的角色成员夹进来。
+    scoped_role = _authorized_role(application, role_id, actor, db) if role_id else None
     direct_memberships = (
         select(RoleBinding.membership_id.label("membership_id"))
         .join(Role, Role.id == RoleBinding.role_id)
         .where(Role.tenant_id == application.tenant_id, Role.application_id == application.id)
     )
+    if scoped_role is not None:
+        direct_memberships = direct_memberships.where(RoleBinding.role_id == scoped_role.id)
     group_memberships = (
         select(UserGroupMembership.membership_id.label("membership_id"))
         .join(UserGroupRole, and_(
@@ -417,6 +492,8 @@ def list_application_members(
             Role.application_id == application.id,
         )
     )
+    if scoped_role is not None:
+        group_memberships = group_memberships.where(Role.id == scoped_role.id)
     # 可见成员 = 应用角色直连绑定 ∪ 活跃用户组继承该应用角色，两者取并集。
     eligible_memberships = direct_memberships.union(group_memberships).subquery()
     filters = [
@@ -545,9 +622,15 @@ def bind_application_role(
         RoleBinding.membership_id == membership.id,
         RoleBinding.role_id == role.id,
     ))
-    if existing:
+    if existing and not is_application_class_role(role):
         return
-    db.add(RoleBinding(membership_id=membership.id, role_id=role.id))
+    if not existing:
+        db.add(RoleBinding(membership_id=membership.id, role_id=role.id))
+    # 分配应用角色时自动成为该应用的平台成员。
+    if is_application_class_role(role):
+        _ensure_application_member_binding(db, application, membership.id)
+    elif existing:
+        return
     # 绑定即时生效：bump 让目标成员旧 OIDC 凭证失效重签。
     bump_membership_versions(db, [membership.id])
     audit(db, actor, request, "application.role.bind", "user", str(membership.user_id), {

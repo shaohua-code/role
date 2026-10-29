@@ -7,7 +7,6 @@ import type { PageKey } from '@/router/navigation'
 import {
   ApplicationManagement,
   ApplicationWorkspace,
-  ApplicationRoleManagement,
   AuditLogPage,
   AuthorizationSimulator,
   GroupManagement,
@@ -32,7 +31,6 @@ export const PAGE_COMPONENTS: Partial<Record<PageKey, Component>> = {
   invitations: InvitationManagement,
   application_workspace: ApplicationWorkspace,
   applications: ApplicationManagement,
-  application_roles: ApplicationRoleManagement,
   roles: RoleManagement,
   permissions: PermissionCatalog,
   organizations: OrganizationManagement,

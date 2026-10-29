@@ -12,7 +12,7 @@ import ApplicationPermissionDrawer from './ApplicationPermissionDrawer.vue'
 
 interface TenantOption {
   id: string; name: string; status: string; kind?: 'organization' | 'consumer'
-  can_read_applications?: boolean; can_manage_applications?: boolean; can_rotate_application_secret?: boolean
+  can_read_applications?: boolean; can_manage_applications?: boolean; can_create_applications?: boolean; can_rotate_application_secret?: boolean
 }
 interface Application {
   id: string; tenant_id: string; name: string; client_id: string; permission_namespace: string
@@ -65,7 +65,7 @@ function defaultNamespaceFromClientId(clientId: string): string {
   return /^[a-z0-9][a-z0-9._-]{0,99}$/.test(segment) ? segment : ''
 }
 const activeTenantOptions = computed(() => props.tenants
-  .filter(tenant => tenant.status === 'active' && canManageTenant(tenant.id))
+  .filter(tenant => tenant.status === 'active' && canCreateOnTenant(tenant.id))
   .map(tenant => ({ value: tenant.id, label: `${tenant.name} · ${tenant.kind === 'consumer' ? 'ToC 消费' : '组织/企业'}` })))
 const isConsumerTenant = computed(() => props.tenants.find(tenant => tenant.id === form.tenant_id)?.kind === 'consumer')
 const canCreateApplication = computed(() => activeTenantOptions.value.length > 0)
@@ -159,6 +159,16 @@ function canManageTenant(tenantId: string): boolean {
   if (cachedHas('app.manage') && getCachedCapabilities()?.platform_admin) return true
   if (cachedHas('app.manage') && props.apiPrefix === '/admin') return true
   return props.tenants.some(tenant => tenant.id === tenantId && tenant.can_manage_applications === true)
+}
+
+// P404：新建/删除只认 L1 或租户域 app.manage（L3），与管理已有应用分开。
+function canCreateOnTenant(tenantId: string): boolean {
+  if (getCachedCapabilities()?.platform_admin) return true
+  return props.tenants.some(tenant => tenant.id === tenantId && tenant.can_create_applications === true)
+}
+
+function canDeleteApplication(application: Application): boolean {
+  return canCreateOnTenant(application.tenant_id)
 }
 
 function canManageApplication(application: Application): boolean {
@@ -521,7 +531,7 @@ watch(() => form.client_id, clientId => {
                 <a-menu-item key="disable" v-if="record.status === 'active'">停用</a-menu-item>
                 <a-menu-item key="enable" v-else>启用</a-menu-item>
                 <a-menu-divider />
-                <a-menu-item key="delete" danger>删除应用</a-menu-item>
+                <a-menu-item v-if="canDeleteApplication(record as Application)" key="delete" danger>删除应用</a-menu-item>
               </a-menu>
             </template>
           </a-dropdown>
@@ -587,7 +597,7 @@ watch(() => form.client_id, clientId => {
                 <a-menu-item key="disable" v-if="detailApplication?.status === 'active'">停用</a-menu-item>
                 <a-menu-item key="enable" v-else>启用</a-menu-item>
                 <a-menu-divider />
-                <a-menu-item key="delete" danger>删除应用</a-menu-item>
+                <a-menu-item v-if="detailApplication && canDeleteApplication(detailApplication)" key="delete" danger>删除应用</a-menu-item>
               </a-menu>
             </template>
           </a-dropdown>

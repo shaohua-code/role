@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { TablePaginationConfig } from 'ant-design-vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
 import { DownOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
@@ -36,18 +36,14 @@ const props = defineProps<{
   applications: ApplicationOption[]
 }>()
 const emit = defineEmits<{ changed: [] }>()
-const canManageRoles = computed(() => cachedHas('rbac.role.manage'))
+const isPlatformSuperAdmin = computed(() => getCachedCapabilities()?.platform_admin === true)
+// 前四级都可新建自定义平台角色，并给自己看得见的管理码挂权。
+const canCreateRoles = computed(() => isPlatformSuperAdmin.value || cachedHas('org.manage') || cachedHas('rbac.app_role.manage'))
+const canMutateRoleMeta = computed(() => isPlatformSuperAdmin.value)
 
 const roles = ref<RoleRecord[]>([])
 // undefined 才能触发 Select 的 placeholder；'' 会被当作已选值导致空框无占位文案
 const tenantFilter = ref<string | undefined>(undefined)
-// P386 作用域筛选：按 roles.kind 过滤（平台/租户/应用三级）
-const kindFilter = ref<string | undefined>(undefined)
-const kindOptions = [
-  { value: 'platform', label: '平台角色' },
-  { value: 'tenant', label: '租户角色' },
-  { value: 'application', label: '应用角色' },
-]
 const statusFilter = ref<string | undefined>(undefined)
 const statusOptions = [
   { value: 'active', label: '启用' },
@@ -65,8 +61,6 @@ const editorOpen = ref(false)
 const savingRole = ref(false)
 const editingRole = ref<RoleRecord | null>(null)
 const form = reactive({ tenant_id: '', application_id: '', key: '', name: '', description: '' })
-// P390 作用域向导：新建角色第一步显式选作用域（平台角色不可新建，仅租户/应用两项可选）
-const wizardScope = ref<'' | 'tenant' | 'application'>('')
 const cloneDialogOpen = ref(false)
 const cloningRole = ref(false)
 const cloneSourceRole = ref<RoleRecord | null>(null)
@@ -76,22 +70,40 @@ const cloneForm = reactive({ key: '', name: '', description: '', copy_authorizat
 const grantOpen = ref(false)
 const grantRoleId = ref('')
 const grantRoleName = ref('')
-const grantRoleKey = ref('')
 // P390 作用域收敛：弹窗按角色 kind 隐藏越域码组；应用角色业务码只显示本命名空间
 const grantRoleKind = ref<'' | 'platform' | 'tenant' | 'application'>('')
 const grantRoleNamespace = ref('')
 // 管理员不能管理管理员：非模板角色（自定义「管理员」）禁选授权权码，与后端 422 同口径。
-const TEMPLATE_ROLE_KEYS = new Set(['platform.admin', 'tenant.admin', 'app.admin', 'app.member'])
+const TEMPLATE_ROLE_KEYS = new Set(['platform.admin', 'tenant.admin', 'apps.admin', 'app.admin', 'app.member'])
 
-// P386 角色作用域可视化：三级 kind 的展示文案（与 role-scope-design 原型口径一致）。
-const KIND_LABELS: Record<string, string> = {
-  platform: '平台角色',
-  tenant: '租户角色',
-  application: '应用角色',
+function isTemplateRole(role: RoleRecord): boolean {
+  return TEMPLATE_ROLE_KEYS.has(role.key)
 }
 
-function kindLabel(kind: string): string {
-  return KIND_LABELS[kind] || '角色'
+function roleClassLabel(role: RoleRecord): string {
+  return isTemplateRole(role) ? '系统模板' : '自定义平台角色'
+}
+
+function canGrantRole(role: RoleRecord): boolean {
+  if (isPlatformSuperAdmin.value) return true
+  // 预置模板只能改本级及以下：超管改全部，租户改租户及以下，多应用改多应用及以下，应用改应用及成员。
+  if (role.key === 'platform.admin') return false
+  if (role.key === 'tenant.admin') return cachedHas('org.manage')
+  if (role.key === 'apps.admin') return cachedHas('org.manage') || cachedHas('rbac.app_role.assign')
+  if (role.key === 'app.admin' || role.key === 'app.member') {
+    return cachedHas('org.manage') || cachedHas('rbac.app_role.manage')
+  }
+  return cachedHas('org.manage') || cachedHas('rbac.app_role.manage')
+}
+
+// 模板按层级藏码；自定义平台角色按操作者可见集，超管不再被 kind=tenant 藏掉 L1 专属码。
+function grantKindForRole(role: RoleRecord): '' | 'platform' | 'tenant' | 'application' {
+  if (role.key === 'platform.admin') return 'platform'
+  if (role.key === 'tenant.admin') return 'tenant'
+  if (isTemplateRole(role)) return 'application'
+  if (isPlatformSuperAdmin.value) return 'platform'
+  if (cachedHas('org.manage')) return 'tenant'
+  return 'application'
 }
 
 const resourceGrantDialogOpen = ref(false)
@@ -113,12 +125,9 @@ const savingDataScopes = ref(false)
 let requestSequence = 0
 
 const tenantOptions = computed(() => props.tenants.map(tenant => ({ value: tenant.id, label: tenant.name })))
-const applicationOptions = computed(() => props.applications
-  .filter(application => application.tenant_id === form.tenant_id && application.status === 'active')
-  .map(application => ({ value: application.id, label: application.name })))
 // 服务端筛选是否生效：有任一条件就不能复用壳层全量 500 条
 function hasServerFilters(): boolean {
-  return Boolean(submittedQuery.value || tenantFilter.value || kindFilter.value || statusFilter.value)
+  return Boolean(submittedQuery.value || tenantFilter.value || statusFilter.value)
 }
 
 const columns = [
@@ -198,7 +207,8 @@ async function loadRoles(): Promise<void> {
   try {
     const params = new URLSearchParams()
     if (submittedQuery.value) params.set('q', submittedQuery.value)
-    if (kindFilter.value) params.set('kind', kindFilter.value)
+    // P405：高级管理只出平台角色（五级模板 + 未钉应用的自定义角色）。
+    params.set('role_class', 'platform')
     if (tenantFilter.value) params.set('tenant_id', tenantFilter.value)
     if (statusFilter.value) params.set('status', statusFilter.value)
     params.set('limit', String(listPageSize.value))
@@ -233,7 +243,6 @@ function onTableChange(pagination: TablePaginationConfig): void {
 
 function openCreate(): void {
   editingRole.value = null
-  wizardScope.value = ''
   form.tenant_id = props.tenants.find(tenant => tenant.status === 'active')?.id || ''
   form.application_id = ''
   form.key = ''
@@ -264,15 +273,6 @@ function validateRoleForm(): boolean {
     }
     return true
   }
-  // P390 作用域向导校验：先选作用域；应用角色的所属应用必填（钉应用即应用角色的定义条件）
-  if (!wizardScope.value) {
-    message.error('请先选择角色作用域（租户角色或应用角色）')
-    return false
-  }
-  if (wizardScope.value === 'application' && !form.application_id) {
-    message.error('应用角色必须选择所属应用')
-    return false
-  }
   if (!props.tenants.some(tenant => tenant.id === form.tenant_id && tenant.status === 'active')) {
     message.error('请选择活动租户')
     return false
@@ -289,10 +289,6 @@ function validateRoleForm(): boolean {
     message.error('角色说明不能超过 500 个字符')
     return false
   }
-  if (form.application_id && !applicationOptions.value.some(option => option.value === form.application_id)) {
-    message.error('应用必须属于所选租户且处于启用状态')
-    return false
-  }
   return true
 }
 
@@ -300,12 +296,10 @@ async function saveRole(): Promise<void> {
   if (!validateRoleForm()) return
   const editing = editingRole.value
   // 新建成功后要立刻挂码，先记下作用域，避免关弹窗后表单被清空
-  const createdApplicationId = form.application_id || null
   const payload = editing
     ? { name: form.name.trim(), description: form.description.trim() || null }
     : {
         tenant_id: form.tenant_id,
-        ...(form.application_id ? { application_id: form.application_id } : {}),
         key: form.key.trim(),
         name: form.name.trim(),
         description: form.description.trim() || null,
@@ -328,8 +322,8 @@ async function saveRole(): Promise<void> {
         onOk: () => {
           openGrantEditor({
             ...created,
-            application_id: created.application_id ?? createdApplicationId,
-            kind: created.kind || (createdApplicationId ? 'application' : 'tenant'),
+            application_id: created.application_id ?? null,
+            kind: created.kind || 'tenant',
             description: created.description ?? null,
             status: created.status || 'active',
             permission_codes: created.permission_codes || [],
@@ -429,9 +423,7 @@ function confirmStatusChange(role: RoleRecord): void {
 function openGrantEditor(role: RoleRecord): void {
   grantRoleId.value = role.id
   grantRoleName.value = role.name
-  grantRoleKey.value = role.key
-  // P390 收敛入参：角色 kind + 钉定应用的命名空间（业务码过滤）
-  grantRoleKind.value = role.kind
+  grantRoleKind.value = grantKindForRole(role)
   grantRoleNamespace.value = role.application_id
     ? props.applications.find(application => application.id === role.application_id)?.permission_namespace || ''
     : ''
@@ -612,7 +604,7 @@ watch(() => props.active, active => {
   void loadRoles()
 }, { immediate: true })
 
-watch([tenantFilter, kindFilter, statusFilter], () => {
+watch([tenantFilter, statusFilter], () => {
   listPage.value = 1
   if (props.active) void loadRoles()
 })
@@ -620,10 +612,10 @@ watch([tenantFilter, kindFilter, statusFilter], () => {
 
 <template>
   <AdminListPage
-    eyebrow="角色管理"
-    title="角色管理"
-    subtitle="维护角色定义并把权限码挂载到角色，前端用码控制、后端只判角色。"
-    :hint="`授权遵循默认拒绝；数据范围按同一权限的多角色策略取并集，缺少有效策略时默认拒绝。共 ${listTotal} 条角色`"
+    eyebrow="平台角色"
+    title="平台角色"
+    subtitle="四个管理员都可给本级及以下预置角色配权，只能勾自己已有的码，不能配上级权限。应用角色请到「应用工作台 → 角色」。"
+    :hint="`超管 27 码，租户管理员 20 码，多应用管理员 16 码，应用管理员 15 码；看不见的上级码不会出现。共 ${listTotal} 条角色`"
     :columns="columns"
     :data-source="roles"
     :loading="loading"
@@ -637,12 +629,10 @@ watch([tenantFilter, kindFilter, statusFilter], () => {
     :empty-text="hasServerFilters() ? '没有匹配条件的角色' : '暂无角色，可创建角色后配置权限'"
   >
     <template #header-extra>
-      <a-button v-if="canManageRoles" type="primary" @click="openCreate">＋ 新建角色</a-button>
+      <a-button v-if="canCreateRoles" type="primary" @click="openCreate">＋ 新建平台角色</a-button>
     </template>
     <AdminSearchField v-model="searchText" placeholder="搜索角色名称、标识或说明" @search="onSearch" />
     <a-select v-model:value="tenantFilter" allow-clear show-search option-filter-prop="label" placeholder="全部租户" :options="tenantOptions" class="admin-filter-wide" />
-    <!-- P386 作用域筛选：平台/租户/应用三级角色分流查看 -->
-    <a-select v-model:value="kindFilter" allow-clear placeholder="全部类型" :options="kindOptions" />
     <a-select v-model:value="statusFilter" allow-clear placeholder="全部状态" :options="statusOptions" />
     <template #actions>
       <a-button :loading="loading" @click="loadRoles">刷新</a-button>
@@ -652,7 +642,7 @@ watch([tenantFilter, kindFilter, statusFilter], () => {
         <!-- P386 角色名称 + 作用域小标签：一眼分辨平台/租户/应用三级（中性灰阶，随深浅主题自适应） -->
         <div class="role-name-cell">
           <span class="role-name-text">{{ record.name }}</span>
-          <span class="kind-chip" :class="`kind-${record.kind}`">{{ kindLabel(String(record.kind)) }}</span>
+          <span class="kind-chip" :class="isTemplateRole(record as RoleRecord) ? 'kind-platform' : 'kind-application'">{{ roleClassLabel(record as RoleRecord) }}</span>
         </div>
       </template>
       <template v-else-if="column.key === 'tenant_id'">{{ tenantName(String(record.tenant_id)) }}</template>
@@ -668,9 +658,9 @@ watch([tenantFilter, kindFilter, statusFilter], () => {
         <a-tag :color="record.status === 'active' ? 'green' : 'default'">{{ record.status === 'active' ? '启用' : '停用' }}</a-tag>
       </template>
       <template v-else-if="column.key === 'actions'">
-        <a-button v-if="canManageRoles" type="link" size="small" @click="openEdit(record as RoleRecord)">编辑</a-button>
-        <a-button v-if="canManageRoles" type="link" size="small" @click="openGrantEditor(record as RoleRecord)">配置权限</a-button>
-        <a-dropdown v-if="canManageRoles">
+        <a-button v-if="canMutateRoleMeta" type="link" size="small" @click="openEdit(record as RoleRecord)">编辑</a-button>
+        <a-button v-if="canGrantRole(record as RoleRecord)" type="link" size="small" @click="openGrantEditor(record as RoleRecord)">配置权限</a-button>
+        <a-dropdown v-if="canMutateRoleMeta">
           <a-button type="link" size="small" class="flex items-center gap-1">
             更多
             <DownOutlined class="text-[11px]" />
@@ -687,7 +677,7 @@ watch([tenantFilter, kindFilter, statusFilter], () => {
             </a-menu>
           </template>
         </a-dropdown>
-        <a-button v-if="!canManageRoles" type="link" size="small" @click="openGrantEditor(record as RoleRecord)">查看权限</a-button>
+        <a-button v-if="!canGrantRole(record as RoleRecord)" type="link" size="small" @click="openGrantEditor(record as RoleRecord)">查看权限</a-button>
       </template>
     </template>
   </AdminListPage>
@@ -695,41 +685,15 @@ watch([tenantFilter, kindFilter, statusFilter], () => {
   <a-modal v-model:open="editorOpen" :title="editingRole ? `编辑角色：${editingRole.name}` : '新建角色'" ok-text="保存" cancel-text="取消" :confirm-loading="savingRole" @ok="saveRole">
     <a-form layout="vertical" class="create-form">
       <template v-if="editingRole">
-        <a-form-item label="角色作用域"><a-input :value="kindLabel(String(editingRole?.kind || ''))" disabled /></a-form-item>
+        <a-form-item label="角色分类"><a-input :value="editingRole ? roleClassLabel(editingRole) : ''" disabled /></a-form-item>
         <a-form-item label="所属租户"><a-input :value="tenantName(form.tenant_id)" disabled /></a-form-item>
         <a-form-item label="应用范围"><a-input :value="applicationName(form.application_id || null)" disabled /></a-form-item>
         <a-form-item label="角色标识"><a-input v-model:value="form.key" disabled /></a-form-item>
       </template>
       <template v-else>
-        <!-- P390 作用域向导第一步：三卡显式选择；平台角色由系统种子定义不可新建（与 P381/P382 防呆哲学一致） -->
-        <div class="scope-wizard">
-          <button type="button" class="scope-card" disabled>
-            <span class="scope-card-name">平台角色</span>
-            <span class="scope-card-hint">由系统种子定义，不可新建</span>
-          </button>
-          <button
-            type="button"
-            :class="['scope-card', { active: wizardScope === 'tenant' }]"
-            @click="wizardScope = 'tenant'; form.application_id = ''"
-          >
-            <span class="scope-card-name">租户角色</span>
-            <span class="scope-card-hint">当前租户全域生效</span>
-          </button>
-          <button
-            type="button"
-            :class="['scope-card', { active: wizardScope === 'application' }]"
-            @click="wizardScope = 'application'"
-          >
-            <span class="scope-card-name">应用角色</span>
-            <span class="scope-card-hint">钉住单个应用生效</span>
-          </button>
-        </div>
-        <template v-if="wizardScope">
-          <a-form-item label="所属租户" required><a-select v-model:value="form.tenant_id" :options="tenantOptions.filter(option => props.tenants.find(tenant => tenant.id === option.value)?.status === 'active')" @change="form.application_id = ''" /></a-form-item>
-          <a-form-item v-if="wizardScope === 'application'" label="所属应用" required extra="应用角色钉住该应用：配置权限时只显示应用域码与本应用业务码"><a-select v-model:value="form.application_id" :options="applicationOptions" placeholder="选择该角色生效的应用" /></a-form-item>
-          <a-form-item label="角色标识" required help="2–100 位小写字母、数字、点、下划线或连字符"><a-input v-model:value="form.key" :maxlength="100" placeholder="tenant.admin" /></a-form-item>
-        </template>
-        <a-alert v-else type="info" show-icon message="请先选择角色作用域" description="租户角色在当前租户全域生效；应用角色钉住单个应用。平台角色由系统种子定义，不可在此新建。" />
+        <a-alert type="info" show-icon message="这里只建自定义平台角色" description="系统五级模板不可新建。应用角色（财务 / 只读）请到应用工作台 → 角色。" class="mb-4" />
+        <a-form-item label="所属租户" required><a-select v-model:value="form.tenant_id" :options="tenantOptions.filter(option => props.tenants.find(tenant => tenant.id === option.value)?.status === 'active')" /></a-form-item>
+        <a-form-item label="角色标识" required help="2–100 位小写字母、数字、点、下划线或连字符"><a-input v-model:value="form.key" :maxlength="100" placeholder="ops.reviewer" /></a-form-item>
       </template>
       <a-form-item label="角色名称" required><a-input v-model:value="form.name" :maxlength="120" /></a-form-item>
       <a-form-item label="说明"><a-textarea v-model:value="form.description" :rows="3" :maxlength="500" show-count /></a-form-item>
@@ -775,7 +739,7 @@ watch([tenantFilter, kindFilter, statusFilter], () => {
     v-model:open="grantOpen"
     :role-id="grantRoleId"
     :role-name="grantRoleName"
-    :lock-authority-codes="grantRoleKey !== '' && !TEMPLATE_ROLE_KEYS.has(grantRoleKey)"
+    :lock-authority-codes="false"
     :role-kind="grantRoleKind"
     :role-namespace="grantRoleNamespace"
     catalog-path="/admin/permissions?limit=1000"

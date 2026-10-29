@@ -22,6 +22,7 @@ interface TenantOption {
   status: string
   can_read_applications?: boolean
   can_manage_applications?: boolean
+  can_create_applications?: boolean
 }
 interface ApplicationRecord {
   id: string
@@ -36,8 +37,8 @@ interface ApplicationRecord {
 // 三步配权主路径：页头副标题与空态引导共用；业务码由应用管理员在工作台登记，不必找 L1。
 const MAIN_PATH_STEPS = [
   '在「权限编码」Tab 登记本应用业务码（应用管理员可直接新建）',
-  '在「角色」Tab 为角色挂权限编码',
-  '到「用户管理」为用户多选角色（生效权限 = 角色并集）',
+  '在「角色」Tab 新建应用角色，打开「应用权限」挂编码 / 资源树 / 数据权限',
+  '在角色行「配置成员」把租户成员绑到应用角色（会同时成为该应用的平台成员）',
 ] as const
 
 const router = useRouter()
@@ -56,10 +57,10 @@ const props = withDefaults(defineProps<{
   shellCatalogGeneration: -1,
 })
 
-// L1 或持 app.manage 的租户/应用管理员可去应用管理创建；否则引导联系租户管理员，避免空态死路。
+// P404：仅 L1 / L3 可新建应用；L2 即使能管已钉住的应用也不能创建。
 const canCreateApplication = computed(() => {
   if (getCachedCapabilities()?.platform_admin) return true
-  return props.tenants.some(tenant => tenant.can_manage_applications === true)
+  return props.tenants.some(tenant => tenant.can_create_applications === true)
 })
 
 function goApplicationManagement(): void {
@@ -200,7 +201,7 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
       class="shrink-0"
       eyebrow="APPLICATION WORKSPACE"
       title="应用工作台"
-      subtitle="配权三步：①「权限编码」登记业务码（应用管理员可新建）→ ②「角色」挂码 → ③「用户管理」多选角色（并集生效）"
+      subtitle="配权三步：①「权限编码」登记业务码 → ②「角色」配置应用权限 → ③角色行「配置成员」绑定租户成员"
     />
     <!-- Wave 4/收口：窄屏上下堆叠（树在上），lg 及以上保持左右布局（UI 检查 P348 修复）。 -->
     <!-- P358：桌面档左右两栏各自内滚、高度撑满视口底部，消除整页滚动。 -->

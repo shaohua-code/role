@@ -8,7 +8,7 @@ import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminStatBand from '@/components/AdminStatBand.vue'
 import AdminDetailDrawer from '@/components/AdminDetailDrawer.vue'
-import { PERMISSION_CLASSES, PERMISSION_DOMAINS, SCOPE_LEVEL_LABELS, SCOPE_LEVEL_ORDER, SCOPE_LEVEL_TIPS, isManagementCode, resolvePermissionClass, resolvePermissionDomain, resolvePermissionScope } from '@/utils/permissionGroups'
+import { PERMISSION_DOMAINS, SCOPE_LEVEL_LABELS, SCOPE_LEVEL_ORDER, SCOPE_LEVEL_TIPS, isManagementCode, resolvePermissionDomain, resolvePermissionScope } from '@/utils/permissionGroups'
 import { asPagedList } from '@/utils/paged'
 
 interface PermissionRecord {
@@ -34,8 +34,6 @@ const catalogTotal = ref(0)
 const catalogTruncated = computed(() => catalogTotal.value > permissions.value.length)
 const searchText = ref('')
 const namespaceFilter = ref('')
-// P395 两类分组：统计卡带按「全部 / 平台编码 / 应用业务编码」筛选（'' = 全部）
-const scopeFilter = ref('')
 // P397 权限域筛选改为多选 chips：命中任一选中域即保留（空数组 = 不限）
 const domainFilter = ref<string[]>([])
 const domainChips = computed(() => {
@@ -76,13 +74,11 @@ const filteredPermissions = computed(() => {
   const query = searchText.value.trim().toLocaleLowerCase()
   const list = permissions.value.filter(permission => {
     if (namespaceFilter.value && permission.catalog_namespace !== namespaceFilter.value) return false
-    if (scopeFilter.value && resolvePermissionClass(permission.code) !== scopeFilter.value) return false
     if (domainFilter.value.length && !domainFilter.value.includes(resolvePermissionDomain(permission.code).key)) return false
     if (!query) return true
     return `${permission.code} ${permission.catalog_namespace} ${permission.resource_type} ${permission.scope} ${permission.description || ''}`
       .toLocaleLowerCase().includes(query)
   })
-  // 平台编码在前（组内按层级起点序 → 编码字母序），应用业务编码在后（命名空间 → 编码序）
   return [...list].sort((a, b) => {
     const scopeDelta = (SCOPE_ORDER[resolvePermissionScope(a.code).key] ?? 99) - (SCOPE_ORDER[resolvePermissionScope(b.code).key] ?? 99)
     return scopeDelta !== 0 ? scopeDelta : a.code.localeCompare(b.code)
@@ -109,51 +105,17 @@ function levelTip(code: string): string {
   return SCOPE_LEVEL_TIPS[resolvePermissionScope(code).key] || ''
 }
 
-/** P395 两类分组标题行：在列表中把平台编码段与应用业务编码段显式分开（业务码段为空则不显示组头）。 */
-interface GroupHeaderRow { id: string; __group: 'platform' | 'business'; title: string; count: number }
-function isGroupHeaderRow(row: unknown): row is GroupHeaderRow {
-  return Boolean(row && typeof row === 'object' && '__group' in row)
-}
-const displayRows = computed<(PermissionRecord | GroupHeaderRow)[]>(() => {
-  const rows: (PermissionRecord | GroupHeaderRow)[] = []
-  const platform = filteredPermissions.value.filter(permission => isManagementCode(permission.code))
-  const business = filteredPermissions.value.filter(permission => !isManagementCode(permission.code))
-  if (platform.length) {
-    rows.push({ id: '__group_platform', __group: 'platform', title: '平台编码', count: platform.length })
-    rows.push(...platform)
-  }
-  if (business.length) {
-    rows.push({ id: '__group_business', __group: 'business', title: '应用业务编码', count: business.length })
-    rows.push(...business)
-  }
-  return rows
-})
+const displayRows = computed(() => filteredPermissions.value)
 
-// P395 两类统计卡：全部 / 平台编码 / 应用业务编码，点击卡片即筛选（再次点击回全部）。
-// 应用业务编码数量为 0 时保持概念位但置灰不可点（PRD FR-01）。P397 换用通用 AdminStatBand 渲染。
-const domainStats = computed(() => {
-  const stats = PERMISSION_CLASSES
-    .map(clazz => {
-      const list = permissions.value.filter(permission => resolvePermissionClass(permission.code) === clazz.key)
-      return {
-        key: clazz.key,
-        label: clazz.label,
-        count: list.length,
-        sub: list.length === 0 && clazz.key === 'business' ? '暂无业务应用' : `活动 ${list.filter(permission => permission.status === 'active').length}`,
-        disabled: clazz.key === 'business' && list.length === 0,
-      }
-    })
-  return [
-    {
-      key: '',
-      label: '全部',
-      count: permissions.value.length,
-      sub: `活动 ${permissions.value.filter(permission => permission.status === 'active').length}`,
-      disabled: false,
-    },
-    ...stats,
-  ]
-})
+const domainStats = computed(() => [
+  {
+    key: 'platform',
+    label: '平台编码',
+    count: permissions.value.length,
+    sub: `活动 ${permissions.value.filter(permission => permission.status === 'active').length}`,
+    disabled: false,
+  },
+])
 
 // ===== P397 引用角色反查抽屉：前端用 roles.permission_codes 过滤，零后端改动 =====
 interface RefRoleRecord { id: string; name: string; key: string; kind: string; status: string; permission_codes?: string[] }
@@ -172,7 +134,7 @@ async function openRefs(permission: PermissionRecord): Promise<void> {
   refsRoles.value = []
   refsLoading.value = true
   try {
-    const roles = asPagedList(await api<RefRoleRecord[] | { items: RefRoleRecord[] }>('/admin/roles?limit=500')).items
+    const roles = asPagedList(await api<RefRoleRecord[] | { items: RefRoleRecord[] }>('/admin/roles?role_class=platform&limit=500')).items
     const matched = roles.filter(role => Array.isArray(role.permission_codes) && role.permission_codes.includes(permission.code))
     refsCache.set(permission.code, matched)
     if (refsPermission.value?.id === permission.id) refsRoles.value = matched
@@ -183,8 +145,6 @@ async function openRefs(permission: PermissionRecord): Promise<void> {
 
 // 行点击 → 引用角色抽屉；操作列与行内链接用 @click.stop 防冒泡
 function rowProps(record: unknown): Record<string, unknown> {
-  // 组头行（__group 标记）不下钻
-  if (isGroupHeaderRow(record)) return {}
   return { class: 'cursor-pointer', onClick: () => openRefs(record as PermissionRecord) }
 }
 
@@ -292,7 +252,7 @@ function changeStatus(permission: PermissionRecord): void {
   Modal.confirm({
     title: reactivating ? '恢复该权限编码？' : '停用该权限编码？',
     content: reactivating
-      ? `恢复后，该编码保留的历史角色授权将重新生效（关联 ${permission.assigned_role_count} 个角色）。如不希望恢复这些授权，请先在角色管理中撤销。`
+      ? `恢复后，该编码保留的历史角色授权将重新生效（关联 ${permission.assigned_role_count} 个角色）。如不希望恢复这些授权，请先在平台角色中撤销。`
       : `停用会立即让所有使用该编码的在线授权判定失败；${permission.assigned_role_count} 个角色的既有授权与数据范围会保留。`,
     okText: reactivating ? '恢复权限' : '确认停用',
     okType: reactivating ? 'primary' : 'danger',
@@ -322,8 +282,7 @@ watch(() => props.active, active => {
 
 <template>
   <div class="permission-page">
-    <!-- P395 两类统计卡（账本式）：全部 / 平台编码 / 应用业务编码；日常主筛就是这两类 + 搜索 -->
-    <AdminStatBand v-model="scopeFilter" numbered :stats="domainStats" />
+    <AdminStatBand numbered :stats="domainStats" />
     <a-alert
       v-if="catalogTruncated"
       type="warning"
@@ -335,19 +294,18 @@ watch(() => props.active, active => {
     <AdminListPage
       eyebrow="权限编码"
       title="权限编码"
-      subtitle="全局权限编码目录。按应用维护请到「应用工作台 → 权限编码」。"
-      hint="编码裁剪管理台菜单；接口鉴权只看角色挂码。点卡片筛选平台/业务编码；点行查看引用角色。业务码请到应用工作台登记。"
+      subtitle="只列出平台管理面编码。应用业务码请到「应用工作台 → 权限编码」。"
+      hint="编码裁剪管理台菜单；接口鉴权只看角色。点行查看引用该码的平台角色。业务码不在本页。"
       :columns="columns"
       :data-source="displayRows"
       :loading="loading"
       row-key="id"
-      :row-class-name="(row: unknown) => (isGroupHeaderRow(row) ? 'group-header-row' : '')"
       :custom-row="rowProps"
       :scroll="{ y: 'calc(100vh - 520px)' }"
       :pagination="{ pageSize: 10, showSizeChanger: true }"
       :error-text="errorText"
       empty-emoji="🔐"
-      :empty-text="searchText || namespaceFilter || domainFilter.length || scopeFilter ? '没有匹配的权限项' : '暂无权限项'"
+      :empty-text="searchText || namespaceFilter || domainFilter.length ? '没有匹配的权限项' : '暂无权限项'"
     >
       <AdminSearchField v-model="searchText" placeholder="搜索编码、资源、Scope 或说明" :submit-on-clear="false" />
       <a-popover trigger="click" placement="bottomLeft">
@@ -395,16 +353,7 @@ watch(() => props.active, active => {
         <a-button :loading="loading" @click="loadPermissions">刷新</a-button>
       </template>
       <template #bodyCell="{ column, record }">
-        <!-- P395 两类分组标题行：横贯式组头，平台编码段与应用业务编码段在表中显式分开 -->
-        <template v-if="isGroupHeaderRow(record)">
-          <template v-if="column.key === 'code'">
-            <div class="group-head">
-              <span class="group-head-title">{{ record.title }}</span>
-              <span class="group-head-count">{{ record.count }} 个编码</span>
-            </div>
-          </template>
-        </template>
-        <template v-else-if="column.key === 'code'">
+        <template v-if="column.key === 'code'">
           <!-- P389 双行口径（与授权弹窗一致）：中文说明主行 + mono 编码副行；P395 平台编码行附层级起点标记 -->
           <div class="code-cell">
             <span class="code-desc">

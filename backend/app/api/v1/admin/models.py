@@ -14,7 +14,7 @@ from app.models.identity import Tenant, User
 from app.models.model_catalog import ModelCatalog
 from app.schemas.models import ModelCatalogCreate, ModelCatalogStatusUpdate, ModelCatalogUpdate
 from app.services.rbac_guards import ensure_roles
-from app.services.role_provisioning import L1_ROLE_KEY, L2_ROLE_KEY, L3_ROLE_KEY
+from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(prefix="/models", tags=["模型目录"])
 
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/models", tags=["模型目录"])
 def list_models(tenant_id: UUID | None = None, actor: User = Depends(current_user),
                 db: Session = Depends(get_db_session)) -> list[dict]:
     """列出模型配置摘要；凭证引用只转换为是否已配置，不向控制台回传。"""
-    ensure_roles(actor, db, [L3_ROLE_KEY, L2_ROLE_KEY], tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
     statement = select(ModelCatalog).order_by(ModelCatalog.created_at.desc()).limit(500)
     if tenant_id:
         statement = statement.where(ModelCatalog.tenant_id == tenant_id)

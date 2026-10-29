@@ -15,7 +15,7 @@ from app.models.identity import User
 from app.schemas.auth import ThemeUpdate
 from app.services.theme_config import validate_theme_config
 from app.services.rbac_guards import ensure_roles
-from app.services.role_provisioning import L1_ROLE_KEY, L2_ROLE_KEY, L3_ROLE_KEY
+from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(tags=["登录主题"])
 
@@ -26,7 +26,7 @@ def list_themes(application_id: UUID, actor: User = Depends(current_user),
     """按版本倒序列出应用全部主题草稿/发布记录（配置含品牌与条款链接）。"""
     tenant_id = _require_application_tenant(db, application_id)
     ensure_roles(
-        actor, db, [L2_ROLE_KEY],
+        actor, db, list(CONSOLE_ADMIN_ROLE_KEYS),
         tenant_id=tenant_id,
         application_id=application_id,
         detail="缺少管理角色（原 ops.theme.manage）",
@@ -42,7 +42,7 @@ def save_theme(application_id: UUID, body: ThemeUpdate, request: Request, publis
     tenant_id = _require_application_tenant(db, application_id)
     # L2 的主题管理钉在本应用（11 号文档 §4.4）：判权带应用上下文，他应用角色默认拒绝。
     ensure_roles(
-        actor, db, [L2_ROLE_KEY],
+        actor, db, list(CONSOLE_ADMIN_ROLE_KEYS),
         tenant_id=tenant_id,
         application_id=application_id,
         detail="缺少管理角色（原 ops.theme.manage）",
@@ -69,7 +69,7 @@ def restore_theme(application_id: UUID, theme_id: UUID, request: Request, publis
     """
     tenant_id = _require_application_tenant(db, application_id)
     ensure_roles(
-        actor, db, [L2_ROLE_KEY],
+        actor, db, list(CONSOLE_ADMIN_ROLE_KEYS),
         tenant_id=tenant_id,
         application_id=application_id,
         detail="缺少管理角色（原 ops.theme.manage）",

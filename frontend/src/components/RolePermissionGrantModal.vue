@@ -28,37 +28,32 @@ const props = withDefaults(defineProps<{
   roleName?: string
   catalogPath: string
   grantsPath: string
-  // 应用侧规则：五域管理码禁止新增（只能保留/撤销）；平台侧规则：仅停用码禁选
+  // 历史开关：禁止新增五域管理码。租户台/工作台现已改为看得见就能勾，默认 false。
   disableIamCodes?: boolean
-  // 管理员不能管理管理员：自定义角色禁选授权权码（已持有的也会被强制取消，后端同口径 422 兜底）
+  // P405：授权权不再禁选；保留 prop 以免旧调用方报错。
   lockAuthorityCodes?: boolean
   // P390 作用域收敛：按角色 kind 隐藏越域码组（'' = 不收敛，展示全量目录）
   roleKind?: '' | 'platform' | 'tenant' | 'application'
   // 应用角色的业务码命名空间（编码首段匹配）；仅 roleKind='application' 时生效
   roleNamespace?: string
+  // 嵌进应用权限抽屉时去掉外层 Modal，避免抽屉里再套弹窗。
+  embedded?: boolean
 }>(), {
   roleName: '',
   disableIamCodes: false,
   lockAuthorityCodes: false,
   roleKind: '',
   roleNamespace: '',
+  embedded: false,
 })
 
-// P395 收敛矩阵（两类分组口径）：各 kind 隐藏的作用域组（组值沿用 P393，逐码结果不变）。
-// tenant 排除 L1 专属 6 码 + 业务码（业务码随应用，租户全域角色不配）；
-// application 排除 L1 专属 + L3 起共 12 码（治理码 rbac.role.read / rbac.role.manage / rbac.permission.manage
-// 分属两层被覆盖），业务码组仅显示本应用命名空间。
-// 已持有的码始终豁免隐藏（可撤销，不静默剥夺）。
+// 平台角色模板按层级藏码：租户模板藏 L1 专属，应用管理员模板再藏租户治理码。
+// 自定义平台角色由调用方传入 platform/tenant/application；应用角色页传空字符串，只吃目录过滤。
 const HIDDEN_SCOPES_BY_KIND: Record<string, Set<string>> = {
   platform: new Set(),
   tenant: new Set(['platform', 'business']),
   application: new Set(['platform', 'tenant']),
 }
-
-// 与后端 role_provisioning.AUTHORITY_MANAGE_CODES 对齐的授权权码集合。
-const AUTHORITY_MANAGE_CODES = new Set([
-  'rbac.app_role.manage', 'org.member.manage', 'org.invite.manage', 'org.group.manage',
-])
 
 const emit = defineEmits<{ saved: [] }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -204,7 +199,8 @@ async function loadGrants(): Promise<void> {
     // 只编辑通用授权（resource_id 为空），避免多选框覆盖资源实例授权。
     let currentIds = grants.filter(grant => grant.resource_id === null).map(grant => grant.permission_id)
     const currentSet = new Set(currentIds)
-    // P390/P393 作用域收敛：按角色 kind 隐藏越域作用域组；历史已持有的码豁免（可撤销但不可静默剥夺）。
+    // P404：目录接口已按操作者级别过滤；此处再按目标角色 kind 隐藏越域组（可见 = 可授 ∩ 可持）。
+    // 历史已持有的码豁免隐藏（可撤销，不静默剥夺）。
     const hiddenScopes = HIDDEN_SCOPES_BY_KIND[props.roleKind || '']
     const visibleCatalog = catalog.filter(permission => {
       if (currentSet.has(permission.id)) return true
@@ -217,9 +213,7 @@ async function loadGrants(): Promise<void> {
       }
       return true
     })
-    // 自定义角色 + 授权权禁选：选项置灰，且历史已持有的授权权一并从初始选中剔除（保存即剥离）。
-    const authorityIds = new Set(visibleCatalog.filter(p => AUTHORITY_MANAGE_CODES.has(p.code)).map(p => p.id))
-    if (props.lockAuthorityCodes) currentIds = currentIds.filter(id => !authorityIds.has(id))
+    // P405：看得见就能勾；目录接口已按操作者可见集过滤。
     const codeDescriptions = new Map<string, string>()
     options.value = visibleCatalog
       .filter(permission => permission.status === 'active' || currentSet.has(permission.id))
@@ -228,7 +222,6 @@ async function loadGrants(): Promise<void> {
         // 描述可用时以中文为主文案，编码保留在副行与预览清单里。
         const label = description ? `${description}（${permission.code}）` : permission.code
         if (description) codeDescriptions.set(permission.code, description)
-        const authorityLocked = props.lockAuthorityCodes && AUTHORITY_MANAGE_CODES.has(permission.code)
         return {
           label,
           code: permission.code,
@@ -236,9 +229,9 @@ async function loadGrants(): Promise<void> {
           value: permission.id,
           // P393 作用域归属（共享映射），仅用于分组渲染
           scope: resolvePermissionScope(permission.code).key,
-          disabled: authorityLocked || (props.disableIamCodes
+          disabled: props.disableIamCodes
             ? isManagementCode(permission.code) && !currentSet.has(permission.id)
-            : permission.status !== 'active' && !currentSet.has(permission.id)),
+            : permission.status !== 'active' && !currentSet.has(permission.id),
         }
       })
     descriptionByCode.value = codeDescriptions
@@ -310,7 +303,7 @@ async function applySave(): Promise<void> {
       }),
     })
     message.success('角色权限已原子更新')
-    open.value = false
+    if (!props.embedded) open.value = false
     emit('saved')
   } catch (error) {
     message.error(error instanceof Error ? error.message : '权限保存失败；如授权已被其他管理员更新，请重新预览')
@@ -336,7 +329,11 @@ watch(open, value => {
 </script>
 
 <template>
-  <a-modal v-model:open="open" :title="`配置角色权限${roleName ? `：${roleName}` : ''}`" width="880px" :footer="null">
+  <component
+    :is="embedded ? 'div' : 'a-modal'"
+    v-bind="embedded ? { class: 'is-embedded' } : { open, title: `配置角色权限${roleName ? `：${roleName}` : ''}`, width: '880px', footer: null }"
+    @update:open="value => open = value"
+  >
     <a-spin :spinning="loading">
       <div class="grant-layout">
         <!-- P389 左栏导航（P393 起按作用域组）：全部 + 平台/租户/应用/业务码（含该组已选数），点击切换右栏内容 -->
@@ -358,10 +355,7 @@ watch(open, value => {
         <!-- P391 提示降噪：大 alert 收敛为单行轻提示（对齐 P373 全站降噪标准），细节收进 tooltip -->
         <p class="grant-hint">
           <ExclamationCircleOutlined class="grant-hint-icon" />
-          <span>先预览授权变更再提交保存；仅编辑通用权限，资源实例级授权不受影响。</span>
-          <a-tooltip v-if="lockAuthorityCodes" title="「角色管理 / 成员进出 / 邀请 / 用户组管理」四类授权权已禁选；历史已持有的授权权会在保存时剥离——管理员不能管理管理员。">
-            <span class="grant-hint-warn"><ExclamationCircleOutlined /> 自定义角色不可持有授权权码</span>
-          </a-tooltip>
+          <span>先预览授权变更再提交保存；仅编辑通用权限。能看见的码都可以勾选。</span>
         </p>
 
           <!-- P389 已选摘要条（常驻）：最近勾选可点删，清空走既有「需重新预览」警戒 -->
@@ -451,7 +445,8 @@ watch(open, value => {
 
           <!-- P389 固定操作条：滚动时始终可见 -->
           <div class="grant-footer">
-            <a-button @click="open = false">取消</a-button>
+            <a-button v-if="!embedded" @click="open = false">取消</a-button>
+            <div v-else />
             <div class="flex items-center gap-2">
               <a-button :loading="previewing" :disabled="loading || saving" @click="previewChanges">预览影响</a-button>
               <a-button type="primary" :loading="saving" :disabled="loading || previewing || !previewIsCurrent || noChanges" @click="confirmSave">保存授权</a-button>
@@ -460,7 +455,7 @@ watch(open, value => {
         </div>
       </div>
     </a-spin>
-  </a-modal>
+  </component>
 </template>
 
 <style scoped>
@@ -585,4 +580,12 @@ watch(open, value => {
   .impact-grid { grid-template-columns: 1fr; }
   .grant-footer { bottom: 0; margin: 0; border-radius: 0 0 8px 8px; }
 }
+/* 抽屉内嵌：改单列，避免 188px 导航把 720 抽屉挤窄。 */
+.is-embedded .grant-layout { grid-template-columns: 1fr; }
+.is-embedded .grant-nav { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px dashed var(--color-border); }
+.is-embedded .grant-nav-item { border-left: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; white-space: nowrap; }
+.is-embedded .grant-nav-item.active { border-bottom-color: var(--color-text-primary); }
+.is-embedded .grant-nav-total { display: none; }
+.is-embedded .grant-option-list { max-height: 36vh; }
+.is-embedded .grant-footer { position: static; margin: 12px 0 0; padding: 12px 0 0; }
 </style>

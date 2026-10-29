@@ -33,12 +33,12 @@ def has_organization_admin_access(
     """
     del manage  # 角色门禁：组织台读写统一认 L3/L2 角色。
     from app.services.rbac_guards import user_has_any_role
-    from app.services.role_provisioning import L2_ROLE_KEY, L3_ROLE_KEY
+    from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS
 
     if is_platform_admin_user(actor, db):
         return True
     return user_has_any_role(
-        actor, db, (L3_ROLE_KEY, L2_ROLE_KEY), tenant_id=tenant_id,
+        actor, db, CONSOLE_ADMIN_ROLE_KEYS, tenant_id=tenant_id,
     )
 
 
@@ -64,21 +64,30 @@ def has_application_admin_access(
     rotate_secret: bool = False,
     application_id: UUID | None = None,
 ) -> bool:
-    """L1 代管；L3 管本租户全部应用；否则须持钉住该应用（或租户内任一应用，若未指定）的 app.admin。
+    """L1 代管；L3 管本租户全部应用；L2 仅钉住的应用。未指定 application_id 视为创建入口，仅 L3。
 
-    P402：与列表 can_manage（app.manage 码）对齐，承认 tenant.admin。
-    rotate_secret / manage 保留签名；敏感轮换在 require_application_admin_access 内
-    额外做轻量码 check（app.secret.rotate）。
+    P404：L2 不能借「租户内任一 app.admin」走创建/删除。rotate_secret / manage 保留签名。
     """
     del manage
     from app.services.rbac_guards import user_has_any_role, user_has_management_code
-    from app.services.role_provisioning import L2_ROLE_KEY, L3_ROLE_KEY
+    from app.services.role_provisioning import APP_SCOPED_ADMIN_ROLE_KEYS, L3_ROLE_KEY
 
     if is_platform_admin_user(actor, db):
         return True
-    # L3 租户角色 application_id 为空，user_has_any_role 在指定应用时仍命中。
+    # L3 租户角色 application_id 为空，指定应用时仍命中。
+    if user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
+        if rotate_secret:
+            return user_has_management_code(
+                actor, db, APPLICATION_SECRET_ROTATE,
+                tenant_id=tenant_id, application_id=application_id,
+                resource_id=str(application_id) if application_id else None,
+            )
+        return True
+    # 未钉应用 = 租户级生命周期（创建）；L2 必须带具体 application_id。
+    if application_id is None:
+        return False
     if not user_has_any_role(
-        actor, db, (L3_ROLE_KEY, L2_ROLE_KEY), tenant_id=tenant_id, application_id=application_id,
+        actor, db, APP_SCOPED_ADMIN_ROLE_KEYS, tenant_id=tenant_id, application_id=application_id,
     ):
         return False
     if rotate_secret:

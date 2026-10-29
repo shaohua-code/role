@@ -1,4 +1,4 @@
-"""P402：L3 可管本租户应用；L2 仅钉住的应用；列表 can_manage 与写路径对齐。"""
+"""P402/P404：L3 可管本租户应用；L2 仅钉住的应用；未指定应用不再视为可创建。"""
 
 import unittest
 from uuid import uuid4
@@ -93,8 +93,8 @@ class ApplicationAdminAccessTests(unittest.TestCase):
         self.assertFalse(has_application_admin_access(
             l2, self.tenant.id, self.db, manage=True, application_id=self.app_b.id,
         ))
-        # 未指定应用时：租户内任一 app.admin 仍可走创建入口（既有口径）。
-        self.assertTrue(has_application_admin_access(l2, self.tenant.id, self.db, manage=True))
+        # P404：未指定应用视为创建入口，L2 不能借任一 app.admin 走新建。
+        self.assertFalse(has_application_admin_access(l2, self.tenant.id, self.db, manage=True))
 
     def test_member_without_admin_role_is_denied(self) -> None:
         member = self._user("l4")

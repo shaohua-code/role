@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.models.application import Application
 from app.models.authorization import Permission, Role, RoleBinding, RolePermission
 from app.models.groups import UserGroup, UserGroupMembership, UserGroupRole
 from app.models.identity import TenantMembership, User
@@ -24,7 +25,20 @@ from app.services.effective_roles import (
     list_effective_roles,
     user_is_platform_admin,
 )
-from app.services.role_provisioning import L1_ROLE_KEY, L2_ROLE_KEY, L3_ROLE_KEY
+from app.services.role_provisioning import (
+    APP_SCOPED_ADMIN_ROLE_KEYS,
+    CONSOLE_ADMIN_ROLE_KEYS,
+    L1_ROLE_KEY,
+    L2M_ROLE_KEY,
+    L2_PERMISSION_CODES,
+    L2_ROLE_KEY,
+    L2M_PERMISSION_CODES,
+    L3_PERMISSION_CODES,
+    L3_ROLE_KEY,
+    L4_ROLE_KEY,
+    TEMPLATE_ROLE_KEYS,
+    is_platform_class_role,
+)
 
 # ── 绿场管理面权限码（与 seed_greenfield 保持一致）───────────────────────────
 PLATFORM_MANAGEMENT_CODES: tuple[str, ...] = (
@@ -286,15 +300,15 @@ def _role_keys_for_management_code(code: str) -> tuple[tuple[str, ...], bool, bo
     if code in _PLATFORM_ONLY_CODES:
         return (L1_ROLE_KEY,), False, False
     if code in _TENANT_PEOPLE_CODES:
-        return (L3_ROLE_KEY, L2_ROLE_KEY), True, False
+        return CONSOLE_ADMIN_ROLE_KEYS, True, False
     if code in _SHARED_CONSOLE_CODES:
-        return (L3_ROLE_KEY, L2_ROLE_KEY), True, False
+        return CONSOLE_ADMIN_ROLE_KEYS, True, False
     if code in _APPLICATION_CODES:
-        return (L2_ROLE_KEY,), True, True
+        return APP_SCOPED_ADMIN_ROLE_KEYS, True, True
     if code in _L2_EXTRA_CODES:
-        return (L2_ROLE_KEY,), True, False
+        return APP_SCOPED_ADMIN_ROLE_KEYS, True, False
     if code in _L3_ASSIGN_CODES:
-        return (L3_ROLE_KEY,), True, False
+        return (L3_ROLE_KEY, L2M_ROLE_KEY), True, False
     # 未知管理码：仅 L1，避免静默放行。
     return (L1_ROLE_KEY,), False, False
 
@@ -351,6 +365,111 @@ def list_actor_management_tenant_ids(user: User, db: Session) -> set[UUID] | Non
         TenantMembership.user_id == user.id,
         TenantMembership.status == "active",
     )).all())
+
+
+def actor_has_tenant_admin(user: User, db: Session, *, tenant_id: UUID | None = None) -> bool:
+    """是否持有 L3 tenant.admin（L1 视为代管通过）。"""
+    if user_is_platform_admin(user, db):
+        return True
+    return user_has_any_role(user, db, (L3_ROLE_KEY,), tenant_id=tenant_id)
+
+
+def list_actor_pinned_application_ids(user: User, db: Session) -> set[UUID]:
+    """多应用/应用管理员钉住的应用 ID；不含应用成员与自定义应用角色。"""
+    ids: set[UUID] = set()
+    memberships = db.scalars(select(TenantMembership).where(
+        TenantMembership.user_id == user.id,
+        TenantMembership.status == "active",
+    )).all()
+    for membership in memberships:
+        roles = db.scalars(select(Role).where(
+            Role.id.in_(authorized_role_ids_statement(membership.id, membership.tenant_id)),
+            Role.status == "active",
+            Role.tenant_id == membership.tenant_id,
+            Role.key.in_(APP_SCOPED_ADMIN_ROLE_KEYS),
+            Role.application_id.isnot(None),
+        )).all()
+        for role in roles:
+            if role.application_id is not None:
+                ids.add(role.application_id)
+    return ids
+
+
+def list_actor_visible_application_ids(user: User, db: Session) -> set[UUID] | None:
+    """可见应用集合。None=L1 不限制；L3=本租户全部应用；L2=钉住应用。"""
+    if user_is_platform_admin(user, db):
+        return None
+    tenant_scope = list_actor_management_tenant_ids(user, db)
+    if not tenant_scope:
+        return set()
+    if user_has_any_role(user, db, (L3_ROLE_KEY,)):
+        return set(db.scalars(select(Application.id).where(
+            Application.tenant_id.in_(tenant_scope),
+        )).all())
+    return list_actor_pinned_application_ids(user, db)
+
+
+def actor_grantable_management_codes(user: User, db: Session) -> frozenset[str] | None:
+    """操作者可授、因而可在目录看见的管理面码。None=L1 全量。P405 按已有身份并集。"""
+    if user_is_platform_admin(user, db):
+        return None
+    codes: set[str] = set()
+    if user_has_any_role(user, db, (L3_ROLE_KEY,)):
+        codes.update(L3_PERMISSION_CODES)
+    if user_has_any_role(user, db, (L2M_ROLE_KEY,)):
+        codes.update(L2M_PERMISSION_CODES)
+    if user_has_any_role(user, db, (L2_ROLE_KEY,)):
+        codes.update(L2_PERMISSION_CODES)
+    return frozenset(codes)
+
+
+def list_actor_visible_business_namespaces(user: User, db: Session) -> set[str] | None:
+    """可见业务码命名空间。None=L1 不限制。"""
+    app_ids = list_actor_visible_application_ids(user, db)
+    if app_ids is None:
+        return None
+    if not app_ids:
+        return set()
+    return set(db.scalars(select(Application.permission_namespace).where(
+        Application.id.in_(app_ids),
+    )).all())
+
+
+def assert_actor_can_see_role(user: User, db: Session, role: Role) -> None:
+    """角色深链可见性：非 L1 限本租户；L3 本租户全可见；L2 钉住应用模板 + 自定义平台角色。"""
+    ensure_tenant_in_actor_scope(user, db, role.tenant_id)
+    if user_is_platform_admin(user, db):
+        return
+    if actor_has_tenant_admin(user, db, tenant_id=role.tenant_id):
+        return
+    pinned = list_actor_pinned_application_ids(user, db)
+    if is_platform_class_role(role) and role.key not in TEMPLATE_ROLE_KEYS:
+        return
+    if role.application_id in pinned:
+        return
+    raise HTTPException(status_code=404, detail="角色不存在")
+
+
+# 预置模板只允许本级及以下管理员改授权，禁止改上级模板（避免整表替换抽空上级码）。
+PRESET_ROLE_GRANT_ACTORS: dict[str, tuple[str, ...]] = {
+    L1_ROLE_KEY: (L1_ROLE_KEY,),
+    L3_ROLE_KEY: (L1_ROLE_KEY, L3_ROLE_KEY),
+    L2M_ROLE_KEY: (L1_ROLE_KEY, L3_ROLE_KEY, L2M_ROLE_KEY),
+    L2_ROLE_KEY: (L1_ROLE_KEY, L3_ROLE_KEY, L2M_ROLE_KEY, L2_ROLE_KEY),
+    L4_ROLE_KEY: (L1_ROLE_KEY, L3_ROLE_KEY, L2M_ROLE_KEY, L2_ROLE_KEY),
+}
+
+
+def assert_actor_can_grant_preset_role(user: User, db: Session, role: Role) -> None:
+    """预置角色：四个管理员可改本级及以下；往上的模板 403。码集仍由看得见才能配收口。"""
+    if role.key not in TEMPLATE_ROLE_KEYS:
+        return
+    if user_is_platform_admin(user, db):
+        return
+    allowed = PRESET_ROLE_GRANT_ACTORS.get(role.key, (L1_ROLE_KEY,))
+    if user_has_any_role(user, db, allowed):
+        return
+    raise HTTPException(status_code=403, detail="不能配置上级预置角色的授权")
 
 
 def ensure_tenant_in_actor_scope(

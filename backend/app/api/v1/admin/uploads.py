@@ -21,7 +21,7 @@ from app.db.session import get_db_session
 from app.models.application import Application
 from app.models.identity import User
 from app.services.rbac_guards import ensure_roles
-from app.services.role_provisioning import L2_ROLE_KEY
+from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS
 
 ALLOWED_CONTENT_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 _MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}
@@ -47,7 +47,7 @@ async def upload_theme_asset(request: Request, application_id: UUID,
     application = db.get(Application, application_id)
     if not application:
         raise HTTPException(404, "应用不存在")
-    ensure_roles(actor, db, [L2_ROLE_KEY], tenant_id=application.tenant_id,
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=application.tenant_id,
                  application_id=application.id, detail="缺少管理角色（原 ops.theme.manage）")
     settings = get_settings()
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()

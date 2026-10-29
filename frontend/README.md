@@ -1,5 +1,11 @@
 # 前端技术与目录说明
 
+**2026-10-29 工作台收口：** 侧栏去掉「应用角色与成员」；角色行「应用权限」「配置成员」。旧深链 `/application-roles` 重定向到应用工作台。验证见根 CHANGELOG。
+
+**2026-10-29 P405：** 权限编码页只展示平台管理面码；高级角色页只列平台角色；工作台只列应用角色，分配时自动成为该应用平台成员。挂码弹窗去掉授权权禁选。验证见根 CHANGELOG。
+
+**2026-10-29 P404：** 拆 `can_create_applications`（只认租户域 `app.manage`）；L2 隐藏新建/删除应用。挂码弹窗消费后端已按操作者级别过滤的目录。验证见根 CHANGELOG。
+
 **2026-10-29 P403：** 侧栏 L1 入口改「运营总览」；租户 `/roles` 标「应用角色与成员」。用户详情抽屉展示有效权限码并集+来源。角色列表服务端真分页；权限目录带 total，超出加载上限时提示。验证见根 CHANGELOG。
 
 **2026-10-29 P402：** 工作台业务码「新建」按 `application.can_manage` 开放给 L2/L3（`ApplicationPermissionPanel`）；启停仍仅 L1。空态三步与无创建权文案、L4 `/no-access` 及应用角色页去掉过时 `iam.*`。验证见根 CHANGELOG；浏览器走查未运行。
@@ -298,13 +304,13 @@ frontend/
 - API 后台周期任务只回收已到期、不能再用于认证的会话/JWT 撤销摘要/OIDC 授权码/同意票据；不改前端会话协议或页面行为，也不触碰 OAuth 刷新族与其重放检测记录。
 - 工作台：从 API 读取租户、应用、用户和角色统计。
 - 租户目录独立位于 `views/tenants/TenantManagement.vue`，支持创建、启停、成员数查看和租户标识即时校验；停用确认说明其会撤销旗下 OAuth 刷新会话，创建/启停后 Shell 会刷新给其他表单使用的租户字典。
-- OAuth 应用管理独立位于 `views/applications/ApplicationManagement.vue`：新建时要求至少一个合法登录回调（最多 20 个），前端和后端 schema 都强制非空，路由再校验 HTTPS 或 localhost/127.0.0.1 的 HTTP，不接受 URL 凭据或片段；租户、Client ID、回调白名单创建后只读。可编辑名称/说明、逐项确认受信/撤销信任、轮换与启停；启停请求携带读取时的 `expected_status`，服务端在 409 冲突时拒绝覆盖旧状态；创建/轮换的 Client Secret 仅在组件内短暂展示，关闭对话框即清除。Wave 4 起该页与角色管理、权限编码目录在**平台模式**从侧栏降级（经应用工作台页头「高级管理」下拉或深链进入，能力守卫不变）；**租户模式保留侧栏入口**（`/roles` 租户侧渲染应用角色与成员融合页，是 L2/L3 的核心入口）。
+- OAuth 应用管理独立位于 `views/applications/ApplicationManagement.vue`：新建时要求至少一个合法登录回调（最多 20 个），前端和后端 schema 都强制非空，路由再校验 HTTPS 或 localhost/127.0.0.1 的 HTTP，不接受 URL 凭据或片段；租户、Client ID、回调白名单创建后只读。可编辑名称/说明、逐项确认受信/撤销信任、轮换与启停；启停请求携带读取时的 `expected_status`，服务端在 409 冲突时拒绝覆盖旧状态；创建/轮换的 Client Secret 仅在组件内短暂展示，关闭对话框即清除。应用 / 平台角色 / 权限编码目录在侧栏「高级管理」。应用角色与成员只在应用工作台配置。
 - 审计日志位于 `views/audit/AuditLogPage.vue`，使用 `/admin/audit/search` 只读服务端分页，顶部按「管理操作 / 登录与认证」两 Tab 分类（登录 Tab 传 `action_prefix=auth.` 由服务端前缀过滤，分页计数真实）；支持按操作、结果、目标类型/ID、操作者 UUID、租户 UUID 和带时区的起止时间精确筛选；详情弹窗展示租户上下文和变更摘要。页面每页 10–100 条，后端最多 500 条、offset 上限 100000。
 - 成员邀请位于 `views/invitations/InvitationManagement.vue`，独立管理租户筛选、邀请创建/撤销、角色与有效期校验及一次性 bearer 链接；服务端创建响应使用 `Cache-Control: no-store`，链接仅在组件状态短暂展示，关闭展示框时清空。SMTP 邀请邮件由服务端可选启用、默认关闭；发送状态明确展示，失败时保留一次性备用链接。公开接受流程仍由认证入口处理。
 - 用户管理位于 `views/users/UserManagement.vue`，支持邮箱/姓名查询、限长校验的用户创建、停用时会话影响确认、用户所属活动租户中的角色绑定（P345 起为 a-transfer 穿梭框：双栏按名称/英文标识搜索，停用且未绑定的角色禁止新勾入，已绑定的停用角色保留可移除）、活动成员的多组织/主组织归属；服务器端仍验证租户边界。组织管理位于 `views/organizations/OrganizationManagement.vue`，支持按租户列出组织、校验并创建父子层级、启停，并明确标识不可变组织编码。组织工作台位于 `views/organization-workspace/`（左组织树 +「成员 / 用户组」Tab，对齐 user-center-sys department 信息架构）：成员 Tab 走 `GET /admin/organizations/{id}/members` 只读浏览，用户组 Tab 按所选组织所属租户整租展示并复用共享 `GroupRelationModal` 管理成员/角色；组织归属与用户组 CRUD 仍在原页面完成。两个工作台的空态经共享 `AdminPathGuide` 按三步主路径引导，无数据时提供跳转创建出口（Wave 4）。
 - 租户委派工作台按每个租户分别发现组织和应用能力，并过滤侧栏入口。`views/tenant-admin/TenantAccessManagement.vue` 继续提供成员组织归属和角色数据范围；共享 `views/applications/ApplicationManagement.vue` 根据 `apiPrefix` 读取平台全局目录或逐租户目录。应用权限既可授给租户范围角色，也可由绑定 `application_id` 的应用角色限定到单个应用；应用目录响应携带逐行 manage/secret.rotate 能力。新建客户端要求租户级 manage，已登记客户端的资料/启停按该应用 manage 控制，密钥轮换还需独立权限；受信状态仅平台管理员可修改。按钮权限只改善操作呈现，服务端仍逐请求鉴权。
-- `views/application-roles/ApplicationRoleManagement.vue` 管理当前获授权应用的专属角色、业务权限和已有授权成员。管理者可按邮箱绑定已加入该租户的活动成员；目录只返回已有应用角色成员，用户组继承来源可见但不能由应用管理员改组；邀请新租户成员需租户管理员操作。权限列表排除新的 `iam.*` 候选，服务端也阻止新增此类系统管理授权；权限修改先预览再按期望当前授权原子保存。角色只允许当前应用范围，跨应用 ID 按 404 隐藏。
-- 登录后由 `GET /auth/me/capabilities` 单次判定 consoleMode（platform/tenant/no_access，P340）；平台模式侧栏以运营总览为 L1 入口、应用/组织工作台为日常主路径（应用/角色/权限目录页自 Wave 4 起降级为高级入口），其他账号仅以自己的活动且被授权租户加载租户工作台。租户模式 `/roles` 为「应用角色与成员」融合页。成员页支持租户成员搜索、组织归属替换、读取角色已授予权限并配置数据范围；用户详情抽屉展示有效权限码并集与来源。后端仍逐请求复核权限。没有获授权租户的用户看到 403 空状态。
+- 应用角色与成员在 `views/application-workspace/` 的「角色」Tab 配置：行内「应用权限」抽屉（权限编码 + 资源树 + 数据权限）和「配置成员」抽屉。独立页已归档到 `views/_archive/application-roles/`。
+- 登录后由 `GET /auth/me/capabilities` 单次判定 consoleMode（platform/tenant/no_access，P340）；平台模式侧栏以运营总览为 L1 入口、应用/组织工作台为日常主路径。成员页支持租户成员搜索、组织归属替换、读取角色已授予权限并配置数据范围；用户详情抽屉展示有效权限码并集与来源。后端仍逐请求复核权限。没有获授权租户的用户看到 403 空状态。
 - 模型目录和用量独立位于 `views/models/ModelGovernancePage.vue`。模型页支持按租户筛选、目录新建/编辑/启停，配置端点、能力、价格、RPM/TPM 和外部 Secret Manager 引用；凭证不回显，更新时留空保留、显式清除需勾选。启停请求提交当前读取到的 `expected_status`，遇到并发修改会提示冲突并重载目录，避免过期表单覆盖新状态。用量页展示按租户汇总和最近 100 条调用账目，均不含 Prompt/响应正文。
 - 登录主题位于 `views/themes/LoginThemeManagement.vue`，每个应用单独保存/发布并保留版本历史。除布局、品牌色、卡片位置/宽度/圆角和可选背景/Logo 地址外，外观细节可配置背景图位置、缩放和遮罩、卡片背景色/透明度、文字颜色、字体预设、Logo 尺寸、卡片阴影/内边距、输入框与按钮圆角及按钮高度；桌面/手机预览即时响应。可选图片地址可清空。`styles/theme.ts` 将历史或异常值限制到安全颜色、数值和预设；后端仍是最终校验权威。素材只支持 HTTPS 或站内地址，不支持上传、任意 CSS/HTML。
 - 角色管理位于 `views/roles/RoleManagement.vue`，独立负责角色目录、租户/应用/状态服务端筛选、**真分页**（`limit/offset` + `total`）、创建、名称/说明编辑和启停；身份字段创建后只读。权限列「N 项」打开挂码弹窗；只读账号仅能查看权限。用户角色绑定仍由用户页面处理。应用工作台角色 Tab 按当前应用拉目录（平台模式带 `kind=application&application_id`）。

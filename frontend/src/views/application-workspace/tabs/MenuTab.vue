@@ -92,7 +92,8 @@ const hasMenuNodes = computed(() => resources.value.some(item => item.resource_t
 const resourcePathCodes = computed(() => buildResourcePathCodes(resources.value))
 
 function applicationPath(path: string): string {
-  return `${props.apiPrefix}${path}`
+  // 资源树只挂 /admin，鉴权已按应用管理员访问权过滤，租户台同样走这条。
+  return `/admin${path}`
 }
 
 async function loadResources(): Promise<void> {

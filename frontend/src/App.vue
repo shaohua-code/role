@@ -19,7 +19,6 @@ import { asPagedList } from '@/utils/paged'
 import {
   ApplicationManagement,
   ApplicationWorkspace,
-  ApplicationRoleManagement,
   AuditLogPage,
   AuthorizationSimulator,
   GroupManagement,
@@ -135,18 +134,10 @@ const heldCodes = computed(() => capabilities.value ? allCodes(capabilities.valu
 // 绿场统一导航（11 号文档 §6.3）：平台与租户模式共用 NAV_ITEMS + 能力过滤。
 // Wave 1 对齐 user-centent：「应用与权限」组以应用工作台为主入口。
 // 高级管理改造：应用/角色/权限三个列表页归入侧栏「高级管理」折叠组（低频全局能力），
-// 不再区分平台/租户模式做侧栏排除，能力满足即展示（租户侧 /roles 仍是「应用角色与成员」融合页入口）。
+// 不再区分平台/租户模式做侧栏排除，能力满足即展示；应用角色只在应用工作台配置。
 const visibleNavigation = computed(() => {
   if (consoleMode.value === 'no_access') return []
-  return NAV_ITEMS
-    .filter(item => hasAnyCode(heldCodes.value, item.requiredPermissions))
-    .map(item => {
-      // G27：租户模式 /roles 实际是应用角色+成员融合页，侧栏与平台「角色管理」消歧。
-      if (consoleMode.value === 'tenant' && item.key === 'roles') {
-        return { ...item, label: '应用角色与成员' }
-      }
-      return item
-    })
+  return NAV_ITEMS.filter(item => hasAnyCode(heldCodes.value, item.requiredPermissions))
 })
 // 侧栏未展示（能力不满足）的页面不可直接访问；能力满足即可达（侧栏 + 深链共用同一能力守卫）。
 function isPageReachable(key: PageKey): boolean {
@@ -204,6 +195,7 @@ async function loadDictionaries(force = false): Promise<void> {
 
 function tenantRowFromCapabilities(capability: Capabilities['tenants'][number], name: string, kind: string, status: string): Row {
   // 能力响应已按租户归组管理码；这里换算成租户控制台历史 can_* 布尔，子页面续用。
+  const tenantCodes = new Set<string>(capability.codes)
   const codes = new Set<string>(capability.codes)
   for (const application of capability.applications) {
     for (const code of application.codes) codes.add(code)
@@ -220,6 +212,8 @@ function tenantRowFromCapabilities(capability: Capabilities['tenants'][number], 
     can_manage_organizations: codes.has('org.manage'),
     can_read_applications: canReadApplications,
     can_manage_applications: codes.has('app.manage'),
+    // P404：新建/删除应用只看租户域码（L3），不要把 L2 应用级 app.manage 并进来。
+    can_create_applications: tenantCodes.has('app.manage'),
     can_rotate_application_secret: codes.has('app.secret.rotate'),
   }
 }
@@ -520,7 +514,7 @@ onUnmounted(() => {
               :active="page === 'application_workspace'"
               :console-mode="consoleMode === 'tenant' ? 'tenant' : 'platform'"
               :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true }))"
+              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: tenant.can_create_applications === true }))"
               :shell-applications="consoleMode === 'platform' ? applications : null"
               :shell-catalog-generation="platformCatalogGeneration"
               @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined"
@@ -551,7 +545,7 @@ onUnmounted(() => {
               :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
               :shell-catalog-generation="platformCatalogGeneration"
               :shell-applications="consoleMode === 'platform' ? applications : null"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
+              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: tenant.can_create_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
               @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined" />
           </div>
           <div v-if="visitedPages.has('audit')" v-show="page === 'audit'">
@@ -565,14 +559,7 @@ onUnmounted(() => {
             />
           </div>
           <div v-if="visitedPages.has('roles')" v-show="page === 'roles'">
-            <!-- 绿场 §6.6 角色管理拆标签：租户模式挂本应用角色与成员管理；平台模式挂全局角色管理。 -->
-            <ApplicationRoleManagement
-              v-if="consoleMode === 'tenant'"
-              :active="page === 'roles'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), can_read_applications: tenant.can_read_applications === true || tenant.can_manage_applications === true }))"
-            />
             <RoleManagement
-              v-else
               :active="page === 'roles'"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
               :applications="applications.map(application => ({ id: String(application.id), tenant_id: String(application.tenant_id), name: String(application.name), status: String(application.status), permission_namespace: String(application.permission_namespace ?? '') }))"

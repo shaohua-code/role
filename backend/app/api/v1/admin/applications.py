@@ -32,8 +32,8 @@ from app.services.admin_authorization import (
 from app.services.public_registration import eligible_registration_role
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
-    provision_application_admin_role,
-    provision_application_member_role,
+    L3_ROLE_KEY,
+    provision_application_platform_roles,
 )
 
 router = APIRouter(tags=["应用管理"])
@@ -96,6 +96,8 @@ def list_applications(tenant_id: UUID | None = None,
 @router.post("/applications", status_code=201)
 def create_application(body: ApplicationCreate, request: Request, response: Response,
                        actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
+    # P404：创建应用仅 L1 / L3；L2 即使持 app.manage 也不能新建。
+    ensure_roles(actor, db, [L3_ROLE_KEY], tenant_id=body.tenant_id, detail="缺少租户管理员角色，无法创建应用")
     require_application_admin_access(actor, body.tenant_id, db, manage=True)
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant or tenant.status != "active": raise HTTPException(404, "活动租户不存在")
@@ -114,9 +116,8 @@ def create_application(body: ApplicationCreate, request: Request, response: Resp
                       post_logout_redirect_uris=body.post_logout_redirect_uris,
                       trusted=False, client_secret_hash=hash_password(client_secret))
     db.add(row); flush_or_conflict(db)
-    # 绿场规则：应用开通即预置 L2 app.admin 与 L4 app.member 模板角色（幂等）。
-    provision_application_admin_role(db, row.tenant_id, row.id)
-    provision_application_member_role(db, row.tenant_id, row.id)
+    # P405：应用开通即预置多应用管理员 / 应用管理员 / 应用成员三个平台角色模板。
+    provision_application_platform_roles(db, row.tenant_id, row.id)
     audit(db, actor, request, "application.create", "application", str(row.id), {"client_id": row.client_id, "tenant_id": str(body.tenant_id), "trusted": False}); commit_or_conflict(db)
     # 一次性返回的客户端密钥不得进入共享缓存或代理缓存。
     response.headers["Cache-Control"] = "no-store"
@@ -407,6 +408,11 @@ def delete_application(
     if not has_application_admin_access(actor, candidate.tenant_id, db, manage=True,
                                         application_id=candidate.id):
         raise HTTPException(404, "应用不存在")
+    # P404：删除应用仅 L1 / L3；L2 可见本应用但不能删。
+    ensure_roles(
+        actor, db, [L3_ROLE_KEY], tenant_id=candidate.tenant_id,
+        detail="缺少租户管理员角色，无法删除应用",
+    )
     row = db.scalar(select(Application).where(Application.id == application_id).with_for_update())
     if not row:
         raise HTTPException(404, "应用不存在")

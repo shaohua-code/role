@@ -1,5 +1,9 @@
 # 后端技术、目录与接口说明
 
+**2026-10-29 P405：** 平台/应用权限分层。新增 `apps.admin` 模板；`GET /admin/permissions` 只出管理面码；绑应用角色自动补 `app.member`；`POST /admin/roles` 放宽到 L1/L3。创建/删除应用仍仅 L1/L3。无迁移。
+
+**2026-10-29 P404：** 四级可见范围收口。创建/删除应用仅 L1/L3；`GET /admin/permissions` 按操作者级别过滤；L2 角色/用量/尽力审计仅钉住应用；L3 限本租户。无迁移。
+
 **2026-10-29 P403：** G27 入口消歧、G28 用户有效权限、G29 角色/权限真分页、G32 L3 模板剥 `rbac.permission.manage`（20 码）。`GET /admin/roles` 与 `GET /admin/permissions` 改为 `{items,total,limit,offset}`；`GET /admin/users/{id}/profile` 追加 `effective_permissions`。无迁移。
 
 **2026-10-29 P402：** 产品裁决 L3 可建/改本租户应用。`has_application_admin_access` 认 `tenant.admin` ∪ 钉住应用的 `app.admin`；`list_readable_application_capabilities` 对 L3 短接租户内全可管。新增 `tests/test_application_admin_access.py`。无迁移。

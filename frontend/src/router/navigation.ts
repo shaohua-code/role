@@ -80,7 +80,7 @@ export const NAV_ITEMS: NavigationItem[] = [
   { key: 'application_workspace', icon: ApartmentOutlined, label: '应用工作台', group: 'access', requiredPermissions: ['app.read', 'rbac.app_role.read', 'rbac.role.read'] },
 
   { key: 'applications', icon: ClusterOutlined, label: '应用管理', group: 'advanced', requiredPermissions: ['app.read', 'app.manage'] },
-  { key: 'roles', icon: SafetyCertificateOutlined, label: '角色管理', group: 'advanced', requiredPermissions: ['rbac.role.read', 'rbac.app_role.read'] },
+  { key: 'roles', icon: SafetyCertificateOutlined, label: '平台角色', group: 'advanced', requiredPermissions: ['rbac.role.read', 'rbac.app_role.read'] },
   { key: 'permissions', icon: SafetyOutlined, label: '权限编码', group: 'advanced', requiredPermissions: ['rbac.permission.read'] },
   { key: 'organizations', icon: HomeOutlined, label: '组织管理', group: 'advanced', requiredPermissions: ['org.read'] },
   { key: 'groups', icon: TeamOutlined, label: '用户组', group: 'advanced', requiredPermissions: ['org.group.read'] },
@@ -96,7 +96,8 @@ export const NAV_ITEMS: NavigationItem[] = [
 
 export const TENANT_MERGED_PAGES: Partial<Record<PageKey, PageKey>> = {
   tenant_access: 'users',
-  application_roles: 'roles',
+  // 应用角色与成员已收口到应用工作台；旧深链继续跳过去。
+  application_roles: 'application_workspace',
 }
 
 export const PAGE_INFO: Record<PageKey, { title: string }> = {
@@ -106,7 +107,7 @@ export const PAGE_INFO: Record<PageKey, { title: string }> = {
   application_workspace: { title: '应用工作台' },
   application_roles: { title: '应用角色与成员' },
   users: { title: '用户管理' },
-  roles: { title: '角色管理' },
+  roles: { title: '平台角色' },
   groups: { title: '用户组' },
   invitations: { title: '成员邀请' },
   organizations: { title: '组织管理' },
