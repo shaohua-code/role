@@ -1,0 +1,8 @@
+{
+  "name": "iam-crud-express-skeleton",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Skeleton only — see README. Runnable CRUD example is iam-crud-fastapi.",
+  "type": "module",
+  "engines": { "node": ">=20" }
+}

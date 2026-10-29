@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRD · 权限编码与角色体系重规划</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ============ 设计令牌 ============ */
+:root{
+  --paper:#f7f5f0; --card:#fffdf9; --ink:#191713; --muted:#6e6759; --faint:#a59d8d;
+  --line:#e7e2d8; --line-2:#d5cfc1;
+  --accent:#c2452d; --accent-ink:#9c3520;
+  --dk:#161411; --dk-2:#211e19; --dk-ink:#f2efe8; --dk-muted:#b3ac9d; --dk-line:#35312a;
+  --mono:'JetBrains Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+  --serif:'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,serif;
+  --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  /* 五域色 */
+  --d-platform:#57534e; --d-rbac:#6d28d9; --d-org:#0d7a72; --d-app:#b45309; --d-ops:#ad2d5a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14.5px;line-height:1.8;-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent);color:#fff}
+button{font:inherit;border:none;background:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+small{font-size:12px}
+b,strong{font-weight:600}
+
+/* ============ 阅读进度条 / 复制提示 ============ */
+.progress{position:fixed;inset:0 0 auto 0;height:2px;z-index:60;background:transparent}
+.progress i{display:block;height:100%;background:var(--accent);transform:scaleX(0);transform-origin:0 50%}
+.toast{position:fixed;left:50%;bottom:30px;transform:translate(-50%,12px);background:var(--dk);color:var(--dk-ink);font:500 12px/1 var(--mono);padding:10px 16px;border-radius:8px;box-shadow:0 8px 24px rgba(20,18,14,.28);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:70}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ============ 左侧目录 ============ */
+.toc{position:fixed;left:34px;top:50%;transform:translateY(-50%);display:none;z-index:40}
+@media(min-width:1380px){.toc{display:block}}
+.toc-title{font:700 10px/1 var(--mono);letter-spacing:.28em;color:var(--faint);margin-bottom:14px}
+.toc a{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--faint);font-size:12.5px;padding:6px 0;transition:color .2s}
+.toc a i{font:500 10px/1 var(--mono);letter-spacing:.1em;width:18px}
+.toc a::before{content:'';width:0;height:1px;background:var(--accent);transition:width .25s}
+.toc a.on{color:var(--ink);font-weight:600}
+.toc a.on::before{width:16px}
+.toc a:hover{color:var(--ink)}
+
+/* ============ 卷首 HERO ============ */
+.hero{position:relative;overflow:hidden;background:var(--dk);color:var(--dk-ink);padding:96px 28px 64px}
+.hero::before{content:'';position:absolute;inset:0;
+  background:
+    radial-gradient(720px 380px at 82% -10%,rgba(194,69,45,.16),transparent 62%),
+    repeating-linear-gradient(0deg,transparent 0 55px,rgba(240,236,226,.05) 55px 56px),
+    repeating-linear-gradient(90deg,transparent 0 55px,rgba(240,236,226,.05) 55px 56px)}
+.hero::after{content:'';position:absolute;inset:0;opacity:.05;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+.hero-ghost{position:absolute;right:-14px;bottom:-58px;font:700 210px/1 var(--mono);color:rgba(242,239,232,.05);letter-spacing:-.04em;user-select:none}
+@supports(-webkit-text-stroke:1px black){.hero-ghost{color:transparent;-webkit-text-stroke:1.5px rgba(242,239,232,.10)}}
+.hero-inner{position:relative;z-index:2;max-width:920px;margin:0 auto}
+.eyebrow{display:flex;align-items:center;gap:12px;font:500 11px/1 var(--mono);letter-spacing:.24em;color:var(--dk-muted)}
+.eyebrow::before{content:'';width:9px;height:9px;background:var(--accent)}
+.hero h1{font-family:var(--serif);font-weight:900;font-size:clamp(30px,4.6vw,46px);line-height:1.25;letter-spacing:.02em;margin:22px 0 12px}
+.hero h1 em{font-style:normal;color:var(--accent);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:8px;text-decoration-color:rgba(194,69,45,.5)}
+.hero-sub{color:var(--dk-muted);font-size:15px}
+.stamps{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+.stamp{font:500 12px/1 var(--mono);letter-spacing:.06em;color:#d8d2c4;border:1px solid var(--dk-line);border-radius:999px;padding:7px 14px;background:rgba(255,255,255,.02)}
+.stamp.ruled{color:#e8604a;border:1px dashed rgba(194,69,45,.65);background:rgba(194,69,45,.07);transform:rotate(-1.5deg)}
+.stat-strip{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--dk-line);border-radius:10px;margin-top:36px;background:rgba(255,255,255,.015);overflow:hidden}
+.stat{padding:18px 20px;border-right:1px solid var(--dk-line)}
+.stat:last-child{border-right:none}
+.stat b{display:block;font:700 26px/1.1 var(--mono);letter-spacing:-.02em}
+.stat b .to{color:var(--accent);font-size:18px;padding:0 2px}
+.stat span{display:block;font-size:11.5px;color:var(--dk-muted);margin-top:6px;letter-spacing:.08em}
+
+/* ============ 版心 / 章节 ============ */
+.page{max-width:900px;margin:0 auto;padding:0 28px}
+.section{padding:66px 0 4px}
+.sec-head{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.sec-no{font:700 13px/1 var(--mono);letter-spacing:.1em;color:var(--dk-ink);background:var(--dk);border-radius:6px;padding:8px 11px}
+.sec-rule{flex:1;height:1px;background:var(--line-2)}
+.sec-tag{font:500 10px/1 var(--mono);letter-spacing:.3em;color:var(--faint);text-transform:uppercase}
+.section h2{font-family:var(--serif);font-weight:700;font-size:27px;letter-spacing:.02em;margin-bottom:8px}
+.sec-lead{color:var(--muted);font-size:14px;max-width:640px;margin-bottom:22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(25,23,19,.04),0 14px 34px rgba(25,23,19,.05);padding:24px 26px}
+.foot-note{color:var(--muted);font-size:13px;margin-top:14px;padding-left:14px;border-left:2px solid var(--line-2)}
+.foot-note code{white-space:nowrap}
+
+/* 行内 code 样式（正文内联） */
+code{font-family:var(--mono);font-size:.86em;background:#f1ede3;border:1px solid var(--line);border-radius:5px;padding:1px 6px;white-space:nowrap}
+
+/* ============ 01 背景 ============ */
+.stat-inline{font:500 12.5px/1 var(--mono);color:var(--muted);letter-spacing:.04em;margin-bottom:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stat-inline b{color:var(--ink);font-weight:700}
+.stat-inline .plus{color:var(--faint)}
+.problems{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.problem{border:1px solid var(--line);border-radius:10px;padding:16px 16px 14px;background:linear-gradient(180deg,#fffdf9,#faf7f0);transition:border-color .2s,transform .2s}
+.problem:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.problem i{display:block;font:700 11px/1 var(--mono);font-style:normal;color:var(--accent);letter-spacing:.14em;margin-bottom:10px}
+.problem b{display:block;font-size:14.5px;margin-bottom:6px}
+.problem p{font-size:12.8px;color:var(--muted);line-height:1.75}
+.problem code{font-size:.82em}
+.decision{margin-top:12px;background:var(--dk);color:var(--dk-ink);border-radius:12px;padding:20px 24px;position:relative;overflow:hidden}
+.decision::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(-45deg,transparent 0 18px,rgba(242,239,232,.025) 18px 36px);pointer-events:none}
+.decision-label{font:700 10px/1 var(--mono);letter-spacing:.3em;color:var(--dk-muted);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.decision-label::after{content:'';flex:1;height:1px;background:var(--dk-line)}
+.decision-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;position:relative}
+.decision-item b{display:block;font-size:14px;margin-bottom:4px}
+.decision-item b::before{content:'▸ ';color:var(--accent)}
+.decision-item span{font-size:12.3px;color:var(--dk-muted);line-height:1.7}
+
+/* ============ 02 编码体系 ============ */
+.fmt-strip{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:14px}
+.fmt{display:flex;align-items:center;gap:8px;font:700 19px/1 var(--mono);letter-spacing:.02em}
+.fmt .seg{border:1px solid var(--ink);border-radius:8px;padding:10px 16px;background:#fffdf9}
+.fmt .seg.hot{background:var(--dk);color:var(--dk-ink);border-color:var(--dk)}
+.fmt i{font-style:normal;color:var(--accent);font-size:22px}
+.fmt-note{font-size:12.3px;color:var(--muted);max-width:300px;line-height:1.7}
+.renames{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+.rename{font:500 12px/1 var(--mono);color:var(--muted);border:1px dashed var(--line-2);border-radius:8px;padding:7px 11px;background:#fbf8f1}
+.rename b{color:var(--ink);font-weight:700}
+.rename .arr{color:var(--accent);padding:0 5px}
+.rename .why{color:var(--faint);font-size:11px;margin-left:6px}
+.dist-label{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.dist-label b{font:700 11px/1 var(--mono);letter-spacing:.2em;color:var(--muted)}
+.dist-label span{font:500 11px/1 var(--mono);color:var(--faint)}
+.dist{display:flex;gap:3px;height:12px;margin-bottom:22px}
+.dist i{border-radius:3px;position:relative;transition:flex-grow .3s}
+.dist i::after{content:attr(data-n);position:absolute;top:14px;left:50%;transform:translateX(-50%);font:700 10px/1 var(--mono);color:var(--faint)}
+.dist-wrap{padding-bottom:26px}
+.domains{display:flex;flex-direction:column;gap:10px}
+.domain{display:grid;grid-template-columns:216px 1fr;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:linear-gradient(180deg,#fffdf9,#fbf9f3);transition:border-color .2s,box-shadow .2s}
+.domain:hover{border-color:var(--line-2);box-shadow:0 6px 20px rgba(25,23,19,.06)}
+.domain-head{border-right:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:6px;background:rgba(25,23,19,.015)}
+.domain-name{display:flex;align-items:center;gap:8px;font:700 14px/1 var(--mono)}
+.dot{width:9px;height:9px;border-radius:3px;background:var(--dc);flex:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--dc) 14%,transparent)}
+.domain-zh{font-size:12px;color:var(--muted)}
+.domain-count{margin-top:auto;font:700 22px/1 var(--mono);color:var(--dc)}
+.domain-count small{font:500 10px/1 var(--mono);color:var(--faint);letter-spacing:.14em;display:block;margin-top:4px}
+.domain-body{padding:12px 16px;display:flex;flex-direction:column;justify-content:center;gap:8px}
+.map-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:3px 0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.code-chip{font:500 12.3px/1 var(--mono);letter-spacing:.01em;color:var(--ink);background:#fff;border:1px solid var(--line-2);border-radius:7px;padding:6px 9px;cursor:copy;transition:transform .15s,border-color .15s,box-shadow .15s;position:relative}
+.code-chip:hover{border-color:var(--ink);transform:translateY(-1px);box-shadow:0 3px 10px rgba(25,23,19,.10)}
+.code-chip:active{transform:translateY(0)}
+.old-codes{font:400 11.8px/1.5 var(--mono);color:var(--faint);text-decoration:line-through;text-decoration-color:rgba(165,157,141,.6);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.old-codes::before{content:'←';color:var(--line-2);text-decoration:none;font-size:13px}
+.biz-strip{margin-top:14px;border:1px dashed var(--line-2);border-radius:10px;padding:12px 16px;font-size:12.8px;color:var(--muted);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.biz-strip code{background:#fff}
+
+/* ============ 03 角色体系 ============ */
+.levels{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.lvl{border:1px solid var(--line);border-radius:12px;padding:18px;background:var(--card);display:flex;flex-direction:column;transition:border-color .2s,transform .2s,box-shadow .2s}
+.lvl:hover{border-color:var(--line-2);transform:translateY(-3px);box-shadow:0 10px 26px rgba(25,23,19,.07)}
+.lvl-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.lvl-tag{font:700 11px/1 var(--mono);letter-spacing:.1em;border:1px solid var(--line-2);border-radius:6px;padding:5px 8px;color:var(--muted)}
+.lvl-scope{font-size:11.5px;color:var(--faint)}
+.lvl-key{font:700 14.5px/1.3 var(--mono);word-break:break-all}
+.lvl-old{font:400 11px/1.5 var(--mono);color:var(--faint);text-decoration:line-through;text-decoration-color:rgba(165,157,141,.55);margin:4px 0 14px}
+.lvl-num{font:700 34px/1 var(--mono);letter-spacing:-.03em;margin-top:auto}
+.lvl-num small{font:500 11px/1 var(--mono);color:var(--faint);letter-spacing:.16em;margin-left:6px}
+.lvl-bar{height:8px;border-radius:4px;background:#efebe0;margin:10px 0 12px;overflow:hidden}
+.lvl-bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#2b2823,#57534e)}
+.lvl.zero .lvl-bar i{width:0!important}
+.lvl-note{font:400 11.3px/1.7 var(--mono);color:var(--muted)}
+.lvl.apex{background:var(--dk);border-color:var(--dk);color:var(--dk-ink)}
+.lvl.apex .lvl-tag{border-color:var(--dk-line);color:var(--dk-muted)}
+.lvl.apex .lvl-scope,.lvl.apex .lvl-old,.lvl.apex .lvl-note{color:var(--dk-muted)}
+.lvl.apex .lvl-old{text-decoration-color:rgba(179,172,157,.5)}
+.lvl.apex .lvl-bar{background:var(--dk-2)}
+.lvl.apex .lvl-bar i{background:linear-gradient(90deg,var(--accent),#e8604a)}
+.notes{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.note{border:1px solid var(--line);border-left:3px solid var(--ink);border-radius:10px;padding:14px 18px;font-size:13px;color:var(--muted);background:#fbf9f3}
+.note.hot{border-left-color:var(--accent)}
+.note b{color:var(--ink)}
+.note code{background:#fff}
+
+/* ============ 04 UI 重设计 ============ */
+.ui-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.ui-card{border:1px solid var(--line);border-radius:12px;padding:18px 20px;background:var(--card);transition:border-color .2s,transform .2s}
+.ui-card:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.ui-tag{display:inline-flex;align-items:center;gap:8px;font:700 12px/1 var(--mono);letter-spacing:.06em;margin-bottom:12px}
+.ui-tag::before{content:'';width:8px;height:8px;border-radius:2px;background:var(--uk)}
+.ui-card p{font-size:13px;color:var(--muted);line-height:1.85}
+.ui-card code{font-size:.84em}
+
+/* ============ 05 实施范围 ============ */
+.layers{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);margin-bottom:16px}
+.layer{display:grid;grid-template-columns:172px 1fr;border-bottom:1px solid var(--line)}
+.layer:last-child{border-bottom:none}
+.layer-tag{padding:15px 18px;font:700 12.3px/1.5 var(--mono);color:var(--ink);background:#f3efe6;border-right:1px solid var(--line);display:flex;align-items:center;gap:8px}
+.layer-tag::before{content:'▸';color:var(--accent)}
+.layer p{padding:15px 18px;font-size:13px;color:var(--muted);line-height:1.85}
+.layer p code{font-size:.84em}
+.flow-label{display:flex;align-items:center;gap:12px;margin:4px 0 14px}
+.flow-label b{font:700 11px/1 var(--mono);letter-spacing:.24em;color:var(--accent-ink)}
+.flow-label::after{content:'';flex:1;height:1px;background:var(--line-2)}
+.flow-label span{font-size:12px;color:var(--faint)}
+.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:10px;align-items:stretch}
+.flow-step{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--card);position:relative;overflow:hidden}
+.flow-step .no{font:700 22px/1 var(--mono);color:var(--line-2);position:absolute;top:10px;right:14px}
+.flow-step b{display:block;font-size:14px;margin-bottom:4px;max-width:82%}
+.flow-step span{font-size:12px;color:var(--muted);line-height:1.7}
+.flow-step.danger{border-color:rgba(194,69,45,.45)}
+.flow-step.danger::before{content:'';position:absolute;inset:0 0 auto 0;height:6px;background:repeating-linear-gradient(-45deg,rgba(194,69,45,.75) 0 8px,transparent 8px 16px)}
+.flow-step.danger b{color:var(--accent-ink)}
+.flow-step.danger .no{color:rgba(194,69,45,.3)}
+.flow-arr{display:flex;align-items:center;font:700 18px/1 var(--mono);color:var(--faint)}
+.ruling{margin-top:14px;background:#fdf3ef;border:1px solid rgba(194,69,45,.3);border-radius:10px;padding:13px 17px;font-size:13px;color:var(--accent-ink);display:flex;gap:10px;align-items:flex-start}
+.ruling::before{content:'!';font:700 13px/1.5 var(--mono);flex:none;width:20px;height:20px;border:1px solid var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center}
+
+/* ============ 06 验收基线 ============ */
+.checks{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
+.check{display:flex;gap:14px;padding:15px 18px;border-bottom:1px solid var(--line);align-items:flex-start}
+.check:last-child{border-bottom:none}
+.check-box{flex:none;width:22px;height:22px;border:1.5px solid var(--ink);border-radius:6px;display:flex;align-items:center;justify-content:center;font:700 12px/1 var(--mono);color:var(--ink);margin-top:3px;background:#fbf9f3}
+.check b{display:block;font-size:13.5px;margin-bottom:2px}
+.check span{font-size:12.8px;color:var(--muted);line-height:1.75}
+.check code{font-size:.84em}
+
+/* ============ 页脚 ============ */
+.footer{border-top:1px solid var(--line);margin-top:72px;padding:34px 28px 44px;text-align:center}
+.footer .f-brand{font:700 10px/1 var(--mono);letter-spacing:.32em;color:var(--faint);margin-bottom:12px}
+.footer p{font-size:12.5px;color:var(--muted)}
+.footer .f-stamp{display:inline-block;margin-top:12px;font:500 11.5px/1 var(--mono);letter-spacing:.08em;color:var(--accent-ink);border:1px dashed rgba(194,69,45,.5);border-radius:999px;padding:7px 14px;transform:rotate(-1deg);background:#fdf6f3}
+
+/* ============ 动效 ============ */
+.reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
+.reveal.in{opacity:1;transform:none}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.hero-inner>*{animation:rise .7s cubic-bezier(.22,.8,.3,1) both}
+.hero-inner>*:nth-child(2){animation-delay:.08s}
+.hero-inner>*:nth-child(3){animation-delay:.16s}
+.hero-inner>*:nth-child(4){animation-delay:.24s}
+.hero-inner>*:nth-child(5){animation-delay:.34s}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}html{scroll-behavior:auto}.reveal{opacity:1;transform:none}}
+
+/* ============ 响应式 ============ */
+@media(max-width:900px){
+  .problems,.decision-grid,.notes,.ui-grid{grid-template-columns:1fr}
+  .levels{grid-template-columns:1fr 1fr}
+  .domain{grid-template-columns:1fr}
+  .domain-head{border-right:none;border-bottom:1px solid var(--line);flex-direction:row;align-items:center;gap:12px}
+  .domain-count{margin:0 0 0 auto}
+  .stat-strip{grid-template-columns:1fr 1fr}
+  .stat:nth-child(2){border-right:none}
+  .stat:nth-child(-n+2){border-bottom:1px solid var(--dk-line)}
+  .flow{grid-template-columns:1fr}
+  .flow-arr{transform:rotate(90deg);justify-content:center}
+  .layer{grid-template-columns:1fr}
+  .layer-tag{border-right:none;border-bottom:1px solid var(--line)}
+  .hero{padding:72px 22px 52px}
+  .hero-ghost{font-size:130px;bottom:-38px}
+  .card{padding:18px 16px}
+  .section{padding:52px 0 4px}
+}
+@media print{
+  .toc,.progress,.toast{display:none!important}
+  .reveal{opacity:1;transform:none}
+  .hero{background:var(--dk)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{background:#fff}
+}
+</style>
+</head>
+<body>
+
+<div class="progress"><i id="progressBar"></i></div>
+
+<nav class="toc" aria-label="文档目录">
+  <p class="toc-title">CONTENTS</p>
+  <a href="#sec-01" class="on"><i>01</i>背景与问题</a>
+  <a href="#sec-02"><i>02</i>新编码体系</a>
+  <a href="#sec-03"><i>03</i>角色体系</a>
+  <a href="#sec-04"><i>04</i>UI 重设计</a>
+  <a href="#sec-05"><i>05</i>实施范围</a>
+  <a href="#sec-06"><i>06</i>验收基线</a>
+</nav>
+
+<header class="hero">
+  <span class="hero-ghost" aria-hidden="true">27</span>
+  <div class="hero-inner">
+    <p class="eyebrow">PRD · PERMISSION &amp; ROLE REBRAND · 重大工作流</p>
+    <h1>权限编码与角色体系<em>重规划</em></h1>
+    <p class="hero-sub">平台编码与角色全部重写 · 历史数据绿场清零 · 角色 / 权限页 UI 重设计</p>
+    <div class="stamps">
+      <span class="stamp">深度：重大工作流</span>
+      <span class="stamp">状态：待评审</span>
+      <span class="stamp ruled">已裁决：绿场一键重置 · DeerFlow 一并清零 · 三段式重命名</span>
+    </div>
+    <div class="stat-strip">
+      <div class="stat"><b>67<span class="to">→</span>27</b><span>管理面权限码</span></div>
+      <div class="stat"><b>5</b><span>控制台域</span></div>
+      <div class="stat"><b>4</b><span>角色层级</span></div>
+      <div class="stat"><b>0</b><span>语义增减</span></div>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+
+  <!-- ============ 01 背景与问题 ============ -->
+  <section class="section" id="sec-01">
+    <div class="sec-head reveal"><span class="sec-no">01</span><span class="sec-rule"></span><span class="sec-tag">Background</span></div>
+    <h2 class="reveal">背景与问题</h2>
+    <p class="sec-lead reveal">现行权限目录与四级角色体系在多轮迭代后暴露三类结构性问题，产品已裁决推倒重写。</p>
+    <div class="card reveal">
+      <p class="stat-inline">现行目录 <b>67 码</b> <span class="plus">=</span> 管理面 <code>iam.*</code> <b>27</b> <span class="plus">+</span> 业务面 <b>40</b></p>
+      <div class="problems">
+        <div class="problem">
+          <i>P-1</i>
+          <b>命名不一致</b>
+          <p><code>role</code> 与 <code>app_role</code> 语义易混、<code>user</code> 与 <code>member</code> 边界模糊，<code>platform.overview</code> / <code>authorization.simulate</code> 等「域.动作」式编码破坏三段式一致性。</p>
+        </div>
+        <div class="problem">
+          <i>P-2</i>
+          <b>第一段无信息量</b>
+          <p>全部 <code>iam.</code> 前缀，菜单分组、授权分组、收敛矩阵都要靠第二段二次映射。</p>
+        </div>
+        <div class="problem">
+          <i>P-3</i>
+          <b>历史数据混杂</b>
+          <p>多轮造数与调整后，角色目录与授权关系不再「样板干净」。</p>
+        </div>
+      </div>
+      <div class="decision">
+        <p class="decision-label">产品决策 · 已确认</p>
+        <div class="decision-grid">
+          <div class="decision-item"><b>编码与角色体系推倒重写</b><span>平台侧权限编码与角色体系全部重写</span></div>
+          <div class="decision-item"><b>历史数据绿场一键重置清零</b><span>DeerFlow 业务试点资产一并清零，之后按新体系重新登记</span></div>
+          <div class="decision-item"><b>UI 重新设计</b><span>角色管理 / 权限编码页按新体系重新设计</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 02 新编码体系 ============ -->
+  <section class="section" id="sec-02">
+    <div class="sec-head reveal"><span class="sec-no">02</span><span class="sec-rule"></span><span class="sec-tag">Encoding</span></div>
+    <h2 class="reveal">新编码体系：五域二十七码</h2>
+    <p class="sec-lead reveal">三段式格式保持、SDK 兼容；第一段从无信息量的 <code>iam</code> 换成五个控制台域——域与菜单分组、授权分组、收敛矩阵天然对齐。共 27 码，一一对应旧码，语义零增减。</p>
+    <div class="card reveal">
+      <div class="fmt-strip">
+        <div class="fmt" aria-label="编码格式"><span class="seg hot">&lt;域&gt;</span><i>.</i><span class="seg">&lt;对象&gt;</span><i>.</i><span class="seg">&lt;动作&gt;</span></div>
+        <p class="fmt-note">三段式保持 · SDK 格式兼容 · 第一段直接对齐控制台菜单分组</p>
+      </div>
+      <div class="renames">
+        <span class="rename"><b>user</b><span class="arr">→</span><b>account</b><span class="why">全平台账号</span></span>
+        <span class="rename"><b>organization</b><span class="arr">→</span><b>org</b></span>
+        <span class="rename"><b>invitation</b><span class="arr">→</span><b>invite</b><span class="why">补齐 read</span></span>
+        <span class="rename"><b>app_role</b><span class="arr">→</span><b>rbac 域</b><span class="why">消除与 role 的混淆</span></span>
+      </div>
+      <div class="dist-wrap">
+        <div class="dist-label"><b>27 CODES · DOMAIN DISTRIBUTION</b><span>platform 5 · rbac 7 · org 7 · app 3 · ops 5</span></div>
+        <div class="dist" role="img" aria-label="五域码量分布条形图">
+          <i data-n="5" style="--dc:var(--d-platform);background:var(--d-platform);flex-grow:5" title="platform × 5"></i>
+          <i data-n="7" style="--dc:var(--d-rbac);background:var(--d-rbac);flex-grow:7" title="rbac × 7"></i>
+          <i data-n="7" style="--dc:var(--d-org);background:var(--d-org);flex-grow:7" title="org × 7"></i>
+          <i data-n="3" style="--dc:var(--d-app);background:var(--d-app);flex-grow:3" title="app × 3"></i>
+          <i data-n="5" style="--dc:var(--d-ops);background:var(--d-ops);flex-grow:5" title="ops × 5"></i>
+        </div>
+      </div>
+      <div class="domains">
+        <div class="domain">
+          <div class="domain-head">
+            <span class="domain-name" style="--dc:var(--d-platform)"><span class="dot"></span>platform</span>
+            <span class="domain-zh">平台自身</span>
+            <span class="domain-count">5<small>CODES</small></span>
+          </div>
+          <div class="domain-body">
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="platform.overview.read" aria-label="复制 platform.overview.read">platform.overview.read</button></span><span class="old-codes">iam.platform.overview.read</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="platform.tenant.read" aria-label="复制 platform.tenant.read">platform.tenant.read</button><button class="code-chip" data-code="platform.tenant.manage" aria-label="复制 platform.tenant.manage">platform.tenant.manage</button></span><span class="old-codes">iam.tenant.read / manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="platform.account.read" aria-label="复制 platform.account.read">platform.account.read</button><button class="code-chip" data-code="platform.account.manage" aria-label="复制 platform.account.manage">platform.account.manage</button></span><span class="old-codes">iam.user.read / manage</span></div>
+          </div>
+        </div>
+        <div class="domain">
+          <div class="domain-head">
+            <span class="domain-name" style="--dc:var(--d-rbac)"><span class="dot"></span>rbac</span>
+            <span class="domain-zh">角色与授权</span>
+            <span class="domain-count">7<small>CODES</small></span>
+          </div>
+          <div class="domain-body">
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="rbac.role.read" aria-label="复制 rbac.role.read">rbac.role.read</button><button class="code-chip" data-code="rbac.role.manage" aria-label="复制 rbac.role.manage">rbac.role.manage</button></span><span class="old-codes">iam.role.read / manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="rbac.permission.read" aria-label="复制 rbac.permission.read">rbac.permission.read</button><button class="code-chip" data-code="rbac.permission.manage" aria-label="复制 rbac.permission.manage">rbac.permission.manage</button></span><span class="old-codes">iam.permission.read / manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="rbac.app_role.assign" aria-label="复制 rbac.app_role.assign">rbac.app_role.assign</button><button class="code-chip" data-code="rbac.app_role.read" aria-label="复制 rbac.app_role.read">rbac.app_role.read</button><button class="code-chip" data-code="rbac.app_role.manage" aria-label="复制 rbac.app_role.manage">rbac.app_role.manage</button></span><span class="old-codes">iam.app_role.assign / read / manage</span></div>
+          </div>
+        </div>
+        <div class="domain">
+          <div class="domain-head">
+            <span class="domain-name" style="--dc:var(--d-org)"><span class="dot"></span>org</span>
+            <span class="domain-zh">组织与成员</span>
+            <span class="domain-count">7<small>CODES</small></span>
+          </div>
+          <div class="domain-body">
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="org.read" aria-label="复制 org.read">org.read</button><button class="code-chip" data-code="org.manage" aria-label="复制 org.manage">org.manage</button></span><span class="old-codes">iam.organization.read / manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="org.member.read" aria-label="复制 org.member.read">org.member.read</button><button class="code-chip" data-code="org.member.manage" aria-label="复制 org.member.manage">org.member.manage</button></span><span class="old-codes">iam.member.read / manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="org.group.read" aria-label="复制 org.group.read">org.group.read</button><button class="code-chip" data-code="org.group.manage" aria-label="复制 org.group.manage">org.group.manage</button></span><span class="old-codes">iam.group.read / manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="org.invite.manage" aria-label="复制 org.invite.manage">org.invite.manage</button></span><span class="old-codes">iam.invitation.manage</span></div>
+          </div>
+        </div>
+        <div class="domain">
+          <div class="domain-head">
+            <span class="domain-name" style="--dc:var(--d-app)"><span class="dot"></span>app</span>
+            <span class="domain-zh">应用</span>
+            <span class="domain-count">3<small>CODES</small></span>
+          </div>
+          <div class="domain-body">
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="app.read" aria-label="复制 app.read">app.read</button><button class="code-chip" data-code="app.manage" aria-label="复制 app.manage">app.manage</button><button class="code-chip" data-code="app.secret.rotate" aria-label="复制 app.secret.rotate">app.secret.rotate</button></span><span class="old-codes">iam.application.read / manage / secret.rotate</span></div>
+          </div>
+        </div>
+        <div class="domain">
+          <div class="domain-head">
+            <span class="domain-name" style="--dc:var(--d-ops)"><span class="dot"></span>ops</span>
+            <span class="domain-zh">资源与运营</span>
+            <span class="domain-count">5<small>CODES</small></span>
+          </div>
+          <div class="domain-body">
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="ops.model.read" aria-label="复制 ops.model.read">ops.model.read</button><button class="code-chip" data-code="ops.model.manage" aria-label="复制 ops.model.manage">ops.model.manage</button></span><span class="old-codes">iam.model.read / manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="ops.theme.manage" aria-label="复制 ops.theme.manage">ops.theme.manage</button></span><span class="old-codes">iam.theme.manage</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="ops.audit.read" aria-label="复制 ops.audit.read">ops.audit.read</button></span><span class="old-codes">iam.audit.read</span></div>
+            <div class="map-row"><span class="chips"><button class="code-chip" data-code="ops.authz.simulate" aria-label="复制 ops.authz.simulate">ops.authz.simulate</button></span><span class="old-codes">iam.authorization.simulate</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="biz-strip">业务码（应用命名空间）沿用 <code>&lt;应用前缀&gt;.resource.scope</code> 格式，由各应用重新登记；点击任意编码芯片可一键复制。</div>
+    </div>
+  </section>
+
+  <!-- ============ 03 角色体系 ============ -->
+  <section class="section" id="sec-03">
+    <div class="sec-head reveal"><span class="sec-no">03</span><span class="sec-rule"></span><span class="sec-tag">Role Hierarchy</span></div>
+    <h2 class="reveal">角色体系：四级 key 重命名 + 模板码集</h2>
+    <p class="sec-lead reveal">四级角色 key 全部重命名，模板码集语义与 P383 完全一致，仅编码名更换。</p>
+    <div class="levels reveal">
+      <div class="lvl apex">
+        <div class="lvl-top"><span class="lvl-tag">L1</span><span class="lvl-scope">平台级</span></div>
+        <div class="lvl-key">platform.admin</div>
+        <div class="lvl-old">旧 platform.super_admin</div>
+        <div class="lvl-num">27<small>码 · 全量</small></div>
+        <div class="lvl-bar"><i style="width:100%"></i></div>
+        <p class="lvl-note">platform 5 + rbac 7 + org 7 + app 3 + ops 5</p>
+      </div>
+      <div class="lvl">
+        <div class="lvl-top"><span class="lvl-tag">L3</span><span class="lvl-scope">租户级</span></div>
+        <div class="lvl-key">tenant.admin</div>
+        <div class="lvl-old">旧 tenant.org_admin</div>
+        <div class="lvl-num">21<small>码</small></div>
+        <div class="lvl-bar"><i style="width:78%"></i></div>
+        <p class="lvl-note">org 7 + app 3 + rbac（app_role 3 + role.read + permission.read/manage）+ ops 5</p>
+      </div>
+      <div class="lvl">
+        <div class="lvl-top"><span class="lvl-tag">L2</span><span class="lvl-scope">应用级</span></div>
+        <div class="lvl-key">app.admin</div>
+        <div class="lvl-old">app.admin（不变）</div>
+        <div class="lvl-num">15<small>码</small></div>
+        <div class="lvl-bar"><i style="width:56%"></i></div>
+        <p class="lvl-note">app 3 + rbac.app_role.read/manage + org（member 2 + group 2 + invite 1）+ ops 4 + rbac.permission.read</p>
+      </div>
+      <div class="lvl zero">
+        <div class="lvl-top"><span class="lvl-tag">L4</span><span class="lvl-scope">成员级</span></div>
+        <div class="lvl-key">app.member</div>
+        <div class="lvl-old">app.member（不变）</div>
+        <div class="lvl-num">0<small>码</small></div>
+        <div class="lvl-bar"><i></i></div>
+        <p class="lvl-note">业务码由管理员授予</p>
+      </div>
+    </div>
+    <div class="notes reveal">
+      <div class="note"><b>语义零变更：</b>L3 21 码 / L2 15 码的语义集合与 P383 完全一致，仅编码名更换。</div>
+      <div class="note hot"><b>收敛矩阵（按新域重述）：</b>租户角色隐藏 <code>platform</code> 域 + 业务码；应用角色隐藏 <code>platform</code> 域 + <code>rbac.permission.manage</code>/<code>rbac.role.*</code> 所在治理组 + 跨命名空间业务码——以新域映射重述，语义不变。</div>
+    </div>
+  </section>
+
+  <!-- ============ 04 UI 重设计 ============ -->
+  <section class="section" id="sec-04">
+    <div class="sec-head reveal"><span class="sec-no">04</span><span class="sec-rule"></span><span class="sec-tag">UI Redesign</span></div>
+    <h2 class="reveal">UI 重设计（角色管理 + 权限编码页）</h2>
+    <p class="sec-lead reveal">两页按新体系重新设计，全局码引用同步全量替换。</p>
+    <div class="ui-grid reveal">
+      <div class="ui-card" style="--uk:var(--d-platform)">
+        <span class="ui-tag">权限编码页</span>
+        <p>域总览统计卡带改为<b>「五域 + 全部」六卡</b>（platform / rbac / org / app / ops，账本式编号）；表格「权限域」列按新域名 + 色点；登记弹窗的编码校验提示更新为五域白名单（<code>platform.</code> / <code>rbac.</code> / <code>org.</code> / <code>app.</code> / <code>ops.</code> 管理面 + 应用命名空间业务面）。</p>
+      </div>
+      <div class="ui-card" style="--uk:var(--d-rbac)">
+        <span class="ui-tag">角色管理页</span>
+        <p>作用域三卡文案与 kind 标签不变；「全部类型」筛选保留；配置权限弹窗左栏域导航改为<b>五域</b>（收敛矩阵同步映射）。</p>
+      </div>
+      <div class="ui-card" style="--uk:var(--d-org)">
+        <span class="ui-tag">授权弹窗</span>
+        <p>收敛矩阵域 key 更新：租户角色隐藏 <code>platform</code> 域 + 业务码；应用角色隐藏 <code>platform</code> 域 + 治理组（<code>rbac.role.*</code> / <code>rbac.permission.manage</code>）+ 跨命名空间业务码；<b>已持有码豁免规则不变</b>。</p>
+      </div>
+      <div class="ui-card" style="--uk:var(--d-ops)">
+        <span class="ui-tag">全局</span>
+        <p>侧栏菜单 <code>requiredPermissions</code>、路由守卫、能力判定的码引用<b>全量替换</b>为新码（navigation.ts / capabilities.ts / 各页面 <code>cachedHas</code> 调用点）。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 05 实施范围 ============ -->
+  <section class="section" id="sec-05">
+    <div class="sec-head reveal"><span class="sec-no">05</span><span class="sec-rule"></span><span class="sec-tag">Rollout</span></div>
+    <h2 class="reveal">实施范围与波及面</h2>
+    <p class="sec-lead reveal">六个层面全量替换，执行顺序为强约束。</p>
+    <div class="layers reveal">
+      <div class="layer"><span class="layer-tag">种子与模板</span><p><code>seed_greenfield.py</code> 重写（27 新码 + 四级角色新 key + L1 绑定）；<code>role_provisioning.py</code> 模板码集与角色 key 更新（L3=21 / L2=15 / L4=0 语义不变）。</p></div>
+      <div class="layer"><span class="layer-tag">后端判权</span><p><code>rbac_guards.py</code>、admin / tenant-admin 全部路由的码引用与角色 key 引用全量替换（走常量单点，逐处核对字面量）。</p></div>
+      <div class="layer"><span class="layer-tag">前端</span><p><code>permissionGroups.ts</code> 五域映射重写；navigation / 页面码引用全量替换；角色页 / 权限页 UI 适配（见 04）。</p></div>
+      <div class="layer"><span class="layer-tag">数据</span><p><code>greenfield-reset.ps1</code> 一键重置（删卷重建）——权限码 / 角色 / 用户 / 应用 / 会话 / 审计 / OIDC 全部清零；admin 账号按 .env 重新种子。</p></div>
+      <div class="layer"><span class="layer-tag">DeerFlow 重新登记</span><p>业务侧（<code>D:\project\deer-flow</code>）权限码改为新体系对应业务码后，经 SDK 重新 provision（跨工作区，遵循其 AGENTS 规则）。</p></div>
+      <div class="layer"><span class="layer-tag">文档</span><p>PRD §3.1 三级作用域码表、对接手册、SDK 文档同步新码表。</p></div>
+    </div>
+    <div class="reveal">
+      <div class="flow-label"><b>执行顺序 · 强约束</b><span>顺序不可调换</span></div>
+      <div class="flow">
+        <div class="flow-step"><span class="no">1</span><b>合码表与全链路替换</b><span>新码表落地，后端 / 前端 / 文档码引用全量替换</span></div>
+        <span class="flow-arr" aria-hidden="true">→</span>
+        <div class="flow-step danger"><span class="no">2</span><b>绿场重置</b><span>旧数据清零、新种子生效——不可逆操作</span></div>
+        <span class="flow-arr" aria-hidden="true">→</span>
+        <div class="flow-step"><span class="no">3</span><b>DeerFlow 重新登记与验收</b><span>SDK 重新 provision，按基线逐项验收</span></div>
+      </div>
+      <p class="ruling">重置为不可逆操作，执行前需再次确认。</p>
+    </div>
+  </section>
+
+  <!-- ============ 06 验收基线 ============ -->
+  <section class="section" id="sec-06">
+    <div class="sec-head reveal"><span class="sec-no">06</span><span class="sec-rule"></span><span class="sec-tag">Acceptance</span></div>
+    <h2 class="reveal">验收基线</h2>
+    <p class="sec-lead reveal">绿场重置后的最低通过标准，逐项打勾验收。</p>
+    <div class="checks reveal">
+      <div class="check"><span class="check-box">✓</span><div><b>绿场重置后</b><span>三容器 healthy、ready 200；admin 登录 capabilities 恰 27 新码；目录 67 → 27 + 新业务码（重新登记后）。</span></div></div>
+      <div class="check"><span class="check-box">✓</span><div><b>隔离测试</b><span>全量隔离套件按新码 / 新 key 全绿（test_role_hierarchy_guards 等同步更新断言）。</span></div></div>
+      <div class="check"><span class="check-box">✓</span><div><b>角色链路</b><span>L3 建租户得 21 码、L2 建应用得 15 码、收敛矩阵按新域生效、管理员不能管理管理员防线不回退。</span></div></div>
+      <div class="check"><span class="check-box">✓</span><div><b>DeerFlow</b><span>重新登记后 SDK 判权 / data_scope 联调通过（浏览器 OIDC 人工点选）。</span></div></div>
+      <div class="check"><span class="check-box">✓</span><div><b>UI</b><span>角色页 / 权限页五域呈现正确，深浅主题复验。</span></div></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <p class="f-brand">IAM PLATFORM · PRD</p>
+  <p>权限编码与角色体系重规划 PRD · 2026-10-28</p>
+  <span class="f-stamp">已裁决：绿场重置 / DeerFlow 一并清零 / 三段式五域</span>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite">已复制</div>
+
+<script>
+// ============ 阅读进度条 ============
+const bar = document.getElementById('progressBar')
+addEventListener('scroll', () => {
+  const h = document.documentElement
+  const p = h.scrollTop / (h.scrollHeight - h.clientHeight || 1)
+  bar.style.transform = `scaleX(${p})`
+}, { passive: true })
+
+// ============ 滚动显现动效 ============
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.classList.add('in')
+      io.unobserve(e.target)
+    }
+  })
+}, { threshold: 0.08 })
+document.querySelectorAll('.reveal').forEach(el => io.observe(el))
+
+// ============ 目录滚动高亮 ============
+const links = [...document.querySelectorAll('.toc a')]
+const spy = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(a => a.classList.toggle('on', a.hash === '#' + e.target.id))
+    }
+  })
+}, { rootMargin: '-20% 0px -70% 0px' })
+document.querySelectorAll('main section[id]').forEach(s => spy.observe(s))
+
+// ============ 编码芯片一键复制 ============
+const toast = document.getElementById('toast')
+let toastTimer
+function showToast(msg) {
+  toast.textContent = msg
+  toast.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 1400)
+}
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.code-chip')
+  if (!chip) return
+  const value = chip.dataset.code
+  const fallback = () => {
+    // 剪贴板 API 不可用时的降级方案
+    const ta = document.createElement('textarea')
+    ta.value = value
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+    showToast('已复制 ' + value)
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(value).then(() => showToast('已复制 ' + value)).catch(fallback)
+  } else {
+    fallback()
+  }
+})
+</script>
+</body>
+</html>

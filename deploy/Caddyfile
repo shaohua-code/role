@@ -1,0 +1,13 @@
+{
+	# Optional files are added only when an operator explicitly creates a trusted-proxy config.
+	# With no matching files, Caddy keeps its default of trusting no proxies.
+	import ./trusted-proxies/*.caddy
+}
+
+{$IAM_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy console:8080 {
+		# 覆写用户输入的同名头；没有可信代理时取连接对端，有配置时取 Caddy 解析的客户端 IP。
+		header_up X-IAM-Client-IP {client_ip}
+	}
+}

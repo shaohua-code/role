@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRD · 权限编码作用域一级分组（平台 → 租户 → 应用）</title>
+<style>
+  :root {
+    --ink: #18181b; --ink-2: #3f3f46; --ink-3: #71717a; --line: #e4e4e7; --line-2: #d4d4d8;
+    --paper: #fafafa; --card: #ffffff; --subtle: #f4f4f5; --warn: #b45309;
+    --mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif; color: var(--ink); background: var(--paper); line-height: 1.75; font-size: 15px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 32px 96px; }
+  header.doc { border-bottom: 2px solid var(--ink); padding-bottom: 24px; margin-bottom: 40px; }
+  .eyebrow { font-size: 11px; letter-spacing: 3px; color: var(--ink-3); text-transform: uppercase; }
+  h1 { font-size: 28px; font-weight: 700; margin-top: 8px; letter-spacing: -0.5px; }
+  .meta { display: flex; gap: 24px; margin-top: 12px; font-size: 13px; color: var(--ink-3); flex-wrap: wrap; }
+  h2 { font-size: 19px; font-weight: 700; margin: 48px 0 16px; padding-left: 12px; border-left: 3px solid var(--ink); }
+  h3 { font-size: 15.5px; font-weight: 700; margin: 24px 0 10px; }
+  p { margin: 8px 0; color: var(--ink-2); }
+  ul, ol { padding-left: 22px; color: var(--ink-2); margin: 8px 0; }
+  li { margin: 4px 0; }
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--subtle); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; background: var(--card); }
+  th { background: var(--ink); color: #fff; text-align: left; padding: 9px 12px; font-weight: 600; white-space: nowrap; }
+  td { border: 1px solid var(--line); padding: 8px 12px; vertical-align: top; }
+  tr:nth-child(even) td { background: var(--subtle); }
+  .callout { border: 1px solid var(--line-2); border-left: 3px solid var(--ink); background: var(--card); padding: 14px 18px; border-radius: 6px; margin: 16px 0; font-size: 14px; }
+  .callout b { display: block; margin-bottom: 4px; }
+  .fr { border: 1px solid var(--line-2); border-radius: 8px; background: var(--card); padding: 22px 26px; margin: 18px 0; }
+  .fr-id { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: var(--ink-3); }
+  .fr-title { font-size: 16.5px; font-weight: 700; margin: 2px 0 10px; }
+  /* demo 样式 */
+  .demo { border: 1px solid var(--line-2); border-radius: 8px; margin: 16px 0 6px; overflow: hidden; }
+  .demo-bar { background: var(--ink); color: #a1a1aa; font-size: 11px; letter-spacing: 2px; padding: 6px 14px; }
+  .demo-body { padding: 18px; background: var(--card); }
+  .stat-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
+  .stat-card { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; cursor: pointer; background: var(--card); transition: border-color .15s; }
+  .stat-card:hover { border-color: var(--ink-3); }
+  .stat-card.active { border-color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
+  .stat-num { font-family: var(--mono); font-size: 22px; font-weight: 700; }
+  .stat-label { font-size: 12px; color: var(--ink-2); }
+  .stat-activity { font-size: 11px; color: var(--ink-3); }
+  .scope-row { display: flex; align-items: baseline; gap: 10px; padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .scope-row:hover { background: var(--subtle); }
+  .scope-group-head { display: flex; align-items: center; gap: 8px; margin: 14px 0 4px; font-weight: 700; font-size: 13.5px; }
+  .scope-tag { font-size: 11px; border: 1px solid var(--line-2); border-radius: 3px; padding: 0 6px; color: var(--ink-3); font-weight: 400; }
+  .code-mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .nav-demo { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .nav-col { width: 168px; border-right: 1px solid var(--line); background: var(--subtle); padding: 10px 0; }
+  .nav-item { padding: 8px 14px; font-size: 13px; cursor: pointer; color: var(--ink-2); border-left: 2px solid transparent; }
+  .nav-item:hover { color: var(--ink); }
+  .nav-item.active { border-left-color: var(--ink); color: var(--ink); font-weight: 600; background: var(--card); }
+  .nav-item.disabled { color: var(--line-2); cursor: not-allowed; text-decoration: line-through; }
+  .nav-count { float: right; font-size: 11px; color: var(--ink-3); }
+  .nav-main { flex: 1; padding: 14px 16px; }
+  .chip { display: inline-block; border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 10px; font-size: 12px; margin: 2px; color: var(--ink-2); }
+  .chip.warn { color: var(--warn); border-color: var(--warn); }
+  .footnote { font-size: 12px; color: var(--ink-3); margin-top: 4px; }
+  .kind-switch { display: flex; gap: 8px; margin-bottom: 12px; }
+  .kind-btn { border: 1px solid var(--line-2); background: var(--card); border-radius: 5px; padding: 4px 14px; font-size: 12.5px; cursor: pointer; color: var(--ink-2); }
+  .kind-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="eyebrow">Product Requirements · IAM Console</div>
+  <h1>权限编码作用域一级分组（平台 → 租户 → 应用）</h1>
+  <div class="meta">
+    <span>轮次：P393</span>
+    <span>前置：P392 五域 27 码 / P390 收敛矩阵 / P389 目录页改版</span>
+    <span>状态：已批准实施（2026-10-28）</span>
+  </div>
+</header>
+
+<h2>1. 背景与问题</h2>
+<p>P392 将管理面权限编码重建为三段式五域体系（<code>platform</code> / <code>rbac</code> / <code>org</code> / <code>app</code> / <code>ops</code>）后，权限编码目录页的统计卡带与授权弹窗的域导航都按<strong>功能域</strong>分组（01 平台 / 02 角色与授权 / 03 组织与成员 / 04 应用 / 05 资源与运营）。功能域是技术视角的划分，与管理者「这条权限码归哪一级用」的心智不一致：</p>
+<ul>
+  <li>用户核验授权范围时，第一问题不是「这是哪个功能的码」，而是「<strong>这是平台的事、租户的事，还是某个应用的事</strong>」；</li>
+  <li>租户管理员角色（L3）看不到平台域、应用管理员（L2）看不到平台与租户治理码（P390 收敛矩阵已在弹窗生效），但目录页仍把所有码平铺在功能域卡带下，作用域边界不可见；</li>
+  <li>目录页命名空间筛选器的空态文案为「全部分组」，与「权限域」下拉并存，进一步混淆了「分组」概念。</li>
+</ul>
+<p><strong>产品决策：</strong>权限编码的一级分类从功能域改为<strong>作用域层级</strong>——一级「平台」、二级「租户」、三级「应用（业务码）」，功能五域降级为筛选维度。目录页与授权弹窗使用同一套分组口径。</p>
+
+<h2>2. 范围</h2>
+<table>
+  <tr><th>项</th><th>内容</th></tr>
+  <tr><td>P0 入口</td><td>① 权限编码目录页（平台管理员）；② 角色授权弹窗（平台 / 租户 / 应用管理员配置角色权限时）</td></tr>
+  <tr><td>P0 动作</td><td>按作用域（平台 → 租户 → 应用 → 业务码）浏览、筛选、定位权限编码；给角色配权时在收敛后的作用域组内勾选</td></tr>
+  <tr><td>完成证据</td><td>目录页统计卡带按作用域显示且点击可筛选；授权弹窗域导航按作用域分组且与角色收敛矩阵一致</td></tr>
+  <tr><td>恢复路径</td><td>作用域筛选可一键清除（点击「全部」卡或再次点击取消）；弹窗关闭即重置，不影响已保存授权</td></tr>
+  <tr><td>不做</td><td>不改后端码表、判权逻辑、模板码集与任何 API 契约（纯展示层分组重构）；不做权限编码的新增/停用流程变更</td></tr>
+</table>
+
+<h2>3. 共享规则：作用域归属（唯一口径）</h2>
+<p>每个权限编码恰好归属一个作用域组，归属规则由 P383 已裁决的模板码集确定性推导，不逐码人肉裁定：</p>
+<div class="callout">
+  <b>归属规则（按持有该码的模板角色推导）</b>
+  仅 L1 模板持有 → <strong>平台组</strong>；L3 持有且 L2 不持有 → <strong>租户组</strong>；L2 模板持有（L3 必然同样持有，体现上级兼容）→ <strong>应用组</strong>；<code>catalog_namespace</code> 非 <code>platform</code> 的码 → <strong>业务码组</strong>（按命名空间再分组）。
+</div>
+<p>按此规则，P392 的 27 个管理码归属如下（评审重点——如对个别码有异议请在此表上标注）：</p>
+<table>
+  <tr><th>作用域组</th><th>数量</th><th>权限编码</th><th>语义</th></tr>
+  <tr>
+    <td><strong>① 平台</strong></td><td>6</td>
+    <td><code>platform.overview.read</code>、<code>platform.tenant.read</code>、<code>platform.tenant.manage</code>、<code>platform.account.read</code>、<code>platform.account.manage</code>、<code>rbac.role.manage</code></td>
+    <td>租户与全局账号治理、平台总览、平台角色写——仅平台超管（L1）持有</td>
+  </tr>
+  <tr>
+    <td><strong>② 租户</strong></td><td>6</td>
+    <td><code>org.read</code>、<code>org.manage</code>、<code>rbac.role.read</code>、<code>rbac.permission.manage</code>、<code>rbac.app_role.assign</code>、<code>ops.model.manage</code></td>
+    <td>组织架构、角色目录读、权限目录写、任命应用管理员、模型目录写——租户管理员（L3）持有而应用管理员（L2）不持有</td>
+  </tr>
+  <tr>
+    <td><strong>③ 应用</strong></td><td>15</td>
+    <td><code>app.read</code>、<code>app.manage</code>、<code>app.secret.rotate</code>、<code>rbac.app_role.read</code>、<code>rbac.app_role.manage</code>、<code>org.member.read</code>、<code>org.member.manage</code>、<code>org.invite.manage</code>、<code>org.group.read</code>、<code>org.group.manage</code>、<code>rbac.permission.read</code>、<code>ops.model.read</code>、<code>ops.theme.manage</code>、<code>ops.audit.read</code>、<code>ops.authz.simulate</code></td>
+    <td>应用与成员日常管理——应用管理员（L2）持有，租户管理员（L3）全量兼容持有</td>
+  </tr>
+  <tr>
+    <td><strong>④ 业务码</strong></td><td>动态</td>
+    <td>各应用命名空间自助登记的码（如 <code>resume.resume.read</code>、<code>demoapp.workflow.run</code>）</td>
+    <td>应用业务功能权限，按命名空间二级分组；绿场重置后当前为 0</td>
+  </tr>
+</table>
+<p class="footnote">验算：6 + 6 + 15 = 27 管理码全覆盖、零遗漏零重复；业务码数量随应用登记动态变化。授权权码（<code>rbac.app_role.manage</code> / <code>org.member.manage</code> / <code>org.invite.manage</code> / <code>org.group.manage</code>）分属应用组，P383「自定义角色禁持授权权码」规则不受分组影响。</p>
+
+<h2>4. 功能需求</h2>
+
+<div class="fr">
+  <div class="fr-id">FR-01</div>
+  <div class="fr-title">权限编码目录页：作用域统计卡带与分组展示</div>
+  <p><strong>触发：</strong>平台管理员进入「权限编码」目录页。<strong>结果：</strong>统计卡带从功能五域改为作用域四卡，点击即筛选；编码列表按作用域分组呈现。</p>
+  <h3>统计卡带</h3>
+  <ul>
+    <li>卡带五张：<code>00 全部</code>（27 + 业务码 N，附活动数）、<code>01 平台 6</code>、<code>02 租户 6</code>、<code>03 应用 15</code>、<code>04 业务码 N</code>；每卡显示总数与启用数，编号沿用账本式样式。</li>
+    <li>点击卡片即按该作用域筛选（再点取消或点「00 全部」清除）；与权限域下拉、命名空间下拉、搜索框叠加过滤。</li>
+    <li>业务码卡在数量为 0 时保持可见但置灰不可点（传达「业务应用可自助登记」的概念位）。</li>
+  </ul>
+  <div class="demo">
+    <div class="demo-bar">DEMO · FR-01 统计卡带与分组列表（可点击）</div>
+    <div class="demo-body">
+      <div class="stat-strip" id="d1Strip"></div>
+      <div id="d1List"></div>
+      <div class="footnote">组内排序：管理码按编码字母序；业务码组按命名空间分小块。停用码照常显示并由「状态」列表达，不因作用域分组隐藏。</div>
+    </div>
+  </div>
+  <h3>筛选器修正</h3>
+  <ul>
+    <li>命名空间下拉空态文案由「全部分组」改为「全部命名空间」，消除与作用域分组的概念冲突。</li>
+    <li>「权限域」下拉保留功能五域（platform / 角色与授权 / 组织与成员 / 应用 / 资源与运营）作为第二级筛选维度；编码行「权限域 / 命名空间」列继续显示功能域名与命名空间，字段不变。</li>
+    <li>表格列结构（P389 的 6 列）不变，仅行归属与分组次序随作用域口径调整。</li>
+  </ul>
+  <h3>异常与空态</h3>
+  <ul>
+    <li>任一作用域组为空（除业务码概念位外目前不会发生）时该卡显示 0 且不可点，列表对应分组不渲染。</li>
+    <li>多条件叠加无结果时显示既有空态文案「没有匹配的权限项」，并保留全部筛选条件可清除。</li>
+  </ul>
+</div>
+
+<div class="fr">
+  <div class="fr-id">FR-02</div>
+  <div class="fr-title">授权弹窗：作用域域导航与收敛矩阵对齐</div>
+  <p><strong>触发：</strong>管理员在角色管理 / 应用工作台打开「配置权限」弹窗。<strong>结果：</strong>左侧域导航一级改为作用域组，并与 P390 收敛矩阵天然对齐。</p>
+  <h3>导航分组与收敛</h3>
+  <ul>
+    <li>域导航组序：平台 → 租户 → 应用 → 业务码（业务码组内按命名空间二级分组）。</li>
+    <li>收敛矩阵由「按功能域隐藏」改写为「按作用域组隐藏」，判权口径零变化：平台角色显示全部四组；租户角色隐藏「平台」组；应用角色隐藏「平台」「租户」两组，且业务码组仅显示本应用命名空间。</li>
+    <li>历史已持有的越域码豁免隐藏（P390 既有哲学：可撤销、不静默剥夺），显示在其所属作用域组内；自定义角色授权权码禁选规则（P383）不变。</li>
+  </ul>
+  <div class="demo">
+    <div class="demo-bar">DEMO · FR-02 弹窗域导航随角色类型收敛（切换角色类型查看）</div>
+    <div class="demo-body">
+      <div class="kind-switch">
+        <button class="kind-btn active" data-kind="platform">平台角色 L1</button>
+        <button class="kind-btn" data-kind="tenant">租户角色 L3</button>
+        <button class="kind-btn" data-kind="application">应用角色 L2</button>
+      </div>
+      <div class="nav-demo">
+        <div class="nav-col" id="d2Nav"></div>
+        <div class="nav-main" id="d2Main"></div>
+      </div>
+      <div class="footnote">禁选样式示意：授权权码对自定义角色禁勾（琥珀标注），历史已持有越域码照常出现在其作用域组并可撤销。</div>
+    </div>
+  </div>
+  <h3>状态与反馈</h3>
+  <ul>
+    <li>每组头部显示「已选 / 总数」计数；已选摘要条、预览影响对比、sticky 操作条等 P389/P391 交付物不变。</li>
+    <li>切换角色类型（弹窗按传入角色渲染）时组可见性即时变化；关闭弹窗重置全部展示状态。</li>
+    <li>保存链路（勾选 → 预览 → PUT）报文与判权零改动：作用域分组仅是展示层重组。</li>
+  </ul>
+</div>
+
+<div class="fr">
+  <div class="fr-id">FR-03</div>
+  <div class="fr-title">分组口径单一来源</div>
+  <p>目录页与授权弹窗的作用域归属必须共用同一份映射口径（前端共享常量，按第 3 节规则实现），禁止两处各自维护映射表。未来新增管理码时，按第 3 节归属规则推导其作用域组；规则无法覆盖的码（不应出现）须在登记时被拦截并显式归组，不允许落入「未分组」静默展示。</p>
+</div>
+
+<h2>5. 交互细则</h2>
+<table>
+  <tr><th>场景</th><th>行为</th></tr>
+  <tr><td>作用域卡 + 功能域下拉叠加</td><td>取交集（如「租户」卡 + 「资源与运营」域 = <code>ops.model.manage</code> 单条结果），空交集显示空态</td></tr>
+  <tr><td>搜索命中跨组</td><td>仅高亮命中行，不自动收起其他作用域组（保持全局上下文）</td></tr>
+  <tr><td>业务码命名空间排序</td><td>按命名空间名称字母序；同一命名空间内按编码字母序</td></tr>
+  <tr><td>弹窗窄屏（&lt;760px）</td><td>域导航降级为横滑 tabs（P389 既有行为），tab 名称使用作用域组名</td></tr>
+  <tr><td>主题自适应</td><td>分组标识使用现有 token 变量，深浅主题跟随（P389 已建立的模式）</td></tr>
+</table>
+
+<h2>6. 边界与既有规则衔接</h2>
+<table>
+  <tr><th>既有规则</th><th>与本 PRD 的关系</th></tr>
+  <tr><td>P390 收敛矩阵（角色类型 → 可见域）</td><td>改写为作用域组口径（见 FR-02），隐藏结果与现状等价：租户角色原隐藏【platform/业务/其他】五域 ≡ 新口径隐藏平台组 + 业务码组（业务码随应用，租户全域角色不配）；应用角色原隐藏【platform/其他】+ 码级黑名单 ≡ 新口径隐藏平台组 + 租户组（治理码 rbac.role.read / rbac.role.manage / rbac.permission.manage 分属租户/平台组，被组级隐藏覆盖）+ 业务码限本命名空间</td></tr>
+  <tr><td>P383 自定义角色授权权码禁选</td><td>不变；授权权码位于应用组，禁选标注跟随码而非组</td></tr>
+  <tr><td>P388 功能域分组</td><td>授权弹窗与目录页的一级分组被作用域取代；功能域保留为目录页筛选下拉与编码行域名展示</td></tr>
+  <tr><td>P391 提示降噪</td><td>不回退：分组变更不新增大块提示，组头说明走既有轻量样式</td></tr>
+  <tr><td>后端 catalog_namespace / surface 字段</td><td>零改动；作用域归属是展示层推导，不需要后端新增字段或接口</td></tr>
+</table>
+
+<h2>7. 验收要点</h2>
+<ul>
+  <li>目录页统计卡带为「全部 / 平台 6 / 租户 6 / 应用 15 / 业务码 N」，点击筛选与叠加过滤行为正确；27 码逐一归组与第 3 节表格一致。</li>
+  <li>命名空间下拉空态文案为「全部命名空间」。</li>
+  <li>弹窗以 L1 / L3 / L2 三种角色分别打开：L1 见四组；L3 无平台组；L2 仅应用 + 业务码（本命名空间），历史已持有越域码可见可撤销。</li>
+  <li>保存授权后重新打开，勾选状态与保存前一致；预览影响、保存报文与改造前逐字节等价（同勾选集）。</li>
+  <li>深浅主题与窄屏下分组样式无破损。</li>
+</ul>
+
+</div>
+
+<script>
+// ---- 演示数据：27 管理码按 PRD 第 3 节归属 ----
+const GROUPS = [
+  { key: 'platform', label: '平台', count: 6, codes: [
+    ['平台总览', 'platform.overview.read'], ['租户列表', 'platform.tenant.read'], ['租户创建/启停/类型', 'platform.tenant.manage'],
+    ['全局用户列表', 'platform.account.read'], ['创建用户/改状态/撤会话', 'platform.account.manage'], ['角色写/绑定/解绑（平台视角）', 'rbac.role.manage']] },
+  { key: 'tenant', label: '租户', count: 6, codes: [
+    ['组织树读', 'org.read'], ['组织写/数据范围策略', 'org.manage'], ['角色目录读', 'rbac.role.read'],
+    ['权限目录写/启停', 'rbac.permission.manage'], ['任命应用管理员', 'rbac.app_role.assign'], ['模型目录写', 'ops.model.manage']] },
+  { key: 'app', label: '应用', count: 15, codes: [
+    ['应用读', 'app.read'], ['应用写', 'app.manage'], ['轮换客户端密钥', 'app.secret.rotate'],
+    ['应用角色读', 'rbac.app_role.read'], ['应用角色管理', 'rbac.app_role.manage'], ['成员读', 'org.member.read'],
+    ['成员管理', 'org.member.manage'], ['成员邀请', 'org.invite.manage'], ['用户组读', 'org.group.read'],
+    ['用户组写', 'org.group.manage'], ['权限目录读', 'rbac.permission.read'], ['模型目录读', 'ops.model.read'],
+    ['登录主题管理', 'ops.theme.manage'], ['审计日志读', 'ops.audit.read'], ['授权模拟', 'ops.authz.simulate']] },
+  { key: 'business', label: '业务码', count: 0, codes: [] },
+]
+
+// FR-01：统计卡带 + 分组列表
+const strip = document.getElementById('d1Strip')
+const list = document.getElementById('d1List')
+let active = ''
+;[['', '全部', 27], ...GROUPS.map(g => [g.key, g.label, g.count])].forEach(([key, label, count]) => {
+  const card = document.createElement('div')
+  card.className = 'stat-card' + (key === 'business' ? ' ' : '')
+  card.innerHTML = `<div class="stat-num">${String(count).padStart(2, '0')}</div><div class="stat-label">${label}</div><div class="stat-activity">${key === 'business' ? '暂无业务应用' : '活动 ' + count}</div>`
+  if (key === 'business') { card.style.opacity = .5; card.style.cursor = 'not-allowed' }
+  else card.onclick = () => { active = active === key ? '' : key; render1() }
+  card.dataset.key = key
+  strip.appendChild(card)
+})
+function render1() {
+  strip.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.key === active))
+  list.innerHTML = ''
+  GROUPS.filter(g => !active || g.key === active).forEach(g => {
+    if (!g.codes.length) return
+    const head = document.createElement('div')
+    head.className = 'scope-group-head'
+    head.innerHTML = `${g.label} <span class="scope-tag">${g.codes.length} 码</span>`
+    list.appendChild(head)
+    g.codes.forEach(([name, code]) => {
+      const row = document.createElement('div')
+      row.className = 'scope-row'
+      row.innerHTML = `<span>${name}</span><span class="code-mono">${code}</span>`
+      list.appendChild(row)
+    })
+  })
+  if (active === 'business') list.innerHTML = '<div class="footnote" style="padding:12px">业务码为空：绿场重置后暂无业务应用登记。应用接入后此处按命名空间分小块展示。</div>'
+}
+render1()
+
+// FR-02：弹窗域导航随角色类型收敛
+const NAV = [
+  { key: 'platform', label: '平台', total: 6 },
+  { key: 'tenant', label: '租户', total: 6 },
+  { key: 'app', label: '应用', total: 15 },
+  { key: 'business', label: '业务码', total: 0 },
+]
+const HIDE = { platform: [], tenant: ['platform'], application: ['platform', 'tenant'] }
+const d2Nav = document.getElementById('d2Nav')
+const d2Main = document.getElementById('d2Main')
+let kind = 'platform', navActive = 'app'
+function render2() {
+  d2Nav.innerHTML = ''
+  NAV.forEach(g => {
+    const hidden = HIDE[kind].includes(g.key)
+    const item = document.createElement('div')
+    item.className = 'nav-item' + (hidden ? ' disabled' : navActive === g.key ? ' active' : '')
+    if (!hidden) item.onclick = () => { navActive = g.key; render2() }
+    item.innerHTML = `${g.label}<span class="nav-count">${hidden ? '—' : g.total}</span>`
+    d2Nav.appendChild(item)
+  })
+  const g = NAV.find(x => x.key === navActive)
+  const hidden = HIDE[kind].includes(navActive)
+  if (hidden || !g) { d2Main.innerHTML = `<p class="footnote">该组对当前角色类型隐藏（P390 收敛矩阵）。</p>`; return }
+  const samples = { platform: ['platform.tenant.read', 'platform.tenant.manage', 'rbac.role.manage'],
+    tenant: ['org.read', 'rbac.role.read', 'rbac.app_role.assign', 'ops.model.manage'],
+    app: ['app.read', 'rbac.app_role.manage <span class="chip warn">自定义角色禁选</span>', 'org.member.manage <span class="chip warn">禁选</span>', 'ops.audit.read'],
+    business: [] }[navActive] || []
+  d2Main.innerHTML = `<div class="scope-group-head">${g.label}组 <span class="scope-tag">已选 0 / ${g.total}</span></div>` +
+    (samples.length ? samples.map(s => `<div class="scope-row"><span class="code-mono">${s}</span></div>`).join('')
+      : '<div class="footnote" style="padding:8px">业务码按命名空间二级分组；应用角色仅显示本应用命名空间。</div>')
+}
+document.querySelectorAll('.kind-btn').forEach(btn => btn.onclick = () => {
+  kind = btn.dataset.kind
+  document.querySelectorAll('.kind-btn').forEach(b => b.classList.toggle('active', b === btn))
+  if (HIDE[kind].includes(navActive)) navActive = HIDE[kind].length >= 2 ? 'app' : 'tenant'
+  render2()
+})
+render2()
+</script>
+</body>
+</html>

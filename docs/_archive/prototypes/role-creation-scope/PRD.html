@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRD · 角色创建作用域向导与授权收敛</title>
+<style>
+:root {
+  --bg: #fafafa; --card: #fff; --border: #e4e4e7; --border-strong: #d4d4d8;
+  --ink: #18181b; --muted: #71717a; --faint: #a1a1aa;
+  --warn-bg: #fef3c7; --warn-ink: #92400e; --ok-ink: #166534; --mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--ink); font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: 15px; line-height: 1.75; }
+code { font-family: var(--mono); font-size: .85em; background: #f4f4f5; border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+.hero { background: linear-gradient(180deg, #09090b, #18181b); color: #fafafa; padding: 52px 24px 40px; }
+.hero-inner { max-width: 960px; margin: 0 auto; }
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .22em; color: #a1a1aa; margin-bottom: 12px; }
+.hero h1 { font-size: clamp(24px, 3.5vw, 34px); }
+.hero-sub { color: #d4d4d8; margin-top: 8px; }
+.pill { display: inline-block; border: 1px solid #3f3f46; border-radius: 999px; padding: 3px 12px; font-size: 12.5px; color: #d4d4d8; margin-right: 8px; margin-top: 16px; }
+.page { max-width: 960px; margin: 0 auto; padding: 8px 24px 0; }
+.section { padding: 44px 0 6px; }
+.num { font-family: var(--mono); font-size: 12px; letter-spacing: .2em; color: var(--faint); margin-bottom: 4px; }
+h2 { font-size: 21px; margin-bottom: 10px; }
+h3 { font-size: 16px; margin: 18px 0 8px; }
+.lead { color: var(--muted); margin-bottom: 18px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 1px 2px rgba(24,24,27,.04), 0 8px 24px rgba(24,24,27,.05); padding: 20px 22px; margin-bottom: 14px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: #fafafa; color: var(--muted); font-size: 12.5px; }
+tr:last-child td { border-bottom: none; }
+.ruling { background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 10px 14px; font-size: 13.5px; margin-top: 10px; }
+.ruling strong { font-weight: 700; }
+.ok { color: var(--ok-ink); font-weight: 600; }
+.footer { border-top: 1px solid var(--border); margin-top: 56px; padding: 24px; text-align: center; color: var(--faint); font-size: 12.5px; }
+@media (max-width: 720px) { .card { padding: 14px; } table { font-size: 12.5px; } th, td { padding: 8px; } }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">PRD · ROLE CREATION SCOPE &amp; GRANT CONVERGENCE · P390 候选</p>
+    <h1>角色创建作用域向导与授权收敛</h1>
+    <p class="hero-sub">新建角色先定作用域（平台 / 租户 / 应用），配置权限只见对应权限范围</p>
+    <div>
+      <span class="pill">深度：轻量迭代</span>
+      <span class="pill">状态：已实施（P390，2026-10-28）；后端加固 P1 跟进</span>
+      <span class="pill">裁决 permission-grouping PRD 的 Q1 / Q2</span>
+      <span class="pill">上游口径：PRD §3.1 三级作用域</span>
+    </div>
+  </div>
+</header>
+<main class="page">
+
+<section class="section">
+  <p class="num">01</p>
+  <h2>背景与问题</h2>
+  <div class="card">
+    <p>现状两个割裂：<strong>① 新建角色时作用域是隐式的</strong>——「新建角色」弹窗只让选租户和可选的应用范围，角色是租户角色还是应用角色由「是否选了应用」倒推，创建者没有显式的作域选择步骤；<strong>② 配置权限时码集与作用域无关</strong>——授权弹窗展示全部 67 个编码（含平台专属码、租户治理码、跨命名空间业务码），给应用角色配权限时，挂了权限域不符的码也无法生效，既误导又增加误配面。</p>
+    <p style="margin-top:10px">产品期望：<strong>新建角色先显式确定作用域（平台 / 租户 / 应用），应用角色必须先选租户再钉应用；作用域确定后，配置权限弹窗只展示该作用域对应的权限范围。</strong>本次同时裁决《权限编码按作用域分组 PRD》搁置的 Q1（按 kind 收敛可选集）与 Q2（租户侧隐藏平台组）。</p>
+  </div>
+</section>
+
+<section class="section">
+  <p class="num">02</p>
+  <h2>已确认裁决</h2>
+  <div class="card">
+    <p class="ruling"><strong>裁决一（平台角色新建）：</strong>不开放。创建向导仍展示三张作用域卡，但「平台角色」卡标注「由系统种子定义，不可新建」并置灰——与绿场四级角色写死、平台租户防呆（禁切类型 / 五处写入口拦截）的产品哲学一致，杜绝绕过种子再造平台超管。</p>
+    <p class="ruling"><strong>裁决二（收敛口径）：</strong>严格三级矩阵。授权弹窗按角色 kind 收敛可见码集（矩阵见 FR-02），业务码仅显示角色所属应用命名空间下的编码。</p>
+  </div>
+</section>
+
+<section class="section">
+  <p class="num">03</p>
+  <h2>范围</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th style="width:12%">优先级</th><th style="width:36%">能力</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td class="ok">P0</td><td>新建角色作用域向导</td><td>三卡选择（平台置灰）→ 条件字段联动：租户角色选租户；应用角色选租户 + 钉应用（必填）</td></tr>
+        <tr><td class="ok">P0</td><td>授权弹窗作用域收敛</td><td>按角色 kind 收敛可见码组与应用角色业务码命名空间；隐藏组不渲染</td></tr>
+        <tr><td class="ok">P0</td><td>编辑 / 克隆场景收敛</td><td>编辑既有角色与克隆副本配置权限时，按该角色已存 kind 收敛，规则与新建一致</td></tr>
+        <tr><td style="color:var(--faint)">P1 · 建议跟进</td><td>后端保存校验加固</td><td>收敛后前端不再展示越域码，但后端保存接口对「租户角色挂业务码」「应用角色挂租户治理码」仍接受；建议后端补同口径 422（独立小改，可随后续轮次）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <p class="num">04</p>
+  <h2>功能需求</h2>
+
+  <div class="card">
+    <h3>FR-01 新建角色作用域向导（平台控制台 · 仅 L1 可达）</h3>
+    <table>
+      <tbody>
+        <tr><th style="width:16%">第一步</th><td>弹窗顶部三张作用域卡（横向等宽）：<strong>平台角色</strong>（置灰，副文案「由系统种子定义，不可新建」，不可点击）/ <strong>租户角色</strong>（副文案「当前租户全域生效」）/ <strong>应用角色</strong>（副文案「钉住单个应用生效」）。默认未选中，未选择时后续字段不渲染；点击卡片选中（黑边 + 浅底），再次点击已选卡可切换到另一张</td></tr>
+        <tr><th>第二步 · 租户角色</th><td>显示「所属租户」必选（活动租户下拉）；不显示应用范围字段</td></tr>
+        <tr><th>第二步 · 应用角色</th><td>显示「所属租户」必选 → 选中后显示「所属应用」<strong>必选</strong>（该租户活动应用下拉，联动过滤；切换租户时清空已选应用）</td></tr>
+        <tr><th>切换作用域</th><td>切换卡片时清空已选租户 / 应用，避免跨作用域残留</td></tr>
+        <tr><th>保存规则</th><td>提交字段与现状一致（租户 + 可选应用 + key + name + description），作用域由「是否钉应用」落到既有接口；仅文案与必填校验随向导变化：应用角色时应用为必填（现状为可选，这是行为变更点）</td></tr>
+        <tr><th>编辑场景</th><td>编辑弹窗不出现向导（作用域创建后不可改，维持现状只读展示），但作用域行文案升级为显式域名（如「应用角色 · DeerFlow」）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>FR-02 授权弹窗作用域收敛矩阵</h3>
+    <table>
+      <thead><tr><th style="width:22%">角色 kind</th><th>可见码组</th><th style="width:30%">隐藏</th></tr></thead>
+      <tbody>
+        <tr><td><strong>平台角色</strong>（仅种子 <code>platform.super_admin</code>）</td><td>全部七组（含平台专属、业务码全命名空间）</td><td>无</td></tr>
+        <tr><td><strong>租户角色</strong></td><td>租户治理 · 成员协作 · 应用域 · 模型 / 主题 / 审计</td><td>平台专属 · 业务码（全命名空间）· 其他</td></tr>
+        <tr><td><strong>应用角色</strong>（含自定义）</td><td>应用域 · 成员协作 · 模型 / 主题 / 审计 · <strong>业务码（仅本应用命名空间）</strong></td><td>平台专属 · 租户治理 · 业务码（其他命名空间）</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:10px">规则：<strong>隐藏组整体不渲染</strong>（非置灰）——域导航、组头、计数、摘要 chips 全部不出现，恢复筛选时也不可见；「其他」组仅平台角色可见。禁选逻辑不变：自定义角色的 4 个授权权码在可见组内置灰，停用码仅可撤销。矩阵口径从三级作用域模型与 P383 模板码集推导（每组出现在哪些模板角色中即对哪些 kind 可见），与《产品需求》§3.1 同源。</p>
+  </div>
+
+  <div class="card">
+    <h3>FR-03 收敛的判定来源与一致性</h3>
+    <table>
+      <tbody>
+        <tr><th style="width:16%">kind 来源</th><td>角色目录接口已返回 <code>kind</code>；两调用方（角色管理页 / 应用工作台角色 Tab）打开弹窗时传入角色 kind，弹窗不再依赖入口推断。应用工作台入口角色恒为应用角色（kind=application），行为与现状一致</td></tr>
+        <tr><th>业务命名空间</th><td>应用角色的业务码过滤以应用 <code>permission_namespace</code> 为准（编码首段匹配）；应用工作台入口天然只载本应用目录，平台入口需按角色的钉定应用过滤</td></tr>
+        <tr><th>一致性</th><td>收敛矩阵与《权限编码按作用域分组 PRD》共享组口径（<code>utils/permissionGroups.ts</code> 单一映射）；隐藏不改变任何判权与保存契约——后端校验保持现状，加固列 P1</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <p class="num">05</p>
+  <h2>开放问题</h2>
+  <div class="card">
+    <table>
+      <tbody>
+        <tr><th style="width:14%">编号</th><th>问题</th></tr>
+        <tr><td><span class="tag" style="border:1px solid var(--border-strong);border-radius:999px;padding:1px 10px;font-size:11px;font-family:var(--mono);color:var(--muted)">无</span></td><td>两项关键决策已由产品裁决（见 02 节）；后端加固列为 P1 独立跟进，不阻塞本期。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer class="footer">IAM 平台 · 角色创建作用域向导与授权收敛 PRD · 2026-10-28 · 上游：《产品需求》§3.1 · 裁决《权限编码按作用域分组 PRD》Q1/Q2</footer>
+</main>
+</body>
+</html>

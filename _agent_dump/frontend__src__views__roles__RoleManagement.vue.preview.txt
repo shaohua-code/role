@@ -1,0 +1,95 @@
+<script setup lang="ts">
+import { computed, reactive, ref, watch } from 'vue'
+import { message, Modal } from 'ant-design-vue'
+import { api } from '@/api'
+import { cachedHas } from '@/api/capabilities'
+import { DownOutlined } from '@/plugins/icons'
+import AdminListPage from '@/components/AdminListPage.vue'
+import AdminSearchField from '@/components/AdminSearchField.vue'
+import AdminStatBand from '@/components/AdminStatBand.vue'
+import AdminDetailDrawer from '@/components/AdminDetailDrawer.vue'
+import AdminMonoValue from '@/components/AdminMonoValue.vue'
+import RolePermissionGrantModal from '@/components/RolePermissionGrantModal.vue'
+import { PERMISSION_DOMAINS, resolvePermissionDomain } from '@/utils/permissionGroups'
+
+interface TenantOption { id: string; name: string; status: string }
+interface ApplicationOption { id: string; tenant_id: string; name: string; status: string; permission_namespace?: string }
+interface RoleRecord {
+  id: string
+  tenant_id: string
+  application_id: string | null
+  kind: 'platform' | 'tenant' | 'application'
+  key: string
+  name: string
+  description: string | null
+  status: string
+  permission_codes: string[]
+}
+interface PermissionRecord { id: string; code: string; resource_type: string; scope: string; status: 'active' | 'disabled' }
+/** API 中通用授权与资源实例授权共用的视图；资源编辑器只操作非空 resource_id。 */
+interface RolePermissionGrant { permission_id: string; code: string; description?: string | null; resource_id: string | null }
+interface ResourcePermissionGrant extends RolePermissionGrant { resource_id: string }
+interface DataScopePolicy { permission_id: string; scope_type: string; organization_ids: string[] }
+interface DataScopeEntry { permission_id: string; permission_code: string; scope_type: string; organization_ids: string[] }
+
+const props = defineProps<{
+  active: boolean
+  tenants: TenantOption[]
+  applications: ApplicationOption[]
+  shellRoles?: RoleRecord[] | null
+  shellCatalogGeneration?: number
+}>()
+const emit = defineEmits<{ changed: [] }>()
+const canManageRoles = computed(() => cachedHas('rbac.role.manage'))
+
+let hydratedCatalogGeneration = -1
+
+const roles = ref<RoleRecord[]>([])
+// undefined 才能触发 Select 的 placeholder；'' 会被当作已选值导致空框无占位文案
+const tenantFilter = ref<string | undefined>(undefined)
+// P397 作用域筛选改由顶部统计卡带承载：'' = 全部，平台/租户/应用三卡即筛选
+const kindFilter = ref('')
+const searchText = ref('')
+const loading = ref(false)
+const errorText = ref('')
+const editorOpen = ref(false)
+const savingRole = ref(false)
+const editingRole = ref<RoleRecord | null>(null)
+const form = reactive({ tenant_id: '', application_id: '', key: '', name: '', description: '' })
+// P390 作用域向导：新建角色第一步显式选作用域（平台角色不可新建，仅租户/应用两项可选）
+const wizardScope = ref<'' | 'tenant' | 'application'>('')
+const cloneDialogOpen = ref(false)
+const cloningRole = ref(false)
+const cloneSourceRole = ref<RoleRecord | null>(null)
+const cloneForm = reactive({ key: '', name: '', description: '', copy_authorizations: false })
+
+// 挂码编辑改用共享 RolePermissionGrantModal（与应用工作台/应用角色同一套预览+保存流程）。
+const grantOpen = ref(false)
+const grantRoleId = ref('')
+const grantRoleName = ref('')
+const grantRoleKey = ref('')
+// P390 作用域收敛：弹窗按角色 kind 隐藏越域码组；应用角色业务码只显示本命名空间
+const grantRoleKind = ref<'' | 'platform' | 'tenant' | 'application'>('')
+const grantRoleNamespace = ref('')
+// 管理员不能管理管理员：非模板角色（自定义「管理员」）禁选授权权码，与后端 422 同口径。
+const TEMPLATE_ROLE_KEYS = new Set(['platform.admin', 'tenant.admin', 'app.admin', 'app.member'])
+
+// P386 角色作用域可视化：三级 kind 的展示文案（与 role-scope-design 原型口径一致）。
+const KIND_LABELS: Record<string, string> = {
+  platform: '平台角色',
+  tenant: '租户角色',
+  application: '应用角色',
+}
+
+function kindLabel(kind: string): string {
+  return KIND_LABELS[kind] || '角色'
+}
+
+const resourceGrantDialogOpen = ref(false)
+const resourceGrantRoleId = ref('')
+const resourceGrantLoading = ref(false)
+const resourceGrantSaving = ref(false)
+const resourceGrantError = ref('')
+const resourcePermissionOptions = ref<PermissionRecord[]>([])
+const resourcePermissionGrants = ref<ResourcePermissionGrant[]>([])
+cons

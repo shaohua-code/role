@@ -1,0 +1,135 @@
+<script setup lang="ts">
+// 应用工作台「资源权限」Tab（P357 重构，P358 感知增强）：
+// 面向应用的显式资源树——菜单（路由/图标/额外参数 JSON）+ 挂在菜单下的按钮与数据规则；
+// 新增节点编码自动带上父级/命名空间前缀，弹窗内置图标选择器与描述字段；
+// 角色「配置资源」入口在「角色」Tab；业务端通过 my-resources 接口拉取整棵树。
+import { computed, reactive, ref, watch } from 'vue'
+import { message, Modal } from 'ant-design-vue'
+import { api } from '@/api'
+import AdminSearchField from '@/components/AdminSearchField.vue'
+import AdminEmpty from '@/components/AdminEmpty.vue'
+import ResourceIcon from '../components/ResourceIcon.vue'
+import { matchResource, buildResourcePathCodes } from '../components/resourceSearch'
+
+interface ApplicationRef {
+  id: string
+  name: string
+  permission_namespace: string
+  can_manage?: boolean
+}
+
+type ResourceType = 'menu' | 'button' | 'data_rule'
+
+interface ResourceRecord {
+  id: string
+  parent_id: string | null
+  resource_type: ResourceType
+  code: string
+  name: string
+  description: string | null
+  path: string | null
+  icon: string | null
+  sort: number
+  extra: Record<string, unknown>
+  status: 'active' | 'disabled'
+}
+
+interface ResourceNode {
+  key: string
+  title: string
+  children?: ResourceNode[]
+  record: ResourceRecord
+}
+
+const props = withDefaults(defineProps<{
+  application: ApplicationRef | null
+  apiPrefix?: string
+  active?: boolean
+}>(), {
+  apiPrefix: '/admin',
+  active: true,
+})
+
+const emit = defineEmits<{ changed: [], stats: [count: number] }>()
+
+const resources = ref<ResourceRecord[]>([])
+const loading = ref(false)
+const searchText = ref('')
+const dialogOpen = ref(false)
+const saving = ref(false)
+const editingId = ref<string | null>(null)
+const formRef = ref<{ validate: () => Promise<unknown> }>()
+const form = reactive({
+  resource_type: 'menu' as ResourceType,
+  parent_id: undefined as string | undefined,
+  code: '',
+  name: '',
+  description: '',
+  path: '',
+  icon: '',
+  sort: 0,
+  extra: '',
+  status: 'active' as 'active' | 'disabled',
+})
+let requestSequence = 0
+
+// 管理动作与后端 manage 门禁同口径：应用管理员（can_manage）即可维护资源树。
+const canManage = computed(() => props.application?.can_manage === true)
+
+// 编码前缀自动化：有父级用父级完整 code，根节点用应用命名空间；用户只需输入尾段。
+const codePrefix = computed(() => {
+  const parent = form.parent_id
+    ? resources.value.find(item => item.id === form.parent_id)
+    : undefined
+  const base = parent ? parent.code : props.application?.permission_namespace ?? ''
+  return base ? `${base}.` : ''
+})
+
+// 父级菜单仅在应用已有菜单节点时显示；创建第一个节点（必为菜单）时隐藏该字段。
+const hasMenuNodes = computed(() => resources.value.some(item => item.resource_type === 'menu'))
+
+// 树节点展示的路径化编码：根→当前逐级拼接，上级/上上级编码始终可见。
+const resourcePathCodes = computed(() => buildResourcePathCodes(resources.value))
+
+function applicationPath(path: string): string {
+  return `${props.apiPrefix}${path}`
+}
+
+async function loadResources(): Promise<void> {
+  if (!props.application) {
+    resources.value = []
+    emit('stats', 0)
+    return
+  }
+  const sequence = ++requestSequence
+  loading.value = true
+  try {
+    const rows = await api<ResourceRecord[]>(applicationPath(`/applications/${props.application.id}/resources`))
+    if (sequence === requestSequence) {
+      resources.value = rows
+      // 上报资源数给父级概览统计条（resources 为扁平记录列表，行数即节点总数）
+      emit('stats', rows.length)
+    }
+  } catch (error) {
+    if (sequence !== requestSequence) return
+    resources.value = []
+    emit('stats', 0)
+    message.error(error instanceof Error ? error.message : '读取资源树失败')
+  } finally {
+    if (sequence === requestSequence) loading.value = false
+  }
+}
+
+// 平铺清单组装资源树（后端按 sort/code 排序）；搜索命中时保留祖先链。
+const resourceTree = computed<ResourceNode[]>(() => {
+  const nodeMap = new Map<string, ResourceNode>()
+  const roots: ResourceNode[] = []
+  for (const record of resources.value) {
+    nodeMap.set(record.id, { key: record.id, title: record.name, record, children: [] })
+  }
+  for (const record of resources.value) {
+    const node = nodeMap.get(record.id)!
+    const parent = record.parent_id ? nodeMap.get(record.parent_id) : undefined
+    if (parent) parent.children!.push(node)
+    else roots.push(node)
+  

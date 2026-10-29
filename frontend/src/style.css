@@ -1,0 +1,486 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+:root {
+  font-family: Inter, "Noto Sans SC", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+/* 登录页与 OIDC 主题：黑色画布 + 极微弱白光（P350 黑白灰），禁止多层炫光 */
+.login-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(40rem 24rem at 15% -10%, rgba(255, 255, 255, 0.07), transparent 65%),
+    radial-gradient(36rem 22rem at 85% 110%, rgba(255, 255, 255, 0.03), transparent 70%),
+    var(--color-login-canvas);
+}
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: min(440px, calc(100vw - 32px));
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid color-mix(in srgb, var(--color-bg-elevated) 55%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--color-login-card);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-lg);
+}
+.login-brand { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-6); }
+.login-brand strong, .login-brand small { display: block; }
+.login-brand strong { font-size: 15px; font-weight: 600; }
+.login-brand small { margin-top: var(--space-1); color: var(--color-text-muted); font-size: 11px; letter-spacing: .06em; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-brand);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+}
+.login-card h1 { margin: 2px 0 var(--space-2); font-size: 24px; line-height: 1.25; font-weight: 600; }
+.login-card .eyebrow { margin: 0 0 6px; color: var(--color-brand); font-size: 11px; letter-spacing: .08em; }
+.login-subtitle { margin: 0 0 var(--space-5); color: var(--color-text-secondary); font-size: 13px; line-height: 1.55; }
+.login-note { margin-top: var(--space-4); color: var(--color-text-secondary); font-size: 11px; line-height: 1.65; }
+.login-secondary-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin-top: 4px; }
+.login-secondary-actions .ant-btn-link { padding: 4px 0; height: auto; font-size: 13px; }
+.login-shell .ant-btn-primary {
+  border: none;
+  background: var(--color-brand);
+  box-shadow: var(--shadow-sm);
+}
+.login-shell .ant-btn-primary:hover { background: var(--color-brand-hover); filter: none; }
+.login-card .ant-form-item-label > label { font-size: 13px; }
+
+.oidc-login-shell { background-position: center; background-size: cover; background-repeat: no-repeat; padding: 28px; }
+.oidc-login-shell .oidc-login-card { box-shadow: var(--shadow-lg); }
+.oidc-login-shell .login-brand { margin-bottom: 32px; }
+.oidc-login-shell .brand-mark { position: relative; overflow: hidden; transform: none; }
+.oidc-login-shell .brand-mark img { position: absolute; inset: 0; width: 100%; height: 100%; padding: 4px; object-fit: contain; background: inherit; }
+.oidc-login-shell .ant-btn-primary:hover { filter: brightness(.94); }
+.oidc-login-shell .position-left { justify-self: start; }
+.oidc-login-shell .position-right { justify-self: end; }
+.oidc-login-shell .layout-banner { align-self: end; margin-bottom: 6vh; }
+.oidc-brand-copy { display: grid; max-width: min(38vw, 500px); gap: 16px; color: #fff; text-shadow: 0 2px 18px #10182b88; }
+.oidc-brand-copy strong { font-size: clamp(28px, 4vw, 54px); }
+.oidc-brand-copy span { font-size: 15px; line-height: 1.8; }
+.layout-split.oidc-login-shell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr); gap: 5vw; place-items: center; }
+.layout-split .oidc-brand-copy { justify-self: center; }
+.layout-split .oidc-login-card { justify-self: center; }
+.layout-banner.oidc-login-shell { padding-top: 100px; }
+.oidc-login-banner { position: absolute; inset: 0 0 auto; padding: 26px 5%; background: #11182755; color: #fff; font-size: 20px; backdrop-filter: blur(12px); }
+.oidc-login-card { font-family: var(--login-font-family, Inter, "Noto Sans SC", system-ui, sans-serif); }
+.oidc-login-card .ant-card-body { padding: var(--login-card-padding, 16px 20px); }
+.oidc-login-card .login-brand strong,
+.oidc-login-card h1 { color: var(--login-title-color, #202a3b); }
+.oidc-login-card .login-brand small,
+.oidc-login-card .login-subtitle,
+.oidc-login-card .login-note,
+.oidc-login-card .ant-form-item-label > label { color: var(--login-text-color, #202a3b); }
+.oidc-login-card .ant-input,
+.oidc-login-card .ant-input-affix-wrapper { border-radius: var(--login-input-radius, 6px); }
+.oidc-login-card .ant-btn { height: var(--login-button-height, 40px); border-radius: var(--login-button-radius, 6px); }
+@media (max-width: 799px) {
+  .layout-split.oidc-login-shell { grid-template-columns: minmax(0, 1fr); }
+  .layout-split .oidc-brand-copy { display: none; }
+  .oidc-login-shell .position-left,
+  .oidc-login-shell .position-right { justify-self: center; }
+  .oidc-login-shell .layout-banner { align-self: center; margin: 0; padding-top: 0; }
+}
+
+/* 登录主题编辑器预览画布（产品品牌能力，不是管理台壳）。 */
+.theme-workspace { display: grid; grid-template-columns: minmax(320px, .92fr) minmax(380px, 1.08fr); gap: 18px; align-items: start; }
+.theme-editor .ant-card-body { padding: 22px; }
+.theme-form { max-width: none; }
+.theme-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.theme-switches { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.theme-switches .ant-form-item { display: flex; align-items: center; justify-content: space-between; }
+.theme-help, .history-caption { margin: 0 0 16px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.65; }
+.theme-side { display: grid; gap: 16px; }
+.preview-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.preview-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.preview-heading p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; }
+.theme-preview-frame { display: grid; min-height: 390px; place-items: center; padding: 28px; border: 1px solid var(--color-border); border-radius: 10px; background-size: cover; background-position: center; }
+.theme-preview-frame.position-left { justify-items: start; }
+.theme-preview-frame.position-right { justify-items: end; }
+.theme-preview-frame.layout-split { grid-template-columns: minmax(0, 1fr) minmax(260px, auto); gap: 20px; justify-items: stretch; }
+.theme-preview-frame.layout-banner { grid-template-columns: 1fr; align-content: center; gap: 14px; }
+.theme-preview-brand-copy { display: grid; gap: 10px; max-width: 300px; color: #fff; text-shadow: 0 1px 8px #11182766; }
+.theme-preview-brand-copy strong { font-size: 22px; }
+.theme-preview-brand-copy span { font-size: 13px; line-height: 1.65; }
+.theme-preview-frame.mobile { width: 320px; min-height: 560px; margin: 0 auto; padding: 20px 12px; border-radius: 28px; box-shadow: inset 0 0 0 5px #151a22; }
+.theme-preview-frame.mobile.layout-split { grid-template-columns: 1fr; justify-items: center; }
+.theme-preview-frame.mobile .theme-preview-brand-copy { display: none; }
+.theme-preview-login-card { padding: 26px 24px; background: var(--color-bg-elevated); color: var(--color-text-primary); box-shadow: 0 15px 45px #1a264522; text-align: center; }
+/* P379：打断 grid 轨道自引用——卡片内联 width 会把隐式轨道撑到自身宽度，
+   使卡片的 max-width:100% 相对被撑大的轨道解析而失效（登录卡穿出预览框）。
+   width:0 让本层尺寸贡献归零、min-width:100% 占满由容器决定的轨道，
+   卡片「配置宽度放不下即收缩」与真机视口约束语义一致（手机/桌面/分栏布局通用）。 */
+.theme-preview-card-slot { width: 0; min-width: 100%; }
+/* 卡片在 slot 内的块级流需手动还原对齐语义：默认居中（原 place-items:center），position-left/right 靠边。 */
+.theme-preview-card-slot .theme-preview-login-card { margin: 0 auto; }
+.theme-preview-frame.position-left .theme-preview-card-slot .theme-preview-login-card { margin: 0; }
+.theme-preview-frame.position-right .theme-preview-card-slot .theme-preview-login-card { margin: 0 0 0 auto; }
+.theme-preview-login-card h3 { margin: 13px 0 4px; font-size: 20px; color: var(--color-text-primary); }
+.theme-preview-login-card > p { margin: 0 0 20px; color: var(--color-text-secondary); font-size: 12px; }
+.theme-preview-mark { display: grid; width: 38px; height: 38px; margin: auto; place-items: center; border-radius: 11px; color: #fff; font-weight: 700; }
+.theme-preview-logo { display: block; width: auto; max-width: 132px; height: 40px; margin: 0 auto; object-fit: contain; }
+.preview-input { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 6px; color: #a0a8b5; font-size: 11px; text-align: left; }
+.preview-submit { width: 100%; margin-top: 15px; padding: 10px; border: 0; border-radius: 6px; color: #fff; font-size: 12px; }
+.preview-links { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; color: var(--color-text-secondary); font-size: 10px; }
+.history-card .ant-card-body { padding-top: 12px; }
+.theme-advanced { margin: 8px 0 18px; padding: 12px 14px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-subtle); }
+.theme-advanced summary { cursor: pointer; color: var(--color-text-primary); font-size: 13px; font-weight: 600; }
+.theme-advanced[open] summary { margin-bottom: 14px; }
+.theme-advanced .theme-field-grid { margin-top: 8px; }
+.theme-advanced .ant-form-item { margin-bottom: 10px; }
+@media (max-width: 1200px) { .theme-workspace { grid-template-columns: 1fr; } .theme-side { grid-template-columns: 1fr 1fr; align-items: start; } }
+@media (max-width: 760px) { .theme-side { grid-template-columns: 1fr; } .theme-preview-frame { min-height: 340px; } }
+@media (max-width: 460px) { .theme-field-grid, .theme-switches { grid-template-columns: 1fr; gap: 0; } .theme-preview-frame.mobile { max-width: 100%; } .theme-preview-frame { padding: 15px; } }
+
+.consent-scope-list { display: grid; gap: 12px; margin: 22px 0; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: #fafbff; }
+.consent-scope-list > div { display: flex; align-items: flex-start; gap: 10px; color: var(--color-text-primary); font-size: 14px; line-height: 1.55; }
+.consent-scope-list .ant-tag { flex: 0 0 auto; min-width: 112px; margin-inline-end: 0; text-align: center; }
+.consent-expiry { color: var(--color-text-secondary); font-size: 12px; margin-bottom: 18px; }
+.consent-actions { display: flex; gap: 12px; }
+.consent-actions > .ant-btn { flex: 1; }
+.registration-legal-hint { margin: 0 0 16px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.65; }
+.registration-legal-hint a { color: var(--color-brand); }
+@media (max-width: 560px) { .consent-scope-list > div { flex-direction: column; gap: 5px; } .consent-actions { flex-direction: column-reverse; } }
+
+.cell-wrap { display: block; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 11px; }
+.scope-modal-help { margin-bottom: 16px; }
+.scope-policy-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(190px, 1fr) minmax(220px, 1.4fr); gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #e6eaf0; }
+.scope-policy-row strong { overflow-wrap: anywhere; color: var(--color-text-primary); font-size: 12px; }
+.scope-empty { padding: 28px 0; color: var(--color-text-secondary); text-align: center; font-size: 13px; }
+.permission-grant-editor { display: grid; gap: 16px; }
+.permission-impact-preview { padding: 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg-subtle); }
+.permission-impact-preview p { margin: 10px 0 0; overflow-wrap: anywhere; color: var(--color-text-secondary); font-size: 13px; line-height: 1.6; }
+.permission-impact-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 750px) { .scope-policy-row { grid-template-columns: 1fr; } .scope-policy-row .ant-select { width: 100%; } }
+@media (max-width: 460px) { .permission-impact-actions { display: grid; grid-template-columns: 1fr; } .permission-impact-actions .ant-btn { width: 100%; } }
+
+/* 管理页标题不跟随宽表变宽；表格只在卡片内横滚。 */
+.ant-layout-content > *,
+.ant-layout-content > div > *,
+.ant-layout-content section {
+  max-width: 100%;
+  min-width: 0;
+}
+.ant-layout-content section > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.ant-layout-content .data-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.ant-layout-content .data-card .ant-card-body {
+  max-width: 100%;
+  min-width: 0;
+}
+.ant-layout-content .data-card .ant-spin-nested-loading,
+.ant-layout-content .data-card .ant-spin-container {
+  min-width: 0;
+  max-width: 100%;
+}
+.ant-layout-content .data-card .ant-table-wrapper {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* 表卡片筛选条（P398 统一筛选条设计）：搜索 320 主锚点 / 普通筛选 160 / 宽筛选 208，
+   固定宽度让换行后第二行与首行左对齐成整齐节奏；宽度以此处为唯一权威源，页面不再自带宽度。 */
+.admin-table-toolbar .admin-search-field {
+  width: min(100%, 320px);
+}
+.admin-table-toolbar .ant-select {
+  width: 160px;
+}
+/* 长枚举筛选（租户 / 命名空间等带搜索的下拉）显式加宽 */
+.admin-table-toolbar .ant-select.admin-filter-wide {
+  width: 208px;
+}
+.admin-table-toolbar .admin-search-field .ant-input-affix-wrapper,
+.admin-table-toolbar .ant-select-selector {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+/* 深色主题：筛选条与输入控件改为半透明白叠加，避免在深色卡片上出现白色硬条。 */
+.ant-layout[data-theme='dark'] .admin-table-toolbar {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(212, 212, 216, 0.16);
+}
+.ant-layout[data-theme='dark'] .admin-table-toolbar .admin-search-field .ant-input-affix-wrapper,
+.ant-layout[data-theme='dark'] .admin-table-toolbar .ant-select-selector {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(212, 212, 216, 0.24);
+}
+.ant-layout[data-theme='dark'] .admin-table-toolbar .tenant-filter-label {
+  color: var(--color-text-muted);
+}
+.admin-table-toolbar .admin-search-field .ant-input-affix-wrapper:hover,
+.admin-table-toolbar .ant-select-selector:hover {
+  border-color: var(--color-brand);
+}
+.admin-table-toolbar .admin-search-field .ant-input-affix-wrapper-focused,
+.admin-table-toolbar .ant-select-focused .ant-select-selector {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-subtle);
+}
+.admin-table-toolbar .admin-search-field .ant-input {
+  background: transparent;
+}
+.admin-table-toolbar .tenant-filter-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-table-toolbar .tenant-filter-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+/* 带标签筛选（模型治理等）的控件宽度对齐宽筛选档 */
+.admin-table-toolbar .tenant-filter {
+  width: 208px;
+}
+
+/* 筛选面板：与工具条同族的层次容器；面板内控件统一占满单元格。 */
+.admin-filter-panel .ant-select,
+.admin-filter-panel .ant-picker {
+  width: 100%;
+}
+/* 深色主题：筛选面板半透明叠加，标签提高亮度保证可读。 */
+.ant-layout[data-theme='dark'] .admin-filter-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(148, 163, 184, 0.16);
+}
+.ant-layout[data-theme='dark'] .admin-filter-panel .admin-filter-label {
+  color: var(--color-text-muted);
+}
+
+/* 窄屏宽表格使用表格自身横向滚动。 */
+@media (max-width: 650px) {
+  .scroll-actions-on-mobile .ant-table-cell-fix-right { position: static; inset-inline-end: auto; box-shadow: none; }
+  .scroll-actions-on-mobile .ant-table-cell-fix-right-first::after { display: none; }
+}
+
+/* 窄屏弹窗不超出视口：antd Modal 默认固定 520px 宽，≤575px 时随视口收缩。 */
+@media (max-width: 575px) {
+  .ant-modal { max-width: calc(100vw - 16px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    scroll-behavior: auto;
+    transition-duration: .01ms;
+    animation-duration: .01ms;
+    animation-iteration-count: 1;
+  }
+}
+
+/* 页脚：边框与文字颜色跟随应用内主题（data-theme 由 App 根布局写入）。 */
+.app-footer { border-color: var(--color-border); }
+.ant-layout[data-theme='dark'] .app-footer { border-color: rgba(148, 163, 184, 0.16); color: var(--color-text-secondary); }
+
+/* 顶栏内边距收敛：antdv 4.2.6 的 Layout headerPadding token 不生效，用更高特异性覆盖默认 50px。 */
+.ant-layout .ant-layout-header { padding-inline: 16px; }
+@media (max-width: 575px) {
+  .ant-layout .ant-layout-header { padding-inline: 12px; }
+}
+
+/* 表格表头与行悬浮：antdv 4.2.6 的 Table token 未生效，同样以 CSS 兜底。
+   hover 用不透明的 --color-row-hover——半透明 brand-subtle 会让 fixed 列透出滚动内容。 */
+.ant-layout .ant-table-thead > tr > th { background: var(--color-bg-subtle); }
+.ant-layout .ant-table-tbody > tr.ant-table-row:hover > td { background: var(--color-row-hover); }
+.ant-layout[data-theme='dark'] .ant-table-thead > tr > th { background: rgba(255, 255, 255, 0.04); }
+.ant-layout[data-theme='dark'] .ant-table-tbody > tr.ant-table-row:hover > td { background: var(--color-row-hover); }
+
+/* 全局细滚动条：slate 色系，深色主题切换为暗色滑轨。 */
+* { scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { border-radius: 8px; background: var(--color-border-strong); }
+*::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+.ant-layout[data-theme='dark'] * { scrollbar-color: var(--color-border-strong) transparent; }
+.ant-layout[data-theme='dark'] *::-webkit-scrollbar-thumb { background: var(--color-border-strong); }
+.ant-layout[data-theme='dark'] *::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+
+
+/* —— Management shell (token-driven) —— */
+.mgmt-shell-header {
+  height: var(--header-height) !important;
+  line-height: var(--header-height) !important;
+  border-color: var(--color-border) !important;
+  background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent) !important;
+  box-shadow: var(--shadow-sm);
+}
+.mgmt-shell-content {
+  max-width: var(--content-max-width);
+  padding-left: var(--content-padding-x);
+  padding-right: var(--content-padding-x);
+  padding-top: var(--space-6);
+  padding-bottom: var(--space-6);
+  /* 纵向骨架：内容不足时卡片拉伸填满、页脚恒贴底，消除数据少/空态页面的大片画布裸露。 */
+  display: flex;
+  flex-direction: column;
+}
+/* v-show 隐藏页的内联 display:none 优先于此处 flex，安全；可见页拉伸为弹性列。 */
+.mgmt-shell-content > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  padding-bottom: var(--space-6);
+}
+/* 直接子卡片（AdminListPage 列表页）与 section 型页面（模型治理/工作台）吃掉剩余高度。 */
+.mgmt-shell-content > div > .data-card,
+.mgmt-shell-content > div > section {
+  flex: 1 0 auto;
+}
+.mgmt-shell-content > div > section {
+  display: flex;
+  flex-direction: column;
+}
+.mgmt-shell-content > div > section > .data-card {
+  flex: 1 0 auto;
+}
+/* 卡片内部高度链：card-body 与 antd 表格容器随卡片拉伸，行区/分页之间不留卡内空白
+   （antd 链路 wrapper > spin-nested-loading > spin-container > table > container > header+body 逐层 flex）。 */
+.mgmt-shell-content .data-card.ant-card,
+.mgmt-shell-content .mgmt-data-card.ant-card {
+  display: flex;
+  flex-direction: column;
+}
+.mgmt-shell-content .data-card > .ant-card-body,
+.mgmt-shell-content .mgmt-data-card > .ant-card-body {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.mgmt-shell-content .data-card > .ant-card-body > .ant-table-wrapper,
+.mgmt-shell-content .mgmt-data-card > .ant-card-body > .ant-table-wrapper {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.mgmt-shell-content .data-card .ant-table-wrapper .ant-spin-nested-loading,
+.mgmt-shell-content .data-card .ant-table-wrapper .ant-spin-container,
+.mgmt-shell-content .data-card .ant-table-wrapper .ant-table,
+.mgmt-shell-content .data-card .ant-table-wrapper .ant-table-container,
+.mgmt-shell-content .mgmt-data-card .ant-table-wrapper .ant-spin-nested-loading,
+.mgmt-shell-content .mgmt-data-card .ant-table-wrapper .ant-spin-container,
+.mgmt-shell-content .mgmt-data-card .ant-table-wrapper .ant-table,
+.mgmt-shell-content .mgmt-data-card .ant-table-wrapper .ant-table-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+}
+.mgmt-shell-content .data-card .ant-table-wrapper .ant-table-body,
+.mgmt-shell-content .mgmt-data-card .ant-table-wrapper .ant-table-body {
+  flex: 1 0 auto;
+}
+.mgmt-data-card.ant-card,
+.data-card.ant-card {
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--color-bg-elevated) !important;
+  box-shadow: var(--shadow-none) !important;
+}
+.mgmt-data-card .ant-card-body,
+.data-card .ant-card-body {
+  padding: var(--space-6) !important;
+}
+.mgmt-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text-primary);
+}
+.mgmt-eyebrow {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  text-transform: none;
+}
+.mgmt-eyebrow-bar {
+  width: 2px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-brand);
+}
+.mgmt-sider {
+  background: var(--color-sider-bg) !important;
+}
+/* 纯黑侧栏兜底：antd dark menu 根/子菜单容器默认蓝黑底（#001529/#000c17）。
+   antd cssinjs 运行时注入晚于本文件，同特异性下按注入顺序胜出（P349 层叠坑），
+   故根节点用高特异性、子菜单沿用桥接层 !important 先例强制透明。 */
+.mgmt-sider .ant-menu.ant-menu-dark,
+.ant-drawer .mgmt-sider-menu.ant-menu-dark {
+  background: transparent;
+}
+.mgmt-sider .ant-menu-dark .ant-menu-sub,
+.ant-drawer .mgmt-sider-menu.ant-menu-dark .ant-menu-sub {
+  background: transparent !important;
+}
+.mgmt-sider .ant-menu-dark.ant-menu-inline .ant-menu-item-selected,
+.mgmt-sider .ant-menu-dark .ant-menu-item-selected {
+  position: relative;
+}
+.mgmt-sider .ant-menu-dark.ant-menu-inline .ant-menu-item-selected::before,
+.mgmt-sider .ant-menu-dark .ant-menu-item-selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-sider-accent);
+}
+.app-footer {
+  border-color: var(--color-border) !important;
+  color: var(--color-text-muted) !important;
+}
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-brand-subtle);
+}
+
+@media (max-width: 650px) {
+  .mgmt-shell-content {
+    padding-top: var(--space-4);
+    padding-bottom: var(--space-4);
+  }
+  .mgmt-data-card .ant-card-body,
+  .data-card .ant-card-body {
+    padding: var(--space-4) !important;
+  }
+  .mgmt-page-title { font-size: 18px; }
+}

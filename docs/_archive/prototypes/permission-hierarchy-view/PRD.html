@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRD · 权限编码两类分组（平台编码 + 应用业务编码）</title>
+<style>
+  :root {
+    --ink: #18181b; --ink-2: #3f3f46; --ink-3: #71717a; --line: #e4e4e7; --line-2: #d4d4d8;
+    --paper: #fafafa; --card: #ffffff; --subtle: #f4f4f5; --warn: #b45309;
+    --mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif; color: var(--ink); background: var(--paper); line-height: 1.75; font-size: 15px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 48px 32px 96px; }
+  header.doc { border-bottom: 2px solid var(--ink); padding-bottom: 24px; margin-bottom: 40px; }
+  .eyebrow { font-size: 11px; letter-spacing: 3px; color: var(--ink-3); text-transform: uppercase; }
+  h1 { font-size: 28px; font-weight: 700; margin-top: 8px; letter-spacing: -0.5px; }
+  .meta { display: flex; gap: 24px; margin-top: 12px; font-size: 13px; color: var(--ink-3); flex-wrap: wrap; }
+  h2 { font-size: 19px; font-weight: 700; margin: 48px 0 16px; padding-left: 12px; border-left: 3px solid var(--ink); }
+  h3 { font-size: 15.5px; font-weight: 700; margin: 24px 0 10px; }
+  p { margin: 8px 0; color: var(--ink-2); }
+  ul, ol { padding-left: 22px; color: var(--ink-2); margin: 8px 0; }
+  li { margin: 4px 0; }
+  code { font-family: var(--mono); font-size: 12.5px; background: var(--subtle); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; background: var(--card); }
+  th { background: var(--ink); color: #fff; text-align: left; padding: 9px 12px; font-weight: 600; white-space: nowrap; }
+  td { border: 1px solid var(--line); padding: 8px 12px; vertical-align: top; }
+  tr:nth-child(even) td { background: var(--subtle); }
+  .callout { border: 1px solid var(--line-2); border-left: 3px solid var(--ink); background: var(--card); padding: 14px 18px; border-radius: 6px; margin: 16px 0; font-size: 14px; }
+  .callout b { display: block; margin-bottom: 4px; }
+  .fr { border: 1px solid var(--line-2); border-radius: 8px; background: var(--card); padding: 22px 26px; margin: 18px 0; }
+  .fr-id { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; color: var(--ink-3); }
+  .fr-title { font-size: 16.5px; font-weight: 700; margin: 2px 0 10px; }
+  .demo { border: 1px solid var(--line-2); border-radius: 8px; margin: 16px 0 6px; overflow: hidden; }
+  .demo-bar { background: var(--ink); color: #a1a1aa; font-size: 11px; letter-spacing: 2px; padding: 6px 14px; }
+  .demo-body { padding: 18px; background: var(--card); }
+  .stat-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .stat-card { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; cursor: pointer; background: var(--card); transition: border-color .15s; }
+  .stat-card:hover { border-color: var(--ink-3); }
+  .stat-card.active { border-color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
+  .stat-num { font-family: var(--mono); font-size: 22px; font-weight: 700; }
+  .stat-label { font-size: 12px; color: var(--ink-2); }
+  .stat-sub { font-size: 11px; color: var(--ink-3); }
+  .code-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .code-row:hover { background: var(--subtle); }
+  .lv-tag { font-size: 10.5px; border: 1px solid var(--line-2); border-radius: 3px; padding: 0 5px; color: var(--ink-3); margin-left: 8px; white-space: nowrap; }
+  .code-mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .footnote { font-size: 12px; color: var(--ink-3); margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="eyebrow">Product Requirements · IAM Console</div>
+  <h1>权限编码两类分组（平台编码 + 应用业务编码）</h1>
+  <div class="meta">
+    <span>轮次：P395（修订版，替代层级三卡方案）</span>
+    <span>前置：P393 作用域分组 / P383 模板码集 / P390 收敛矩阵</span>
+    <span>状态：已批准实施（2026-10-28）</span>
+  </div>
+</header>
+
+<h2>1. 背景与决策</h2>
+<p>P393 将目录页分为四个互斥作用域组（平台 6 / 租户 6 / 应用 15 / 业务码），用户先后反馈两级问题：先指出「权限编码要有层级关系——平台编码负责平台的所有，应用负责应用相关所有」；评审层级三卡方案（平台层级 27 / 租户层级 21 / 应用层级 15）后进一步收敛为<strong>两类分组</strong>：「这里是不是只要分两种——平台编码，和一种租户下的应用业务编码。」</p>
+<p>两类分组成立的原因：管理面 27 个码全部由平台统一定义与管理（<code>catalog_namespace=platform</code>），授权给哪一级管理员（L1/L2/L3）是模板码集的分层持有关系，不需要拆成三组展示；业务码由租户下各应用自助登记（<code>catalog_namespace</code>=应用命名空间），与平台编码是两种性质。</p>
+<div class="callout">
+  <b>两类分组（唯一口径）</b>
+  ① <strong>平台编码</strong>：27 个管理面码——平台负责的所有管理能力；内部以「层级起点」标记表达四级角色的分层持有（L1 持 27 ⊃ L3 持 21 ⊃ L2 持 15）。② <strong>应用业务编码</strong>：租户下各应用命名空间的业务码（动态 N 个），按应用分组展示。
+</div>
+
+<h2>2. 范围</h2>
+<table>
+  <tr><th>项</th><th>内容</th></tr>
+  <tr><td>P0 入口</td><td>① 权限编码目录页；② 角色授权弹窗（分组导航同步两类化）</td></tr>
+  <tr><td>P0 动作</td><td>目录页按「平台编码 / 应用业务编码」两类浏览筛选，平台编码行可识别层级起点（L1 专属 / L3 起 / L2 起）；弹窗分组导航同步两类</td></tr>
+  <tr><td>完成证据</td><td>目录页卡带为「全部 27+N / 平台编码 27 / 应用业务编码 N」；弹窗导航为「全部 / 平台编码 / 业务码」，各角色可见码集与改造前完全一致</td></tr>
+  <tr><td>恢复路径</td><td>点「00 全部」或再点当前卡清除筛选；弹窗关闭即重置</td></tr>
+  <tr><td>不做</td><td>不改判权、模板码集、收敛结果与 API；层级起点规则沿用 P393 归属表（仅改分组呈现与弹窗导航粒度）</td></tr>
+</table>
+
+<h2>3. 共享规则：两类定义与层级起点</h2>
+<table>
+  <tr><th>类</th><th>判定</th><th>数量</th><th>说明</th></tr>
+  <tr><td><strong>平台编码</strong></td><td><code>catalog_namespace = platform</code>（五域管理面码）</td><td>27</td><td>平台统一定义与管理；四级管理员按模板分层持有：L1 持 27 ⊃ L3 持 21 ⊃ L2 持 15，用「层级起点」标记表达</td></tr>
+  <tr><td><strong>应用业务编码</strong></td><td><code>catalog_namespace</code> = 应用命名空间</td><td>N（动态）</td><td>租户下各应用自助登记，按应用命名空间分组；绿场重置后当前为 0</td></tr>
+</table>
+<p>平台编码内部的「层级起点」标记沿用 P393 归属表（<code>resolvePermissionScope</code>），回答「这个码从哪一级管理员开始持有」：</p>
+<table>
+  <tr><th>层级起点</th><th>码数</th><th>码</th></tr>
+  <tr><td><code>L1 专属</code></td><td>6</td><td><code>platform.overview.read</code>、<code>platform.tenant.read/manage</code>、<code>platform.account.read/manage</code>、<code>rbac.role.manage</code></td></tr>
+  <tr><td><code>L3 起</code></td><td>6</td><td><code>org.read/manage</code>、<code>rbac.role.read</code>、<code>rbac.permission.manage</code>、<code>rbac.app_role.assign</code>、<code>ops.model.manage</code></td></tr>
+  <tr><td><code>L2 起</code></td><td>15</td><td>app 3 + <code>rbac.app_role.read/manage</code> + org.member/group/invite 5 + <code>rbac.permission.read</code> + ops 4（其余管理码）</td></tr>
+</table>
+<p class="footnote">验算：6 + 6 + 15 = 27；层级起点即模板持有差集，与 P383 模板码集（L1=27 / L3=21 / L2=15）逐一对账一致。</p>
+
+<h2>4. 功能需求</h2>
+
+<div class="fr">
+  <div class="fr-id">FR-01</div>
+  <div class="fr-title">目录页：两类统计卡带与筛选</div>
+  <p><strong>触发：</strong>进入权限编码目录页。<strong>结果：</strong>卡带从四张作用域卡改为三张两类卡，点击即筛选。</p>
+  <ul>
+    <li>卡带三张：<code>00 全部</code>（27 + N，附活动数）、<code>01 平台编码 27</code>、<code>02 应用业务编码 N</code>；编号沿用账本式样式。</li>
+    <li>点击卡片即筛选；与权限域下拉（功能五域，保留为二级维度）、命名空间、搜索叠加过滤；再点当前卡或点「00 全部」清除。</li>
+    <li>应用业务编码卡数量为 0 时保持概念位置灰不可点（延续 P393 行为）。</li>
+    <li>列表默认排序：平台编码在前（组内按层级起点序 L1 专属 → L3 起 → L2 起，再按编码字母序），应用业务编码在后（按命名空间 + 编码字母序）。</li>
+  </ul>
+  <div class="demo">
+    <div class="demo-bar">DEMO · FR-01 两类卡带与平台编码层级标记（点击卡片切换）</div>
+    <div class="demo-body">
+      <div class="stat-strip" id="d1Strip"></div>
+      <div id="d1List"></div>
+      <div class="footnote">平台编码行尾的层级起点标记表达四级角色分层持有；应用业务编码（绿场后暂无）按应用命名空间分组。</div>
+    </div>
+  </div>
+</div>
+
+<div class="fr">
+  <div class="fr-id">FR-02</div>
+  <div class="fr-title">目录页：平台编码行的层级起点标记</div>
+  <p>平台编码行的描述文案后附加轻量标记（<code>L1 专属</code> / <code>L3 起</code> / <code>L2 起</code>），业务码行不标记（其命名空间即归属）：</p>
+  <ul>
+    <li>标记让「平台编码负责所有，但四级管理员各拿哪些」一眼可辨，替代被取消的三层卡带承载层级信息。</li>
+    <li>标记来自既有 <code>resolvePermissionScope</code> 归属，零新增规则；不新增表格列，附着在权限编码列描述后。</li>
+  </ul>
+</div>
+
+<div class="fr">
+  <div class="fr-id">FR-03</div>
+  <div class="fr-title">授权弹窗：导航两类化与收敛矩阵按层级起点改写</div>
+  <p><strong>触发：</strong>管理员打开「配置权限」弹窗。<strong>结果：</strong>左栏导航从作用域四组改为两类（平台编码 / 业务码），各角色可见码集与改造前<strong>完全一致</strong>。</p>
+  <ul>
+    <li>导航组：全部 → 平台编码（该角色可见的管理码）→ 业务码（应用角色仅本命名空间）；组头保留「已选 / 总数」计数与折叠。</li>
+    <li>收敛矩阵由「隐藏作用域组」改写为「按层级起点排除」，结果等价：平台角色（L1）无排除；租户角色（L3）排除 <code>L1 专属</code> 6 码（原：隐平台组+业务码组）；应用角色（L2）排除 <code>L1 专属</code>+<code>L3 起</code> 共 12 码（原：隐平台组+租户组+治理码黑名单），业务码仅本命名空间。</li>
+    <li>历史已持有的越层码豁免排除（可撤销，不静默剥夺）；自定义角色授权权码禁选（P383）不变；保存链路（勾选 → 预览 → PUT）报文与判权零改动。</li>
+    <li>右栏码项保留 P394 行式列表（单列全宽、选中左墨色竖条）；业务码命名空间二级分组保留。</li>
+  </ul>
+</div>
+
+<h2>5. 交互细则与边界</h2>
+<table>
+  <tr><th>场景</th><th>行为</th></tr>
+  <tr><td>「00 全部」与「01 平台编码」</td><td>区别仅在业务码（全部含业务码 N）；两入口都保留以维持清筛选习惯</td></tr>
+  <tr><td>业务码为 0（绿场现状）</td><td>「02 应用业务编码」卡置灰显示「暂无业务应用」；平台编码卡不受影响</td></tr>
+  <tr><td>层级标记与筛选叠加</td><td>层级标记是行级展示，不提供独立筛选维度；需要按层找码时看标记即可（L1/L3/L2 模板持有关系固定，无需筛选）</td></tr>
+  <tr><td>弹窗窄屏（&lt;760px）</td><td>导航降级横滑 tabs（既有行为），tab 名为「全部 / 平台编码 / 业务码」</td></tr>
+  <tr><td>未来新增管理码</td><td>按 P383 模板归属确定层级起点，标记与两类分组自动随 <code>resolvePermissionScope</code> 推导</td></tr>
+</table>
+
+<h2>6. 验收要点</h2>
+<ul>
+  <li>目录页卡带恰为「全部 27+N / 平台编码 27 / 应用业务编码 N」；点「平台编码」27 码带 L1 专属 6 / L3 起 6 / L2 起 15 标记，与 P383 模板码集对账一致。</li>
+  <li>点「应用业务编码」显示按命名空间分组的业务码（绿场后为空、卡置灰）。</li>
+  <li>弹窗以 L1 / L3 / L2 三种角色分别打开：L1 见平台编码 27 + 业务码全部；L3 见平台编码 21（无 L1 专属）+ 无业务码；L2 见平台编码 15（无 L1 专属、无 L3 起）+ 业务码仅本命名空间——与改造前可见码集逐码一致。</li>
+  <li>历史已持有越层码在弹窗可见可撤销；保存报文与改造前逐字节等价（同勾选集）。</li>
+  <li>深浅主题与窄屏样式无破损。</li>
+</ul>
+
+</div>
+
+<script>
+// ---- 演示数据：两类分组 + 层级起点（与 PRD 第 3 节一致） ----
+const TABS = [
+  { key: 'all', label: '全部', count: 27, sub: '含业务码' },
+  { key: 'platform', label: '平台编码', count: 27, sub: '平台统一管理' },
+  { key: 'business', label: '应用业务编码', count: 0, sub: '暂无业务应用', disabled: true },
+]
+const PLATFORM_CODES = [
+  ['平台总览', 'platform.overview.read', 'L1 专属'], ['租户列表', 'platform.tenant.read', 'L1 专属'],
+  ['租户创建/启停/类型', 'platform.tenant.manage', 'L1 专属'], ['全局用户列表', 'platform.account.read', 'L1 专属'],
+  ['创建用户/改状态/撤会话', 'platform.account.manage', 'L1 专属'], ['角色写、绑定/解绑（平台视角）', 'rbac.role.manage', 'L1 专属'],
+  ['组织树读', 'org.read', 'L3 起'], ['组织写、数据范围策略编写', 'org.manage', 'L3 起'],
+  ['角色读', 'rbac.role.read', 'L3 起'], ['权限目录写/启停', 'rbac.permission.manage', 'L3 起'],
+  ['任命/撤职应用管理员（仅 key=app.admin）', 'rbac.app_role.assign', 'L3 起'], ['模型写/用量复核', 'ops.model.manage', 'L3 起'],
+  ['应用读', 'app.read', 'L2 起'], ['应用写', 'app.manage', 'L2 起'], ['轮换客户端密钥', 'app.secret.rotate', 'L2 起'],
+  ['应用角色读', 'rbac.app_role.read', 'L2 起'], ['应用角色 CRUD、成员 bind/unbind', 'rbac.app_role.manage', 'L2 起'],
+  ['成员读', 'org.member.read', 'L2 起'], ['成员管理', 'org.member.manage', 'L2 起'], ['成员邀请', 'org.invite.manage', 'L2 起'],
+  ['用户组读', 'org.group.read', 'L2 起'], ['用户组写', 'org.group.manage', 'L2 起'], ['权限目录读', 'rbac.permission.read', 'L2 起'],
+  ['模型目录读', 'ops.model.read', 'L2 起'], ['登录主题', 'ops.theme.manage', 'L2 起'],
+  ['审计日志', 'ops.audit.read', 'L2 起'], ['授权模拟', 'ops.authz.simulate', 'L2 起'],
+]
+const strip = document.getElementById('d1Strip')
+const list = document.getElementById('d1List')
+let active = 'platform'
+TABS.forEach(tab => {
+  const card = document.createElement('div')
+  card.className = 'stat-card'
+  card.innerHTML = `<div class="stat-num">${String(tab.count).padStart(2, '0')}</div><div class="stat-label">${tab.label}</div><div class="stat-sub">${tab.sub}</div>`
+  if (tab.disabled) { card.style.opacity = .5; card.style.cursor = 'not-allowed' }
+  else card.onclick = () => { active = tab.key; render() }
+  card.dataset.key = tab.key
+  strip.appendChild(card)
+})
+function render() {
+  strip.querySelectorAll('.stat-card').forEach(c => c.classList.toggle('active', c.dataset.key === active))
+  list.innerHTML = ''
+  if (active === 'business') { list.innerHTML = '<div class="footnote" style="padding:12px">应用业务编码为空：绿场重置后暂无业务应用登记。应用接入后此处按应用命名空间分组展示。</div>'; return }
+  PLATFORM_CODES.forEach(([name, code, tag]) => {
+    const row = document.createElement('div')
+    row.className = 'code-row'
+    row.innerHTML = `<span>${name}<span class="lv-tag">${tag}</span></span><span class="code-mono">${code}</span>`
+    list.appendChild(row)
+  })
+}
+render()
+</script>
+</body>
+</html>

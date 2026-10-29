@@ -1,0 +1,110 @@
+<script setup lang="ts">
+// 工作台「角色」Tab：列出当前应用的角色、新建、挂码；平台模式另提供资源树与数据范围（对齐角色列表能力）。
+// 平台模式过滤全局角色目录（/admin/roles 按应用 scope），应用模式走租户应用角色目录。
+import { computed, reactive, ref, watch } from 'vue'
+import { message } from 'ant-design-vue'
+import { useRouter } from 'vue-router'
+import { api } from '@/api'
+import { cachedHas } from '@/api/capabilities'
+import { PAGE_PATHS } from '@/router/navigation'
+import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
+import AdminEmpty from '@/components/AdminEmpty.vue'
+import RolePermissionGrantModal from '@/components/RolePermissionGrantModal.vue'
+import RoleResourceGrantModal from '../components/RoleResourceGrantModal.vue'
+
+interface ApplicationRef {
+  id: string
+  tenant_id: string
+  name: string
+  status: string
+  can_manage?: boolean
+  permission_namespace?: string
+}
+interface RoleRecord {
+  id: string
+  key: string
+  name: string
+  description: string | null
+  status: 'active' | 'disabled'
+  permission_codes: string[]
+  application_id?: string | null
+}
+interface PermissionRecord { id: string; code: string; resource_type: string; scope: string; status: 'active' | 'disabled' }
+interface DataScopePolicy { permission_id: string; scope_type: string; organization_ids: string[] }
+interface DataScopeEntry { permission_id: string; permission_code: string; scope_type: string; organization_ids: string[] }
+
+const props = withDefaults(defineProps<{
+  active?: boolean
+  application: ApplicationRef | null
+  apiPrefix?: string
+}>(), {
+  active: true,
+  apiPrefix: '/admin',
+})
+
+const emit = defineEmits<{ changed: [], stats: [count: number] }>()
+const router = useRouter()
+
+const roles = ref<RoleRecord[]>([])
+const loading = ref(false)
+const createOpen = ref(false)
+const saving = ref(false)
+const form = reactive({ key: '', name: '', description: '' })
+const grantOpen = ref(false)
+const grantRoleId = ref('')
+const grantRoleName = ref('')
+const grantRoleKey = ref('')
+// 管理员不能管理管理员：非模板角色（自定义「管理员」）禁选授权权码，与后端 422 同口径。
+const TEMPLATE_ROLE_KEYS = new Set(['platform.admin', 'tenant.admin', 'app.admin', 'app.member'])
+// P357 资源树授权弹窗状态：入口仅在平台控制台（资源端点只挂 /admin）。
+const resourceOpen = ref(false)
+const resourceRoleId = ref('')
+const resourceRoleName = ref('')
+const dataScopeDialogOpen = ref(false)
+const dataScopeRoleId = ref('')
+const dataScopeRoleName = ref('')
+const dataScopeEntries = ref<DataScopeEntry[]>([])
+const dataScopeOrganizationOptions = ref<{ label: string; value: string }[]>([])
+const savingDataScopes = ref(false)
+let requestSequence = 0
+
+const isPlatform = computed(() => props.apiPrefix === '/admin')
+// 平台侧挂码需要 rbac.role.manage；应用侧沿用 capabilities 换算的应用级 can_manage。
+const canManage = computed(() => isPlatform.value
+  ? cachedHas('rbac.role.manage')
+  : props.application?.can_manage === true)
+const canCreate = computed(() => canManage.value && props.application?.status === 'active')
+
+const columns = [
+  { title: '角色名称', dataIndex: 'name', key: 'name', width: 180, ellipsis: true },
+  { title: '角色标识', dataIndex: 'key', key: 'key', width: 200, ellipsis: true },
+  { title: '权限编码', dataIndex: 'permission_codes', key: 'permission_codes' },
+  { title: '状态', dataIndex: 'status', key: 'status', width: 90 },
+  { title: '操作', dataIndex: 'actions', key: 'actions', width: 280, fixed: 'right' as const },
+]
+
+function rolesPath(): string {
+  return isPlatform.value
+    ? '/admin/roles'
+    : `/tenant-admin/applications/${props.application?.id}/roles`
+}
+
+async function loadRoles(): Promise<void> {
+  if (!props.active || !props.application) {
+    roles.value = []
+    emit('stats', 0)
+    return
+  }
+  const sequence = ++requestSequence
+  loading.value = true
+  try {
+    const rows = await api<RoleRecord[]>(rolesPath())
+    if (sequence !== requestSequence) return
+    // 平台目录是全量角色列表，这里只保留当前应用范围的角色。
+    roles.value = isPlatform.value
+      ? rows.filter(role => role.application_id === props.application?.id)
+      : rows
+    // 上报角色数给父级概览统计条
+    emit('stats', roles.value.length)
+  } catch (error) {
+    if (sequence === req
