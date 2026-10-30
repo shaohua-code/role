@@ -332,7 +332,7 @@ watch(open, value => {
   <component
     :is="embedded ? 'div' : 'a-modal'"
     v-bind="embedded ? { class: 'is-embedded' } : { open, title: `配置角色权限${roleName ? `：${roleName}` : ''}`, width: '880px', footer: null }"
-    @update:open="value => open = value"
+    @update:open="(value: boolean) => open = value"
   >
     <a-spin :spinning="loading">
       <div class="grant-layout">

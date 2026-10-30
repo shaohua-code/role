@@ -6,7 +6,7 @@ metadata:
 ---
 Admin UI changes must follow docs/ui-design-system.md (reuse shared components; folder/index layout; related files in one folder).
 
-**2026-10-29 workspace application-role IA:** Retired 应用角色与成员 nav; `/application-roles` redirects to application workspace. Role row opens 应用权限 (resource codes + resource tree + data scope) and 配置成员. Members list accepts `role_id`. Resource tree always uses `/admin`. Verification recorded in 项目总览. No `--更新`, no migration, no DeerFlow.
+**2026-10-29 workspace application-role IA:** Retired 应用角色与成员 nav; `/application-roles` redirects to application workspace. Role row opens 应用权限 (resource codes + resource tree + data scope) and 配置成员. Members list accepts `role_id`. Resource tree always uses `/admin`. Isolated unittest 48/48; `npm run build` exit 0. Browser: sidebar/menu/drawer tabs checked; member bind write not exercised. No `--更新`, no migration, no DeerFlow.
 
 **2026-10-29 preset role grants by level:** L1/L3/L2M/L2 can edit preset platform roles at their level or below; cannot edit upward templates or grant codes they do not hold. Isolated unittest 44/44; `npm run build` exit 0. Browser login walkthrough not run.
 

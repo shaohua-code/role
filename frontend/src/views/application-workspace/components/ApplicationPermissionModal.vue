@@ -68,12 +68,6 @@ const DATA_SCOPE_OPTIONS = [
   { value: 'organization_tree', label: '所属组织及下级' },
   { value: 'selected_organizations', label: '指定组织' },
 ]
-
-const paneOptions = [
-  { label: '资源权限', value: 'resource' },
-  { label: '数据权限', value: 'data' },
-]
-
 const grantReady = computed(() => Boolean(props.catalogPath && props.grantsPath && props.roleId))
 
 async function loadDataScopes(): Promise<void> {
@@ -181,53 +175,52 @@ watch(activePane, pane => {
     :width="720"
     :destroy-on-close="true"
   >
-    <div class="flex flex-col gap-4">
-      <a-segmented v-model:value="activePane" block :options="paneOptions" />
-      <p class="m-0 text-xs text-[var(--color-text-muted)]">
-        资源权限含权限编码与业务端菜单树，各自保存；数据权限沿用原数据范围，按已挂编码配置。
-      </p>
-
-      <div v-show="activePane === 'resource'" class="flex flex-col gap-4">
-        <section class="flex flex-col gap-3 rounded-lg border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
-          <div class="flex flex-col gap-1">
-            <h3 class="m-0 text-sm font-medium text-[var(--color-text-primary)]">权限编码</h3>
-            <p class="m-0 text-xs text-[var(--color-text-muted)]">勾选你看得见的租户 / 应用管理码与本应用业务码。</p>
-          </div>
-          <RolePermissionGrantModal
-            v-if="open && grantReady"
-            :open="true"
-            embedded
-            :role-id="roleId"
-            :role-name="roleName"
-            :lock-authority-codes="false"
-            role-kind=""
-            :role-namespace="roleNamespace"
-            :catalog-path="catalogPath"
-            :grants-path="grantsPath"
-            :disable-iam-codes="false"
-            @saved="onGrantsSaved"
-          />
-        </section>
-        <section class="flex flex-col gap-3 rounded-lg border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
-          <div class="flex flex-col gap-1">
-            <h3 class="m-0 text-sm font-medium text-[var(--color-text-primary)]">资源树</h3>
-            <p class="m-0 text-xs text-[var(--color-text-muted)]">勾选该角色可见的菜单、按钮与数据规则；保存为全量替换。</p>
-          </div>
-          <RoleResourceGrantModal
-            v-if="open && applicationId && roleId"
-            :open="true"
-            embedded
-            :application-id="applicationId"
-            :role-id="roleId"
-            :role-name="roleName"
-            @saved="emit('saved')"
-          />
-        </section>
-      </div>
-
-      <div v-show="activePane === 'data'" class="flex flex-col gap-4">
+    <a-tabs v-model:activeKey="activePane" size="small">
+      <a-tab-pane key="resource" tab="资源权限">
+        <div class="flex flex-col gap-4 pt-1">
+          <p class="m-0 text-xs text-[var(--color-text-muted)]">
+            权限编码与业务端菜单树各自保存，互不影响。
+          </p>
+          <section class="flex flex-col gap-3 rounded-lg border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+            <div class="flex flex-col gap-1">
+              <h3 class="m-0 text-sm font-medium text-[var(--color-text-primary)]">权限编码</h3>
+              <p class="m-0 text-xs text-[var(--color-text-muted)]">勾选你看得见的租户 / 应用管理码与本应用业务码。</p>
+            </div>
+            <RolePermissionGrantModal
+              v-if="open && grantReady"
+              :open="true"
+              embedded
+              :role-id="roleId"
+              :role-name="roleName"
+              :lock-authority-codes="false"
+              role-kind=""
+              :role-namespace="roleNamespace"
+              :catalog-path="catalogPath"
+              :grants-path="grantsPath"
+              :disable-iam-codes="false"
+              @saved="onGrantsSaved"
+            />
+          </section>
+          <section class="flex flex-col gap-3 rounded-lg border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+            <div class="flex flex-col gap-1">
+              <h3 class="m-0 text-sm font-medium text-[var(--color-text-primary)]">资源树</h3>
+              <p class="m-0 text-xs text-[var(--color-text-muted)]">勾选该角色可见的菜单、按钮与数据规则；保存为全量替换。</p>
+            </div>
+            <RoleResourceGrantModal
+              v-if="open && applicationId && roleId"
+              :open="true"
+              embedded
+              :application-id="applicationId"
+              :role-id="roleId"
+              :role-name="roleName"
+              @saved="emit('saved')"
+            />
+          </section>
+        </div>
+      </a-tab-pane>
+      <a-tab-pane key="data" tab="数据权限">
         <a-spin :spinning="loadingDataScopes">
-          <div class="flex flex-col gap-3">
+          <div class="flex flex-col gap-3 pt-1">
             <p class="m-0 text-xs text-[var(--color-text-muted)]">
               数据范围按同权限多角色取并集；未配置有效范围的权限默认拒绝访问。
             </p>
@@ -266,7 +259,7 @@ watch(activePane, pane => {
             </div>
           </div>
         </a-spin>
-      </div>
-    </div>
+      </a-tab-pane>
+    </a-tabs>
   </a-drawer>
 </template>

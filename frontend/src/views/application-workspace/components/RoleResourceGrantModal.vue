@@ -171,7 +171,7 @@ watch(open, visible => {
     v-bind="embedded ? {} : { open, title: '配置资源权限', okText: '保存授权', cancelText: '取消', confirmLoading: saving, width: 560 }"
     @ok="saveAssign"
     @cancel="open = false"
-    @update:open="value => open = value"
+    @update:open="(value: boolean) => open = value"
   >
     <div class="flex flex-col gap-3">
       <a-alert v-if="!embedded" type="info" show-icon class="mb-0"
