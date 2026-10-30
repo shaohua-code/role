@@ -1,5 +1,7 @@
 # 后端技术、目录与接口说明
 
+活文档：[产品需求](../docs/产品需求.md) · [应用对接](../docs/应用对接.md) · [部署与运维](../docs/部署与运维.md) · [项目启动](../docs/项目启动.md)。历史见 [CHANGELOG.md](../CHANGELOG.md)。
+
 **2026-10-29 P405：** 平台/应用权限分层。新增 `apps.admin` 模板；`GET /admin/permissions` 只出管理面码；绑应用角色自动补 `app.member`；`POST /admin/roles` 放宽到 L1/L3。创建/删除应用仍仅 L1/L3。无迁移。
 
 **2026-10-29 P404：** 四级可见范围收口。创建/删除应用仅 L1/L3；`GET /admin/permissions` 按操作者级别过滤；L2 角色/用量/尽力审计仅钉住应用；L3 限本租户。无迁移。
@@ -32,7 +34,7 @@
 
 **2026-10-14 P284：** verify-local.ps1 在随机隔离 PostgreSQL 测试库运行后端完整套件 169/169 通过，测试库迁移到 head 并自动清理，未触及 IAM 开发库。当前开发库 0021_resume_wallet_perms、源码 head 0031_model_usage_reconciliation、readiness 503；本轮未运行目标库迁移或更改后端源码。
 
-**本地迁移操作入口：** [快速启动指南](../docs/快速启动指南.md)现列出版本核对、受保护备份、隔离恢复演练、迁移授权及迁移后复核顺序；本次仅改文档，未运行目标库迁移或后端测试。
+**本地迁移操作入口：** 最短启动见 [项目启动](../docs/项目启动.md)；备份、迁移授权与回退见 [部署与运维](../docs/部署与运维.md)。
 
 **2026-10-14 DeerFlow B04：** 后 104 文件切片 **2,368 passed、2 failed、86 skipped、4 warnings**（通知预算修复前）；扩展管理器、通知生命周期、API pin 定向回归 **126 passed、40 skipped**，Ruff check/format 通过。缺少 `uv` 的 38 个 manager 集成用例现显式 skip；剩余 package metadata 为 `0.2.16`，源码/lock 为 `0.2.18`，后切片未在最终修复后重跑。完整快照仍是历史 17,062/142/349/3/0。用户报告 IAM UI 数据库待迁移，本轮未运行 migration 或改 quota。
 

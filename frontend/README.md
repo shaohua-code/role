@@ -12,8 +12,7 @@
 
 ## UI 设计规范
 
-- 完整规范：[UI 设计系统](../docs/ui-design-system.md)
-- 验收清单：[checklist](../docs/ui-design-system-checklist.md)
+- 完整规范与验收要点：[产品需求](../docs/产品需求.md) 第 9 节。
 - 新页面必须套 List / Detail / Settings 模板；禁止新增裸 hex 色值。
 - **通用组件优先**：有则复用，禁止重复造轮子。
 - **目录约定**：`文件夹/index` 写法；有关联关系的文件放同一文件夹。

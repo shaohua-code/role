@@ -4,7 +4,7 @@ description: Maintain and develop the unified identity and access management pla
 metadata:
   short-description: Develop and maintain IAM project knowledge
 ---
-Admin UI changes must follow docs/ui-design-system.md (reuse shared components; folder/index layout; related files in one folder).
+Admin UI changes must follow the UI hard rules in docs/产品需求.md (reuse shared components; folder/index layout; related files in one folder).
 
 **2026-10-29 workspace application-role IA:** Retired 应用角色与成员 nav; `/application-roles` redirects to application workspace. Role row opens 应用权限 (resource codes + resource tree + data scope) and 配置成员. Members list accepts `role_id`. Resource tree always uses `/admin`. Isolated unittest 48/48; `npm run build` exit 0. Browser: sidebar/menu/drawer tabs checked; member bind write not exercised. No `--更新`, no migration, no DeerFlow.
 
@@ -252,20 +252,18 @@ Superseded historical note (Knowledge Base IAM integration was removed on 2026-1
 
 Current delegated-admin slice: `api/v1/tenant_admin.py` mounts `/api/v1/tenant-admin/*` and reuses organization and OAuth application routers. `services/admin_authorization.py` and `evaluate_access` authorize each target tenant/application. Organization/assignment/data-scope APIs use `iam.organization.read/manage`. Application permissions `iam.application.read/manage/secret.rotate` may be granted tenant-wide or through a role bound to one `Role.application_id`; directory queries filter apps in bulk and each write rechecks the shared evaluator. Creating a new application requires tenant-wide manage because there is no existing application context; rotating a secret requires separate `secret.rotate`, even when manage is granted. Trusted/silent-authorization changes remain platform-admin-only. The UI displays per-application operations from the server response. A user may discover their own memberships but this must not expose the tenant member directory. Alembic `0017_tenant_org_admin_permissions`, `0018_tenant_application_admin_permissions` and `0019_knowledge_core_permissions` seed codes only and have not been applied; the confirmed local DB revision is `0016_permission_status`; revisions `0017`–`0021` remain pending.
 
-- [Product PRD](../../../docs/产品需求.md): current requirements, scope, acceptance criteria, and roadmap.
-- [Code architecture](../../../docs/技术架构与接入.md): separate frontend/backend project boundaries, current module map, and migration path for legacy modules.
+- [产品需求](../../../docs/产品需求.md): current requirements, permission model, IA, UI hard rules, and acceptance criteria.
+- [应用对接](../../../docs/应用对接.md): future business OIDC/SDK/resource-tree contract; this phase does not run live integration.
+- [部署与运维](../../../docs/部署与运维.md): backup, migration authorization, production publish; never claim production DR is verified until exercised.
+- [项目启动](../../../docs/项目启动.md): local Compose shortest path.
 - [System overview](../../../README.md): system boundaries, architecture, integrations, and decisions.
 - [Frontend guide](../../../frontend/README.md): Vue stack, structure, conventions, and frontend behavior.
 - [Backend guide](../../../backend/README.md): Python stack, structure, APIs, persistence, and security boundaries.
 - [Change log](../../../CHANGELOG.md): dated, user-visible project changes.
-- [Single-pilot integration plan](../../../docs/技术架构与接入.md): current acceptance scope is DeerFlow only; AI Resume and Knowledge Base IAM details above their dated cleanup notes are historical. DeerFlow auto-provisions first-time OIDC users as ordinary users; request-level route/model-catalog/sandbox-sync, Agent model/tool checks, project data scopes, and scheduled-task authorization use server-held vault capabilities. Scheduled runs revalidate active owner/grants before admission and queued launch, pausing and cancelling queued work on denial. Provider/key/DB setup, official application/permission mapping, upstream revoke, adapter image distribution, target migration, and live acceptance remain open. Keep Gateway `resolve_principal` as the only trusted product identity.
-- [UI review](../../../docs/验收记录.md): browser-visible review evidence, responsive observations, and pending console visual acceptance. Keep source review distinct from browser verification.
-- [Operations runbook](../../../docs/部署与运维.md): development behavior, authored-but-unverified production Compose startup/migration gates, manual backup/restore steps, and production operational gaps. Never claim production deployment, backup, or disaster recovery is verified/automated until run against the deployment environment and exercised.
-- [Model gateway decision](../../../docs/技术架构与接入.md): user-approved choice is to keep uncertain post-Provider reservations pending for administrator reconciliation, with no automatic max-charge or expiry release. Other retention, failure, load and production activation decisions remain open; source implementation is not deployed until migration and E2E verification.
 
 ## Workflow
 
-1. Read the PRD and relevant technical guides before changing behavior. For cross-stack or exact `--更新` work, reconcile the PRD, architecture, root README, frontend guide, backend guide, integration plan, operations runbook, model gateway decision, UI review, and this Skill against the actual source.
+1. Read docs/产品需求.md and the other living manuals (应用对接 / 部署与运维 / 项目启动) before changing behavior. For cross-stack or exact `--更新` work, reconcile those four docs, root README, frontend/backend guides, and this Skill against the actual source.
 2. Keep implementation aligned with the PRD. When requirements change, update the PRD before or alongside implementation and revise acceptance criteria or roadmap as needed.
 3. Every development execution must update `frontend/README.md`, `backend/README.md`, root `README.md`, and `docs/产品需求.md` to reflect the resulting project state. Keep edits concise and factual; do not churn unchanged sections.
 4. Append a dated entry to `CHANGELOG.md` for each execution that changes project artifacts. State what changed and any verification or known limitation.
