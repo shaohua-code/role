@@ -1,5 +1,40 @@
 # 变更日志
 
+## 2026-10-30 平台资源权限树 + 数据权限
+
+目录和挂码都改成两个 Tab。资源权限树与现网侧栏同形（运营总览 / 身份与组织 / 应用与权限 / 高级管理 / 平台治理 / 审计与验证），菜单下按映射挂按钮和 27 个接口字符串；数据权限单独一棵树，管理面接口不进这里。新增 `menu.model_usage`。`permissions.kind` 接到 ORM 与创建接口。非 L1 路由认勾到的接口码（五级模板仍可按角色 key 回退）；L1 带上全部菜单/按钮；侧栏只认 `menu.*`，写按钮只认 `button.*`。未 migrate，未改五级模板规格，未动 DeerFlow / 应用工作台业务资源树。
+
+- **验证：** 容器 unittest `tests.test_permission_tree` 9/9 + `tests.test_p405_layering` 28/28 + `tests.test_role_guards` 5/5 + `tests.test_permission_namespace` 11/11 **OK**（资源树侧栏形、菜单下挂按钮/接口、自定义角色只挂 `menu.users`+`org.member.read` 能过读、无码 403）。宿主机 `npm run build`（vue-tsc + Vite）exit 0。浏览器 L1：目录两 Tab；资源树与侧栏同形（含模型用量）；新建弹窗上级名称「运营总览」、上级编码 `menu.overview` 置灰；数据 Tab 空态「还没有数据权限叶子」。开发库幂等补种 `menu.model_usage`（created=1），未重建租户模板。自定义角色登录走查未做（隔离测试已覆盖）；未对超管账号跑破坏性 403。
+
+## 2026-10-30 开发库只留一个平台超级管理员
+
+按授权对开发 Compose 库清角色，方便自行重新配权。先备份 `D:\backup\iam-postgres\iam-postgres-20261030T054910Z-77db512a.dump`（SHA-256 前缀 `3a5860af`）。未改种子 / 开通应用预置代码。生产 Compose 未在跑。
+
+- **清理：** 删除 18 个角色（各租户 `tenant.admin`、各应用 `app.admin`/`app.member`、自定义角色）；邀请 0、`registration_role_id` 0；bump 成员 12。剩余 1 行 `platform.admin`，挂码 53（27 接口 + 26 菜单/按钮），引导超管仍绑定。
+- **验证：** `/api/v1/ready` 200。浏览器登录后「平台角色」共 1 条、53 项；侧栏 L1 菜单仍在；「＋ 新建平台角色」「＋ 新建用户」可见。未点保存改授权。未跑恢复演练。新建租户/应用或 `seed-greenfield` 仍会把模板再生出来。
+
+## 2026-10-30 四类树开发库走查
+
+迁移与种子后用 `admin@example.com` 登录 `http://localhost:5175` 走查。未改授权、未新建权限码、未跑独立授权 403（破坏性）。
+
+- **目录页：** 统计 56 / 菜单 13 / 按钮 13 / 接口 30 / 数据 0。四类筛选芯片与五域芯片在。树可见「菜单 → 工作台 → 运营总览 `menu.overview`」等叶子。侧栏 L1 菜单齐全（运营总览、组织/应用工作台、用户管理、成员邀请、平台角色、权限编码、用户组、租户管理、登录主题、模型治理、模型用量、鉴权模拟、审计日志）。页脚「服务正常」。
+- **从节点新建：** 「菜单」根「新建」打开弹窗，提示「上级前缀锁定不可改」；前缀 `menu.` 置灰；后段可填；完整编码预览 `menu.`。取消未创建。
+- **挂码弹窗：** 平台超级管理员（53 项）四类计数 菜单 13 / 按钮 13 / 数据 0 / 接口 27；树勾选 `menu.overview` 等；筛「按钮」可见 `button.users.manage` 等；独立授权提示在。租户二「租户管理员」（20 项）仅接口 20，筛「菜单」空（该实例未吃到菜单/按钮种子；L3 挂码仍隐藏 platform 域）。预览/保存未点。
+- **写按钮：** 平台角色「＋ 新建平台角色」、用户管理「＋ 新建用户」对 L1 可见。
+- **未跑：** 只给菜单不给接口的 403；`map-data-scope-codes`（数据叶子仍 0）。
+
+## 2026-10-30 开发库升级到 0005_permission_kind
+
+用户授权后对开发 Compose 库执行迁移。先备份 `D:\backup\iam-postgres\iam-postgres-20261030T042753Z-b8c28b8f.dump`（SHA-256 前缀 `9b86a489`），隔离恢复演练通过（revision `0004_owner_backchannel`，演练库已删）。`--build` 因 Docker Hub EOF 失败，改用现有 API 镜像 + 挂载的 migrations。`alembic upgrade`：`0004_owner_backchannel` → `0005_permission_kind`。随后幂等 `seed-greenfield` 新增 26 条菜单/按钮码，并对新行补回填 `kind`。
+
+- **结果：** `alembic current` = `heads` = `0005_permission_kind`。`/api/v1/ready` 200，api/console/postgres healthy。`permissions.kind` 计数：menu 13 / button 13 / api 30 / data 0。未跑 `alembic downgrade`。未跑 `map-data-scope-codes`（尚无 `*.scope.*` 业务叶子）。
+
+## 2026-10-30 权限编码改成四类树
+
+高级管理「权限编码」从扁平表改为菜单 / 按钮 / 数据权限 / 接口四棵树。现有 27 个五域码保留为接口层字符串；新增独立 `menu.*` / `button.*`；强制范围的业务码自动挂 5 个 `*.scope.*` 数据叶子。`GET /admin/permissions/tree` 返回树；挂码弹窗共用同一棵树，勾选独立（只给菜单不给接口会 403）。侧栏 any-of `menu.*` 与旧接口码；页内写按钮 any-of `button.*` 与旧写码。从节点新建时上级前缀锁定置灰。迁移 `0005_permission_kind` 已入库、**未对开发库执行**。DeerFlow 未接入，本轮未改。
+
+- **验证：** 容器 unittest `tests.test_permission_tree` **8/8 OK**（四类树形状、L1 含 `menu.tenants`、L2/L3 无该码、业务码缺数据叶子 deny、数据码/映射后 allow）。宿主机 `npm run build`（vue-tsc + Vite）exit 0。开发库随后已 migrate + seed，登录走查见上条。
+
 ## 2026-10-30 用户配角色穿梭框改中文名
 
 「配置租户角色」穿梭框列表改为展示角色中文名称；应用角色附带应用名。搜索框文案改为「搜索角色名称」。仍可用英文标识搜索。

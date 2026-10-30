@@ -13,7 +13,7 @@ from app.db.session import get_db_session
 from app.models.identity import Tenant, User
 from app.models.model_catalog import ModelCatalog
 from app.schemas.models import ModelCatalogCreate, ModelCatalogStatusUpdate, ModelCatalogUpdate
-from app.services.rbac_guards import ensure_roles
+from app.services.rbac_guards import ensure_codes, ensure_roles
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(prefix="/models", tags=["模型目录"])
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/models", tags=["模型目录"])
 def list_models(tenant_id: UUID | None = None, actor: User = Depends(current_user),
                 db: Session = Depends(get_db_session)) -> list[dict]:
     """列出模型配置摘要；凭证引用只转换为是否已配置，不向控制台回传。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    ensure_codes(actor, db, "ops.model.read", tenant_id=tenant_id, detail="缺少管理权限：ops.model.read")
     statement = select(ModelCatalog).order_by(ModelCatalog.created_at.desc()).limit(500)
     if tenant_id:
         statement = statement.where(ModelCatalog.tenant_id == tenant_id)
@@ -61,7 +61,7 @@ def create_model(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """目录只接收 Secret Manager 引用；不能把 Provider API Key 放入业务表。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
+    ensure_codes(actor, db, "ops.model.manage", detail="缺少管理权限：ops.model.manage")
     if not db.get(Tenant, body.tenant_id):
         raise HTTPException(404, "租户不存在")
     if body.endpoint_url and not valid_redirect_uri(body.endpoint_url):
@@ -97,7 +97,7 @@ def update_model(
     row = db.get(ModelCatalog, model_id)
     if not row:
         raise HTTPException(404, "模型不存在")
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
+    ensure_codes(actor, db, "ops.model.manage", detail="缺少管理权限：ops.model.manage")
 
     # 未提交字段保持不变；显式 null 可清除可选值或限额。
     # Secret Manager 引用不会进入审计详情或 API 响应，限额变更只审计字段名。
@@ -137,7 +137,7 @@ def set_model_status(
     row = db.scalar(select(ModelCatalog).where(ModelCatalog.id == model_id).with_for_update())
     if not row:
         raise HTTPException(404, "模型不存在")
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
+    ensure_codes(actor, db, "ops.model.manage", detail="缺少管理权限：ops.model.manage")
     if row.status != body.expected_status:
         raise HTTPException(409, "模型状态已被其他管理员修改，请刷新后重试")
     if row.status == body.status:
@@ -163,7 +163,7 @@ def delete_model(
     row = db.scalar(select(ModelCatalog).where(ModelCatalog.id == model_id).with_for_update())
     if not row:
         raise HTTPException(404, "模型不存在")
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
+    ensure_codes(actor, db, "ops.model.manage", detail="缺少管理权限：ops.model.manage")
     usage_exists = db.scalar(select(ModelUsageEvent.id).where(ModelUsageEvent.model_id == row.id).limit(1))
     reservation_exists = db.scalar(select(ModelUsageReservation.id).where(ModelUsageReservation.model_id == row.id).limit(1))
     if usage_exists or reservation_exists:

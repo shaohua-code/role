@@ -6,6 +6,10 @@ metadata:
 ---
 Admin UI changes must follow the UI hard rules in docs/产品需求.md (reuse shared components; folder/index layout; related files in one folder).
 
+**2026-10-30 resource + data permission tabs:** Catalog/grant UI is 资源权限 (sidebar-shaped menus with nested buttons/APIs) + 数据权限. New `menu.model_usage`. Nav/buttons no longer any-of legacy APIs. Non-L1 admin routes use `ensure_codes`. Isolated tests + `npm run build` + browser walkthrough in CHANGELOG. No `--更新`, no migrate, no DeerFlow.
+
+**2026-10-30 permission four-kind tree:** Catalog was 菜单/按钮/数据权限/接口. Keep 27 API strings; add `menu.*`/`button.*`; business row-scope is `*.scope.*` data leaves. Dev DB migrated 0004 → `0005_permission_kind`. Superseded by resource+data tabs above.
+
 **2026-10-30 app role member picker:** 配置成员 uses 增加成员 modal (tenant roster, multi-select). New `GET /tenant-admin/applications/{id}/member-candidates` gated by application admin access. Bind still PUT email. Isolated unittest 28/28; `npm run build` exit 0. Browser member-picker write not walked. No `--更新`, no migration, no DeerFlow.
 
 **2026-10-30 workspace app/org directory IA:** Retired 应用管理 / 组织管理 nav; `/applications` and `/organizations` redirect to workspaces. Create from left-tree `+`; edit/OIDC/secret/status/owner from tree-node 更多 menus (no 设置 Tab). Advanced admin keeps 平台角色 / 权限编码 / 用户组. Isolated unittest not run; `npm run build` pending this round. No `--更新`, no migration, no DeerFlow.

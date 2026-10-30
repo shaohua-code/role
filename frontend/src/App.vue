@@ -127,7 +127,7 @@ const platformTenantOptions = computed(() => tenants.value.map(tenant => ({
   name: String(tenant.name),
   slug: typeof tenant.slug === 'string' ? tenant.slug : undefined,
 })))
-// 跨租户并集的管理码集合；菜单按 requiredPermissions(any-of) 裁剪，不再硬编码 key 判断。
+// 跨租户并集的管理码集合；侧栏只认对应 menu.*。
 const heldCodes = computed(() => capabilities.value ? allCodes(capabilities.value) : new Set<string>())
 // 绿场统一导航（11 号文档 §6.3）：平台与租户模式共用 NAV_ITEMS + 能力过滤。
 // Wave 1 对齐 user-centent：「应用与权限」组以应用工作台为主入口。

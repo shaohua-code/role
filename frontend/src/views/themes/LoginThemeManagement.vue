@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
+import { cachedHasAny } from '@/api/capabilities'
 import { resolveThemeAssetUrl, themeCardShadow, themeChoice, themeFontFamily, themeHex, themeNumber, themeRgba } from '@/styles/theme'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminColorField from '@/components/AdminColorField.vue'
@@ -57,6 +58,8 @@ const emit = defineEmits<{
   'update:selectedApplicationId': [id: string]
   navigate: [page: 'application_workspace']
 }>()
+
+const canManageThemes = computed(() => cachedHasAny(['button.themes.manage']))
 
 function createDefaultTheme(): ThemeConfig {
   return {
@@ -417,7 +420,7 @@ async function saveTheme(publish: boolean): Promise<void> {
           </div>
         </details>
         <p class="theme-help">为安全起见，预览和发布仅接受 HTTPS/站内图片、颜色和固定样式预设；不会执行上传脚本、HTML 或任意 CSS。</p>
-        <a-space>
+        <a-space v-if="canManageThemes">
           <a-button :loading="themeSaving" :disabled="!selectedApplicationId" @click="saveTheme(false)">保存草稿</a-button>
           <a-button type="primary" :loading="themeSaving" :disabled="!selectedApplicationId" @click="saveTheme(true)">发布主题</a-button>
         </a-space>
@@ -471,7 +474,7 @@ async function saveTheme(publish: boolean): Promise<void> {
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'actions'">
               <!-- G17：恢复历史版本——恢复为草稿不改变线上；恢复并发布立即生效。 -->
-              <a-space :size="0">
+              <a-space v-if="canManageThemes" :size="0">
                 <a-button type="link" size="small" :loading="restoringVersionId === record.id"
                   @click="restoreThemeVersion(record, false)">恢复为草稿</a-button>
                 <a-button type="link" size="small" danger :loading="restoringVersionId === record.id"

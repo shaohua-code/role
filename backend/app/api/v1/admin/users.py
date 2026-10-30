@@ -20,7 +20,7 @@ from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRe
 from app.schemas.auth import AdminPasswordReset, AdminUserCreate, UserStatusUpdate
 from app.services.backchannel_logout import deliver_backchannel_logout, deliver_for_user
 from app.services.effective_roles import ancestor_group_cte, authorized_role_ids_statement
-from app.services.rbac_guards import ensure_roles
+from app.services.rbac_guards import ensure_codes, ensure_roles
 from app.services.role_provisioning import L1_ROLE_KEY, L2_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(tags=["用户管理"])
@@ -30,7 +30,7 @@ router = APIRouter(tags=["用户管理"])
 def list_user_sessions(user_id: UUID, actor: User = Depends(current_user),
                       db: Session = Depends(get_db_session)) -> dict:
     """列出仍可续期的管理台与 OIDC 会话，不暴露任何 refresh token 摘要。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.read）")
+    ensure_codes(actor, db, "platform.account.read", detail="缺少管理权限：platform.account.read")
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "用户不存在")
@@ -99,7 +99,7 @@ def revoke_user_session(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """撤销一个用户会话并在同一事务写入管理审计。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.manage）")
+    ensure_codes(actor, db, "platform.account.manage", detail="缺少管理权限：platform.account.manage")
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "用户不存在")
@@ -258,7 +258,7 @@ def get_user_profile(user_id: UUID, actor: User = Depends(current_user),
     PRD IAM-USER-006 要求的一体详情由本端点承载，前端详情抽屉单次拉取。
     G28 追加有效权限码并集与来源（直授 / 用户组）。
     """
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.read）")
+    ensure_codes(actor, db, "platform.account.read", detail="缺少管理权限：platform.account.read")
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "用户不存在")
@@ -309,7 +309,7 @@ def get_user_profile(user_id: UUID, actor: User = Depends(current_user),
 def list_users(q: str | None = None, actor: User = Depends(current_user),
                db: Session = Depends(get_db_session)) -> list[dict]:
     """按邮箱/名称模糊查询全局用户目录与租户数（仅 L1）；不暴露凭证信息。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.read）")
+    ensure_codes(actor, db, "platform.account.read", detail="缺少管理权限：platform.account.read")
     stmt = select(User).order_by(User.created_at.desc()).limit(500)
     if q: stmt = stmt.where(User.email.ilike(f"%{q[:100]}%") | User.display_name.ilike(f"%{q[:100]}%"))
     return [{"id": str(u.id), "email": u.email, "display_name": u.display_name, "status": u.status,
@@ -320,7 +320,7 @@ def list_users(q: str | None = None, actor: User = Depends(current_user),
 @router.post("/users", status_code=201)
 def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """创建租户成员时要求明确租户；初始密码仅从受保护管理请求进入，不在响应中回显。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.manage）")
+    ensure_codes(actor, db, "platform.account.manage", detail="缺少管理权限：platform.account.manage")
     if not db.get(Tenant, body.tenant_id): raise HTTPException(404, "租户不存在")
     email = str(body.email).casefold()
     if db.scalar(select(User.id).where(User.email == email)): raise HTTPException(409, "邮箱已存在")
@@ -343,7 +343,7 @@ def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(c
 def set_user_status(user_id: UUID, body: UserStatusUpdate, request: Request,
                     actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """全局锁/停用会使此前所有 IAM/OIDC 身份凭证失效；解锁不会恢复旧会话。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.manage）")
+    ensure_codes(actor, db, "platform.account.manage", detail="缺少管理权限：platform.account.manage")
     row = db.scalar(select(User).where(User.id == user_id).with_for_update())
     if not row: raise HTTPException(404, "用户不存在")
     if row.status != body.expected_status:
@@ -389,7 +389,7 @@ def reset_user_password(user_id: UUID, body: AdminPasswordReset, request: Reques
 
     兜底 SMTP 故障时忘记密码用户的管理救济；本人必须走「验证当前密码」的自助通道。
     """
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.account.manage）")
+    ensure_codes(actor, db, "platform.account.manage", detail="缺少管理权限：platform.account.manage")
     if actor.id == user_id:
         raise HTTPException(400, "不能重置当前管理员自己的密码；请使用「修改密码」")
     row = db.scalar(select(User).where(User.id == user_id).with_for_update())

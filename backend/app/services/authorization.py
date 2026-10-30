@@ -143,16 +143,29 @@ def evaluate_access(body: AuthorizationCheck, user: User, db: Session, *, enforc
     # 只读取本次命中的角色策略，不能把其它角色的数据范围混入判定。
     matched_role_ids = {row.role_id for row in matching_grants}
     permission_id = matching_grants[0].permission_id
+    from app.services.permission_kinds import DATA_SCOPE_TYPES, data_scope_code
+
+    data_codes = [data_scope_code(body.permission_code, scope_type) for scope_type in DATA_SCOPE_TYPES]
+    data_rows = db.execute(
+        select(Permission.code)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .where(
+            RolePermission.role_id.in_(matched_role_ids),
+            Permission.code.in_(data_codes),
+            Permission.status == "active",
+        )
+    ).all()
+    scopes_from_codes = {row.code.rsplit(".", 1)[-1] for row in data_rows}
+
     policies = db.scalars(select(RoleDataScope).where(
         RoleDataScope.tenant_id == tenant_id,
         RoleDataScope.role_id.in_(matched_role_ids),
         RoleDataScope.permission_id == permission_id,
     )).all()
-    if not policies:
+    scopes = scopes_from_codes | {policy.scope_type for policy in policies}
+    if not scopes:
         record("data_scope", False, "data_scope_policy_missing")
         return finish(False, "data_scope_policy_missing")
-
-    scopes = {policy.scope_type for policy in policies}
     # 任一策略声明 tenant 范围即整租户放行，跳过组织/个人级过滤。
     if "tenant" in scopes:
         data_scope = {"mode": "any_of", "constraints": [{"kind": "tenant", "tenant_id": str(tenant_id)}]}

@@ -4,7 +4,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
@@ -57,7 +57,7 @@ let requestSequence = 0
 
 const isPlatform = computed(() => props.apiPrefix === '/admin')
 const canManage = computed(() => props.application?.can_manage === true
-  || (isPlatform.value && cachedHas('rbac.role.manage')))
+  || (isPlatform.value && cachedHasAny(['button.app_role.manage'])))
 const canCreate = computed(() => canManage.value && props.application?.status === 'active')
 
 const columns = [

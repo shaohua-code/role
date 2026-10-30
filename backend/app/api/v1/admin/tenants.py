@@ -15,7 +15,7 @@ from app.models.identity import Tenant, TenantMembership, User
 from app.models.oidc import OAuthRefreshToken
 from app.schemas.auth import TenantCreate, TenantKindUpdate
 from app.db.seed_greenfield import PLATFORM_TENANT_SLUG
-from app.services.rbac_guards import ensure_roles
+from app.services.rbac_guards import ensure_codes, ensure_roles
 from app.services.role_provisioning import L1_ROLE_KEY, provision_tenant_admin_role
 
 router = APIRouter(tags=["租户管理"])
@@ -32,7 +32,7 @@ def list_tenants(
 
     q/kind/status 为可选服务端过滤（管理台已有前端本地过滤，参数供深链与未来分页使用）。
     """
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.read）")
+    ensure_codes(actor, db, "platform.tenant.read", detail="缺少管理权限：platform.tenant.read")
     if kind not in (None, "organization", "consumer"):
         raise HTTPException(422, "kind 仅支持 organization 或 consumer")
     if status not in (None, "active", "disabled"):

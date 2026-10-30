@@ -68,26 +68,29 @@ export const NAV_GROUPS: NavGroupMeta[] = [
  * 主路径：组织/应用工作台 + 用户多角色。
  * 高级管理只留平台角色 / 权限编码 / 用户组；应用与组织的目录 CRUD 收口到对应工作台。
  */
+/**
+ * 侧栏只认对应 menu.*；页内写按钮只认 button.*。
+ */
 export const NAV_ITEMS: NavigationItem[] = [
-  { key: 'overview', icon: AppstoreOutlined, label: '运营总览', group: 'root', requiredPermissions: ['platform.overview.read'] },
+  { key: 'overview', icon: AppstoreOutlined, label: '运营总览', group: 'root', requiredPermissions: ['menu.overview'] },
 
-  { key: 'organization_workspace', icon: ApartmentOutlined, label: '组织工作台', group: 'identity', requiredPermissions: ['org.read', 'org.group.read'] },
-  { key: 'users', icon: UserOutlined, label: '用户管理', group: 'identity', requiredPermissions: ['platform.account.read', 'org.member.read'] },
-  { key: 'invitations', icon: MailOutlined, label: '成员邀请', group: 'identity', requiredPermissions: ['org.invite.manage'] },
+  { key: 'organization_workspace', icon: ApartmentOutlined, label: '组织工作台', group: 'identity', requiredPermissions: ['menu.organization_workspace'] },
+  { key: 'users', icon: UserOutlined, label: '用户管理', group: 'identity', requiredPermissions: ['menu.users'] },
+  { key: 'invitations', icon: MailOutlined, label: '成员邀请', group: 'identity', requiredPermissions: ['menu.invitations'] },
 
-  { key: 'application_workspace', icon: ApartmentOutlined, label: '应用工作台', group: 'access', requiredPermissions: ['app.read', 'rbac.app_role.read', 'rbac.role.read'] },
+  { key: 'application_workspace', icon: ApartmentOutlined, label: '应用工作台', group: 'access', requiredPermissions: ['menu.application_workspace'] },
 
-  { key: 'roles', icon: SafetyCertificateOutlined, label: '平台角色', group: 'advanced', requiredPermissions: ['rbac.role.read', 'rbac.app_role.read'] },
-  { key: 'permissions', icon: SafetyOutlined, label: '权限编码', group: 'advanced', requiredPermissions: ['rbac.permission.read'] },
-  { key: 'groups', icon: TeamOutlined, label: '用户组', group: 'advanced', requiredPermissions: ['org.group.read'] },
+  { key: 'roles', icon: SafetyCertificateOutlined, label: '平台角色', group: 'advanced', requiredPermissions: ['menu.roles'] },
+  { key: 'permissions', icon: SafetyOutlined, label: '权限编码', group: 'advanced', requiredPermissions: ['menu.permissions'] },
+  { key: 'groups', icon: TeamOutlined, label: '用户组', group: 'advanced', requiredPermissions: ['menu.groups'] },
 
-  { key: 'tenants', icon: BankOutlined, label: '租户管理', group: 'platform', requiredPermissions: ['platform.tenant.read'] },
-  { key: 'themes', icon: SkinOutlined, label: '登录主题', group: 'platform', requiredPermissions: ['ops.theme.manage'] },
-  { key: 'models', icon: DashboardOutlined, label: '模型治理', group: 'platform', requiredPermissions: ['ops.model.read'] },
-  { key: 'model_usage', icon: AuditOutlined, label: '模型用量', group: 'platform', requiredPermissions: ['ops.model.read'] },
+  { key: 'tenants', icon: BankOutlined, label: '租户管理', group: 'platform', requiredPermissions: ['menu.tenants'] },
+  { key: 'themes', icon: SkinOutlined, label: '登录主题', group: 'platform', requiredPermissions: ['menu.themes'] },
+  { key: 'models', icon: DashboardOutlined, label: '模型治理', group: 'platform', requiredPermissions: ['menu.models'] },
+  { key: 'model_usage', icon: AuditOutlined, label: '模型用量', group: 'platform', requiredPermissions: ['menu.model_usage'] },
 
-  { key: 'authorization_simulation', icon: ExperimentOutlined, label: '鉴权模拟', group: 'ops', requiredPermissions: ['ops.authz.simulate'] },
-  { key: 'audit', icon: FileSearchOutlined, label: '审计日志', group: 'ops', requiredPermissions: ['ops.audit.read'] },
+  { key: 'authorization_simulation', icon: ExperimentOutlined, label: '鉴权模拟', group: 'ops', requiredPermissions: ['menu.authz'] },
+  { key: 'audit', icon: FileSearchOutlined, label: '审计日志', group: 'ops', requiredPermissions: ['menu.audit'] },
 ]
 
 export const TENANT_MERGED_PAGES: Partial<Record<PageKey, PageKey>> = {

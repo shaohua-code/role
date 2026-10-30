@@ -3,7 +3,7 @@
 import { ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
+import { cachedHasAny, getCachedCapabilities } from '@/api/capabilities'
 
 export type OrganizationMoreAction = 'owner' | 'status' | 'delete'
 
@@ -46,7 +46,7 @@ const ownerUserId = ref<string | undefined>(undefined)
 const ownerMemberOptions = ref<{ value: string; label: string }[]>([])
 
 function canManageOrganization(organization: SettingsOrganization): boolean {
-  if (cachedHas('org.manage') && getCachedCapabilities()?.platform_admin) return true
+  if (cachedHasAny(['button.org.manage']) && getCachedCapabilities()?.platform_admin) return true
   return props.tenants.some(tenant => tenant.id === organization.tenant_id && tenant.can_manage_organizations === true)
 }
 

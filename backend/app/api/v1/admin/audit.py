@@ -13,7 +13,7 @@ from app.models.identity import AuditEvent, User
 from app.schemas.audit import AuditEventResponse, AuditSearchResponse
 from app.services.rbac_guards import (
     actor_has_tenant_admin,
-    ensure_roles,
+    ensure_codes,
     list_actor_management_tenant_ids,
     list_actor_pinned_application_ids,
 )
@@ -135,7 +135,7 @@ def list_audit(
     db: Session = Depends(get_db_session),
 ) -> list[AuditEventResponse]:
     """兼容旧调用方：保留最新记录数组响应和原有 limit/action 参数。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), detail="缺少管理角色（原 ops.audit.read）")
+    ensure_codes(actor, db, "ops.audit.read", detail="缺少管理权限：ops.audit.read")
     tenant_scope = list_actor_management_tenant_ids(actor, db)
     application_ids = None
     if tenant_scope is not None and not actor_has_tenant_admin(actor, db):
@@ -174,7 +174,7 @@ def search_audit(
     db: Session = Depends(get_db_session),
 ) -> AuditSearchResponse:
     """按精确字段及 ISO 8601 时间范围查询审计事件；action_prefix 支持类别前缀聚合。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), detail="缺少管理角色（原 ops.audit.read）")
+    ensure_codes(actor, db, "ops.audit.read", detail="缺少管理权限：ops.audit.read")
     tenant_scope = list_actor_management_tenant_ids(actor, db)
     application_ids = None
     if tenant_scope is not None and not actor_has_tenant_admin(actor, db):

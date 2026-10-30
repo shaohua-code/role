@@ -5,7 +5,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
@@ -49,7 +49,7 @@ const relationGroupId = ref('')
 const relationGroupName = ref('')
 let requestSequence = 0
 
-const canManage = computed(() => cachedHas('org.group.manage'))
+const canManage = computed(() => cachedHasAny(['button.groups.manage']))
 
 const columns = [
   { title: '用户组', dataIndex: 'name', key: 'name', width: 180, ellipsis: true },

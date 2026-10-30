@@ -61,6 +61,7 @@ class Permission(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active', 'disabled')", name="ck_permission_status"),
         CheckConstraint("surface IN ('management', 'business')", name="ck_permission_surface"),
+        CheckConstraint("kind IN ('menu', 'button', 'api', 'data')", name="ck_permission_kind"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -70,6 +71,8 @@ class Permission(Base):
     # 授权动作（如 read、run），与 resource_type 组成完整权限语义。
     scope: Mapped[str] = mapped_column(String(80), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))
+    # 四类：菜单 / 按钮 / 接口 / 数据。菜单下新建的按钮编码可继承 menu.* 前缀，必须以本列为准。
+    kind: Mapped[str] = mapped_column(String(20), default="api", server_default="api", nullable=False)
     # 目录项停用时保留角色授权关系和数据策略，避免丢失治理历史；判权只接受 active 项。
     status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
     # 管理面码与应用注册的业务码分面管理；绿场业务码默认强制数据范围，缺策略即拒绝。

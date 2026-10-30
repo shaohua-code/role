@@ -1,17 +1,26 @@
 <script setup lang="ts">
-// 角色挂码编辑弹窗（共享）：目录 + 当前通用授权加载、变更影响预览、确认保存。
-// 平台角色走 /admin/roles/{id}/permissions；应用角色走 /tenant-admin/.../roles/{id}/permissions，
-// 由 catalogPath / grantsPath 注入，角色管理页与应用工作台「角色」Tab 共用。
+// 角色挂码编辑弹窗：资源权限 / 数据权限两 Tab，勾选可授权节点。
 import { computed, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
 import { ExclamationCircleOutlined } from '@/plugins/icons'
-import { isManagementCode, PERMISSION_CLASSES, SCOPE_LEVEL_LABELS, SCOPE_LEVEL_ORDER, SCOPE_LEVEL_TIPS, permissionNamespace, resolvePermissionClass, resolvePermissionScope } from '@/utils/permissionGroups'
+import { isManagementCode, permissionNamespace, resolvePermissionScope } from '@/utils/permissionGroups'
 import { asPagedList } from '@/utils/paged'
+import ResourceIcon from '@/views/application-workspace/components/ResourceIcon.vue'
+import {
+  KIND_LABELS,
+  buildPermissionTrees,
+  filterPermissionTree,
+  flattenGrantable,
+  inferPermissionKind,
+  kindIconType,
+  relatedApiCodes,
+  type PermissionKind,
+  type PermissionTreeNode,
+} from '@/utils/permissionTree'
 
-interface PermissionRecord { id: string; code: string; description?: string | null; status: 'active' | 'disabled' }
+interface PermissionRecord { id: string; code: string; description?: string | null; status: 'active' | 'disabled'; catalog_namespace?: string; kind?: PermissionKind }
 interface PermissionGrant { permission_id: string; resource_id: string | null }
-/** 平台与应用两个预览接口的联合视图；差异字段全部可选。 */
 interface PermissionImpact {
   current_permission_ids: string[]
   grant_permission_codes: string[]
@@ -28,15 +37,10 @@ const props = withDefaults(defineProps<{
   roleName?: string
   catalogPath: string
   grantsPath: string
-  // 历史开关：禁止新增五域管理码。租户台/工作台现已改为看得见就能勾，默认 false。
   disableIamCodes?: boolean
-  // P405：授权权不再禁选；保留 prop 以免旧调用方报错。
   lockAuthorityCodes?: boolean
-  // P390 作用域收敛：按角色 kind 隐藏越域码组（'' = 不收敛，展示全量目录）
   roleKind?: '' | 'platform' | 'tenant' | 'application'
-  // 应用角色的业务码命名空间（编码首段匹配）；仅 roleKind='application' 时生效
   roleNamespace?: string
-  // 嵌进应用权限抽屉时去掉外层 Modal，避免抽屉里再套弹窗。
   embedded?: boolean
 }>(), {
   roleName: '',
@@ -47,8 +51,6 @@ const props = withDefaults(defineProps<{
   embedded: false,
 })
 
-// 平台角色模板按层级藏码：租户模板藏 L1 专属，应用管理员模板再藏租户治理码。
-// 自定义平台角色由调用方传入 platform/tenant/application；应用角色页传空字符串，只吃目录过滤。
 const HIDDEN_SCOPES_BY_KIND: Record<string, Set<string>> = {
   platform: new Set(),
   tenant: new Set(['platform', 'business']),
@@ -61,73 +63,93 @@ const open = defineModel<boolean>('open', { default: false })
 const loading = ref(false)
 const previewing = ref(false)
 const saving = ref(false)
-// 中文描述与编码并列展示：description 来自权限目录（授权弹窗主文案），code 保留可辨识性。
-const options = ref<{ label: string; code: string; description: string; value: string; scope: string; disabled?: boolean }[]>([])
+const catalogItems = ref<PermissionRecord[]>([])
 const selectedIds = ref<string[]>([])
 const impact = ref<PermissionImpact | null>(null)
 const impactPreviewKey = ref('')
+const searchText = ref('')
+const expandedKeys = ref<string[]>([])
+const initialGrantedIds = ref(new Set<string>())
+const activeTab = ref<'resource' | 'data'>('resource')
 
-// P388 分组展示（P393 起按作用域组）：组筛选（'all' = 全部）与组折叠状态，纯展示层不影响选择与保存。
-const scopeFilter = ref('all')
-const collapsedScopes = ref(new Set<string>())
-
-interface OptionItem { label: string; code: string; description: string; value: string; scope: string; disabled?: boolean }
-interface RenderSubGroup { namespace: string; options: OptionItem[] }
-interface RenderGroup { key: string; label: string; hint: string; count: number; subGroups: RenderSubGroup[] }
-
-/** 按两类口径（P395：平台编码 / 业务码）分桶；平台编码组内按层级起点序排，业务码组按命名空间二级分组。 */
-const groupedOptions = computed<RenderGroup[]>(() => {
-  const platformList: OptionItem[] = []
-  const businessList: OptionItem[] = []
-  for (const option of options.value) {
-    if (resolvePermissionClass(option.code) === 'platform-class') platformList.push(option)
-    else businessList.push(option)
+const optionsById = computed(() => new Map(catalogItems.value.map(item => [item.id, item])))
+const selectedCodeSet = computed(() => {
+  const codes = new Set<string>()
+  for (const id of selectedIds.value) {
+    const item = optionsById.value.get(id)
+    if (item) codes.add(item.code)
   }
-  // 平台编码组内按层级起点序（L1 专属 → L3 起 → L2 起）+ 编码字母序
-  platformList.sort((a, b) => {
-    const delta = (SCOPE_LEVEL_ORDER[resolvePermissionScope(a.code).key] ?? 99) - (SCOPE_LEVEL_ORDER[resolvePermissionScope(b.code).key] ?? 99)
-    return delta !== 0 ? delta : a.code.localeCompare(b.code)
-  })
-  const groups: RenderGroup[] = []
-  if (scopeFilter.value === 'all' || scopeFilter.value === 'platform-class') {
-    if (platformList.length) {
-      groups.push({
-        key: 'platform-class', label: '平台编码', hint: '平台统一管理的管理面码，四级管理员分层持有',
-        count: platformList.length, subGroups: [{ namespace: '', options: platformList }],
-      })
-    }
-  }
-  if (scopeFilter.value === 'all' || scopeFilter.value === 'business') {
-    if (businessList.length) {
-      // 业务码：按命名空间（编码首段）二级分组，保持目录顺序
-      const namespaces: string[] = []
-      const byNamespace = new Map<string, OptionItem[]>()
-      for (const option of businessList) {
-        const namespace = permissionNamespace(option.code)
-        if (!byNamespace.has(namespace)) {
-          byNamespace.set(namespace, [])
-          namespaces.push(namespace)
-        }
-        byNamespace.get(namespace)!.push(option)
-      }
-      groups.push({
-        key: 'business', label: '业务码', hint: '应用命名空间业务码，强制数据范围',
-        count: businessList.length,
-        subGroups: namespaces.map(namespace => ({ namespace, options: byNamespace.get(namespace)! })),
-      })
-    }
-  }
-  return groups
+  return codes
 })
 
-function toggleDomain(key: string): void {
-  const next = new Set(collapsedScopes.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  collapsedScopes.value = next
+const catalogTrees = computed(() => buildPermissionTrees(catalogItems.value.map(item => ({
+  id: item.id,
+  code: item.code,
+  description: item.description,
+  catalog_namespace: item.catalog_namespace,
+  status: item.status,
+  kind: item.kind,
+}))))
+
+const catalogTree = computed(() =>
+  activeTab.value === 'data' ? catalogTrees.value.data : catalogTrees.value.resource)
+
+const displayTree = computed(() => filterPermissionTree(catalogTree.value, searchText.value, []))
+
+const lockedIds = computed(() => {
+  const locked = new Set<string>()
+  if (!props.disableIamCodes) return locked
+  for (const item of catalogItems.value) {
+    if (isManagementCode(item.code) && !initialGrantedIds.value.has(item.id)) locked.add(item.id)
+  }
+  return locked
+})
+
+const checkableTree = computed(() => {
+  const mark = (nodes: PermissionTreeNode[]): Array<PermissionTreeNode & { disableCheckbox: boolean }> =>
+    nodes.map(node => ({
+      ...node,
+      disableCheckbox: !node.selectable || !node.code || lockedIds.value.has(node.key),
+      children: mark(node.children),
+    }))
+  return mark(displayTree.value)
+})
+
+function selectedCountForKind(kind: PermissionKind): number {
+  return selectedIds.value.filter(id => {
+    const item = optionsById.value.get(id)
+    return item ? (item.kind || inferPermissionKind(item.code)) === kind : false
+  }).length
 }
 
-// P389 双栏重构：勾选顺序追踪（摘要条「最近勾选」按此序展示）。
+const checkedState = computed(() => ({ checked: selectedIds.value, halfChecked: [] as string[] }))
+
+const leafIdSet = computed(() => new Set([
+  ...flattenGrantable(catalogTrees.value.resource),
+  ...flattenGrantable(catalogTrees.value.data),
+].map(node => node.key)))
+
+function asTreeNode(slotNode: PermissionTreeNode & { dataRef?: PermissionTreeNode; record?: PermissionTreeNode }): PermissionTreeNode {
+  return slotNode.dataRef || slotNode.record || slotNode
+}
+
+function onTreeCheck(info: string[] | { checked?: string[] }): void {
+  const keys = Array.isArray(info) ? info : (info.checked || [])
+  const currentGrantable = new Set(flattenGrantable(catalogTree.value).map(node => node.key))
+  const kept = selectedIds.value.filter(id => !currentGrantable.has(id))
+  selectedIds.value = [...kept, ...keys.filter(key => leafIdSet.value.has(key))]
+}
+
+
+function missingRelatedHint(code: string): string {
+  const related = relatedApiCodes(code)
+  if (!related.length) return ''
+  if (related.some(item => selectedCodeSet.value.has(item))) return ''
+  if (code.startsWith('menu.')) return '只勾菜单不勾接口时，侧栏能进页面，列表会 403'
+  if (code.startsWith('button.')) return '只勾按钮不勾接口时，按钮能点，写操作会 403'
+  return ''
+}
+
 const selectionOrder = ref<string[]>([])
 watch(selectedIds, now => {
   const nowSet = new Set(now)
@@ -137,40 +159,21 @@ watch(selectedIds, now => {
   }
 })
 
-const optionsByValue = computed(() => new Map(options.value.map(option => [option.value, option])))
-
-/** 已选摘要条：按勾选时间倒序的最近 6 个码 + 溢出数。 */
 const recentSelected = computed(() => {
   const recent = [...selectionOrder.value].reverse()
-    .map(id => optionsByValue.value.get(id))
-    .filter((option): option is OptionItem => Boolean(option))
+    .map(id => optionsById.value.get(id))
+    .filter((item): item is PermissionRecord => Boolean(item))
   return { items: recent.slice(0, 6), overflow: Math.max(0, recent.length - 6) }
 })
 
-/** 左栏两类导航（P395）：全部 / 平台编码 / 业务码（含该组已选数），仅列出当前目录存在的组。 */
-const domainNav = computed(() => {
-  const selectedSet = new Set(selectedIds.value)
-  const items = PERMISSION_CLASSES
-    .map(clazz => {
-      const list = options.value.filter(option =>
-        clazz.key === 'platform-class' ? resolvePermissionClass(option.code) === 'platform-class' : resolvePermissionClass(option.code) !== 'platform-class')
-      return { key: clazz.key, label: clazz.label, count: list.length, selected: list.filter(option => selectedSet.has(option.value)).length }
-    })
-    .filter(item => item.count > 0)
-  return [{ key: 'all', label: '全部', count: options.value.length, selected: selectedIds.value.length }, ...items]
-})
-
-/** 取消单个已选码（摘要条 chip 点击）。 */
 function removeSelected(id: string): void {
   selectedIds.value = selectedIds.value.filter(value => value !== id)
 }
 
-/** 清空全部选择：走既有「选择已变化需重新预览」警戒，无需新增状态。 */
 function clearSelection(): void {
   selectedIds.value = []
 }
 
-// 预览影响区的增撤清单由后端返回裸编码，这里按目录映射回中文描述。
 const descriptionByCode = ref(new Map<string, string>())
 function codeLabel(code: string): string {
   const description = descriptionByCode.value.get(code)
@@ -185,6 +188,21 @@ const noChanges = computed(() => {
   return current !== null && current.grant_permission_codes.length === 0 && current.revoke_permission_codes.length === 0
 })
 
+function collectExpandKeys(nodes: PermissionTreeNode[], depth = 0): string[] {
+  const keys: string[] = []
+  for (const node of nodes) {
+    if (node.children.length && depth < 2) {
+      keys.push(node.key)
+      keys.push(...collectExpandKeys(node.children, depth + 1))
+    }
+  }
+  return keys
+}
+
+watch(activeTab, () => {
+  expandedKeys.value = collectExpandKeys(catalogTree.value)
+})
+
 async function loadGrants(): Promise<void> {
   if (!props.roleId || !props.catalogPath || !props.grantsPath) return
   loading.value = true
@@ -196,46 +214,31 @@ async function loadGrants(): Promise<void> {
       api<PermissionGrant[]>(props.grantsPath),
     ])
     if (!open.value) return
-    // 只编辑通用授权（resource_id 为空），避免多选框覆盖资源实例授权。
     let currentIds = grants.filter(grant => grant.resource_id === null).map(grant => grant.permission_id)
     const currentSet = new Set(currentIds)
-    // P404：目录接口已按操作者级别过滤；此处再按目标角色 kind 隐藏越域组（可见 = 可授 ∩ 可持）。
-    // 历史已持有的码豁免隐藏（可撤销，不静默剥夺）。
     const hiddenScopes = HIDDEN_SCOPES_BY_KIND[props.roleKind || '']
     const visibleCatalog = catalog.filter(permission => {
       if (currentSet.has(permission.id)) return true
       if (!hiddenScopes || !hiddenScopes.size) return true
       const scopeKey = resolvePermissionScope(permission.code).key
       if (hiddenScopes.has(scopeKey)) return false
-      // 应用角色：业务码仅显示本应用命名空间（编码首段匹配）
       if (props.roleKind === 'application' && scopeKey === 'business' && props.roleNamespace) {
         return permissionNamespace(permission.code) === props.roleNamespace
       }
       return true
     })
-    // P405：看得见就能勾；目录接口已按操作者可见集过滤。
     const codeDescriptions = new Map<string, string>()
-    options.value = visibleCatalog
+    catalogItems.value = visibleCatalog
       .filter(permission => permission.status === 'active' || currentSet.has(permission.id))
       .map(permission => {
         const description = (permission.description || '').trim()
-        // 描述可用时以中文为主文案，编码保留在副行与预览清单里。
-        const label = description ? `${description}（${permission.code}）` : permission.code
         if (description) codeDescriptions.set(permission.code, description)
-        return {
-          label,
-          code: permission.code,
-          description,
-          value: permission.id,
-          // P393 作用域归属（共享映射），仅用于分组渲染
-          scope: resolvePermissionScope(permission.code).key,
-          disabled: props.disableIamCodes
-            ? isManagementCode(permission.code) && !currentSet.has(permission.id)
-            : permission.status !== 'active' && !currentSet.has(permission.id),
-        }
+        return permission
       })
     descriptionByCode.value = codeDescriptions
     selectedIds.value = currentIds
+    initialGrantedIds.value = new Set(currentIds)
+    expandedKeys.value = collectExpandKeys(catalogTrees.value.resource)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '权限编码读取失败')
     open.value = false
@@ -261,7 +264,6 @@ async function previewChanges(): Promise<void> {
   }
 }
 
-// 保存前强制预览；确认弹窗复述增减授权与影响成员数，避免误改线上授权。
 function confirmSave(): void {
   const current = impact.value
   if (!current || !previewIsCurrent.value) {
@@ -312,18 +314,17 @@ async function applySave(): Promise<void> {
   }
 }
 
-// immediate：工作台里弹窗经 v-if 挂载时 open 已为 true，必须补首次加载。
 watch(open, value => {
   if (value) void loadGrants()
   else {
-    options.value = []
+    catalogItems.value = []
     selectedIds.value = []
     selectionOrder.value = []
     impact.value = null
     impactPreviewKey.value = ''
-    // 关闭时重置分组展示状态，下次打开回到全部展开
-    scopeFilter.value = 'all'
-    collapsedScopes.value = new Set()
+    searchText.value = ''
+    activeTab.value = 'resource'
+    initialGrantedIds.value = new Set()
   }
 }, { immediate: true })
 </script>
@@ -331,261 +332,147 @@ watch(open, value => {
 <template>
   <component
     :is="embedded ? 'div' : 'a-modal'"
-    v-bind="embedded ? { class: 'is-embedded' } : { open, title: `配置角色权限${roleName ? `：${roleName}` : ''}`, width: '880px', footer: null }"
+    v-bind="embedded ? { class: 'flex min-w-0 flex-col' } : { open, title: `配置角色权限${roleName ? `：${roleName}` : ''}`, width: '880px', footer: null }"
     @update:open="(value: boolean) => open = value"
   >
     <a-spin :spinning="loading">
-      <div class="grant-layout">
-        <!-- P389 左栏导航（P393 起按作用域组）：全部 + 平台/租户/应用/业务码（含该组已选数），点击切换右栏内容 -->
-        <aside class="grant-nav">
-          <button
-            v-for="item in domainNav"
-            :key="item.key"
-            type="button"
-            :class="['grant-nav-item', { active: scopeFilter === item.key }]"
-            @click="scopeFilter = item.key"
-          >
-            <span class="grant-nav-label">{{ item.label }}</span>
-            <span class="grant-nav-count">{{ item.selected }}/{{ item.count }}</span>
-          </button>
-          <p class="grant-nav-total">已选合计 <strong>{{ selectedIds.length }}</strong> 项</p>
-        </aside>
-
-        <div class="grant-main">
-        <!-- P391 提示降噪：大 alert 收敛为单行轻提示（对齐 P373 全站降噪标准），细节收进 tooltip -->
-        <p class="grant-hint">
-          <ExclamationCircleOutlined class="grant-hint-icon" />
-          <span>先预览授权变更再提交保存；仅编辑通用权限。能看见的码都可以勾选。</span>
+      <div class="flex min-w-0 flex-col gap-3">
+        <p class="m-0 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
+          <ExclamationCircleOutlined class="text-[13px]" />
+          <span>先预览再保存。菜单、按钮、接口独立勾选：只给菜单不给接口时，侧栏能进、列表会 403。</span>
         </p>
-
-          <!-- P389 已选摘要条（常驻）：最近勾选可点删，清空走既有「需重新预览」警戒 -->
-          <div class="selected-summary">
-            <span class="selected-summary-title">已选 {{ selectedIds.length }} 项</span>
-            <span v-if="!selectedIds.length" class="selected-summary-empty">尚未选择任何权限编码</span>
-            <template v-else>
-              <button
-                v-for="option in recentSelected.items"
-                :key="option.value"
-                type="button"
-                class="selected-chip"
-                :title="`${option.description || option.code}（点击取消勾选）`"
-                @click="removeSelected(option.value)"
-              ><span class="selected-chip-text">{{ option.description || option.code }}</span><span class="selected-chip-x">×</span></button>
-              <span v-if="recentSelected.overflow" class="selected-more">+{{ recentSelected.overflow }}</span>
-              <button type="button" class="selected-clear" @click="clearSelection">清空</button>
-            </template>
-          </div>
-
-          <a-checkbox-group v-model:value="selectedIds" class="grant-option-list" :disabled="loading || previewing || saving">
-            <!-- P395 两类分区渲染：平台编码（内按层级起点序）/ 业务码（命名空间二级分组）；口径见 utils/permissionGroups.ts -->
-            <section v-for="group in groupedOptions" :key="group.key" class="domain-group">
-              <button type="button" class="domain-group-head" @click="toggleDomain(group.key)">
-                <span class="domain-group-caret">{{ collapsedScopes.has(group.key) ? '▸' : '▾' }}</span>
-                <span class="domain-group-label">{{ group.label }}</span>
-                <span class="domain-group-count">{{ group.count }}</span>
-                <span class="domain-group-hint">{{ group.hint }}</span>
-              </button>
-              <template v-if="!collapsedScopes.has(group.key)">
-                <div v-for="sub in group.subGroups" :key="sub.namespace || group.key">
-                  <p v-if="sub.namespace" class="domain-namespace">{{ sub.namespace }}</p>
-                  <div class="grant-option-rows">
-                    <!-- P394 码项行式列表：单列全宽，描述主行 + mono 码右对齐，彻底解决双列卡片截断 -->
-                    <a-checkbox
-                      v-for="option in sub.options"
-                      :key="option.value"
-                      :value="option.value"
-                      :disabled="option.disabled"
-                      :class="['option-row', { checked: selectedIds.includes(option.value), 'option-disabled': option.disabled }]"
-                    >
-                      <span class="option-row-body" :title="option.label">
-                        <span class="option-row-desc">
-                          {{ option.description || option.code }}<template v-if="option.disabled">（停用，仅可撤销）</template>
-                          <a-tooltip v-if="isManagementCode(option.code)" :title="SCOPE_LEVEL_TIPS[option.scope]">
-                            <span :class="['level-tag', `level-${option.scope}`]">{{ SCOPE_LEVEL_LABELS[option.scope] }}</span>
-                          </a-tooltip>
-                        </span>
-                        <span class="option-row-code">{{ option.code }}</span>
-                      </span>
-                    </a-checkbox>
-                  </div>
-                </div>
-              </template>
-            </section>
-          </a-checkbox-group>
-
-          <a-alert v-if="selectionChanged" type="warning" show-icon message="选择已变化，请重新预览后再保存" />
-          <template v-if="impact && previewIsCurrent">
-            <a-alert
-              type="warning"
-              show-icon
-              :message="impact.bound_active_members !== undefined
-                ? `角色关联 ${impact.bound_active_members} 名活动成员（直接或用户组继承）；潜在受影响 ${impact.potentially_affected_members} 名`
-                : `潜在受影响 ${impact.potentially_affected_members} 位成员（含直接绑定和用户组继承）`"
-              :description="impact.analysis_note"
-            />
-            <!-- P389 新增/撤销对比双卡：语义色仅绿/红两处 -->
-            <div class="impact-grid">
-              <div class="impact-card impact-grant">
-                <p class="impact-head">新增 {{ impact.grant_permission_codes.length }} 项</p>
-                <p v-if="!impact.grant_permission_codes.length" class="impact-empty">无新增授权</p>
-                <p v-for="code in impact.grant_permission_codes" :key="code" class="impact-item">{{ codeLabel(code) }}</p>
-              </div>
-              <div class="impact-card impact-revoke">
-                <p class="impact-head">撤销 {{ impact.revoke_permission_codes.length }} 项</p>
-                <p v-if="!impact.revoke_permission_codes.length" class="impact-empty">无撤销授权</p>
-                <p v-for="code in impact.revoke_permission_codes" :key="code" class="impact-item">{{ codeLabel(code) }}</p>
-              </div>
-            </div>
-            <p v-for="item in impact.permission_impacts" :key="`${item.action}:${item.permission_code}`" class="m-0 text-sm">
-              {{ item.action === 'grant' ? '新增' : '撤销' }} {{ codeLabel(item.permission_code) }}：潜在影响 {{ item.potentially_affected_members }} 名，其他通用角色已覆盖 {{ item.covered_by_other_general_roles }} 名
-            </p>
-            <p v-if="impact.data_scopes_to_delete?.length" class="m-0 text-sm">同时清理失去授权前置条件的数据范围：{{ impact.data_scopes_to_delete.map(item => `${codeLabel(item.permission_code)}（${item.scope_type}）`).join('、') }}</p>
-            <p v-else-if="impact.data_scopes_to_delete" class="m-0 text-sm">无需清理数据范围策略。</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <a-input v-model:value="searchText" allow-clear placeholder="搜索中文名或编码" class="max-w-xs" />
+          <span class="ml-auto font-mono text-xs text-[var(--color-text-muted)]">已选 {{ selectedIds.length }}</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-1.5 border border-dashed border-[var(--color-border)] px-2.5 py-2 rounded-[8px]">
+          <span class="mr-0.5 text-[12.5px] font-semibold text-[var(--color-text-primary)]">已选 {{ selectedIds.length }} 项</span>
+          <span v-if="!selectedIds.length" class="text-[12.5px] text-[var(--color-text-muted)]">尚未选择任何权限编码</span>
+          <template v-else>
+            <button
+              v-for="item in recentSelected.items"
+              :key="item.id"
+              type="button"
+              class="inline-flex max-w-[220px] cursor-pointer items-center gap-1 border border-solid border-[var(--color-border-strong)] bg-[var(--color-bg-container)] px-2 py-0 rounded-full text-xs leading-5 text-[var(--color-text-primary)] hover:border-[var(--color-text-secondary)]"
+              :title="`${item.description || item.code}（点击取消勾选）`"
+              @click="removeSelected(item.id)"
+            >
+              <span class="truncate">{{ item.description || item.code }}</span>
+              <span class="text-[var(--color-text-muted)]">×</span>
+            </button>
+            <span v-if="recentSelected.overflow" class="font-mono text-xs text-[var(--color-text-muted)]">+{{ recentSelected.overflow }}</span>
+            <button type="button" class="ml-auto cursor-pointer border-0 bg-transparent text-xs text-[var(--color-text-secondary)] underline underline-offset-[3px] hover:text-[var(--color-text-primary)]" @click="clearSelection">清空</button>
           </template>
-
-          <!-- P389 固定操作条：滚动时始终可见 -->
-          <div class="grant-footer">
-            <a-button v-if="!embedded" @click="open = false">取消</a-button>
-            <div v-else />
-            <div class="flex items-center gap-2">
-              <a-button :loading="previewing" :disabled="loading || saving" @click="previewChanges">预览影响</a-button>
-              <a-button type="primary" :loading="saving" :disabled="loading || previewing || !previewIsCurrent || noChanges" @click="confirmSave">保存授权</a-button>
+        </div>
+        <a-tabs v-model:activeKey="activeTab" size="small" destroy-inactive-tab-pane>
+          <a-tab-pane key="resource" :tab="`资源权限 ${selectedCountForKind('menu') + selectedCountForKind('button') + selectedCountForKind('api')}`">
+            <div class="max-h-[52vh] min-h-32 overflow-auto">
+              <div class="min-w-0 rounded-[var(--radius-lg)] border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
+                <a-tree
+                  v-if="checkableTree.length"
+                  v-model:expanded-keys="expandedKeys"
+                  checkable
+                  check-strictly
+                  block-node
+                  :checked-keys="checkedState"
+                  :tree-data="checkableTree"
+                  :field-names="{ title: 'title', key: 'key', children: 'children' }"
+                  @check="onTreeCheck"
+                >
+                  <template #title="slotNode">
+                    <div class="flex min-w-0 flex-1 items-center gap-2 py-0.5">
+                      <ResourceIcon
+                        :type="kindIconType(asTreeNode(slotNode).kind)"
+                        :icon="asTreeNode(slotNode).kind === 'api' ? 'SafetyOutlined' : ''"
+                        class="shrink-0 text-[15px] text-[var(--color-text-secondary)]"
+                      />
+                      <span class="truncate text-sm text-[var(--color-text-primary)]">{{ asTreeNode(slotNode).title }}</span>
+                      <span
+                        v-if="asTreeNode(slotNode).code"
+                        class="max-w-[200px] shrink truncate font-mono text-xs text-[var(--color-text-muted)]"
+                      >{{ asTreeNode(slotNode).code }}</span>
+                      <span
+                        v-if="asTreeNode(slotNode).code"
+                        class="shrink-0 border border-solid border-[var(--color-border)] px-1 rounded-[2px] text-[10px] leading-4 text-[var(--color-text-muted)]"
+                      >{{ KIND_LABELS[asTreeNode(slotNode).kind] }}</span>
+                      <span
+                        v-if="asTreeNode(slotNode).selectable && asTreeNode(slotNode).code && missingRelatedHint(asTreeNode(slotNode).code as string) && selectedIds.includes(asTreeNode(slotNode).key)"
+                        class="shrink truncate text-[11px] text-[var(--color-warning)]"
+                      >{{ missingRelatedHint(asTreeNode(slotNode).code as string) }}</span>
+                    </div>
+                  </template>
+                </a-tree>
+                <p v-else class="m-0 text-xs text-[var(--color-text-muted)]">没有匹配的权限项</p>
+              </div>
             </div>
+          </a-tab-pane>
+          <a-tab-pane key="data" :tab="`数据权限 ${selectedCountForKind('data')}`">
+            <div class="max-h-[52vh] min-h-32 overflow-auto">
+              <div class="min-w-0 rounded-[var(--radius-lg)] border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
+                <a-tree
+                  v-if="checkableTree.length"
+                  v-model:expanded-keys="expandedKeys"
+                  checkable
+                  check-strictly
+                  block-node
+                  :checked-keys="checkedState"
+                  :tree-data="checkableTree"
+                  :field-names="{ title: 'title', key: 'key', children: 'children' }"
+                  @check="onTreeCheck"
+                >
+                  <template #title="slotNode">
+                    <div class="flex min-w-0 flex-1 items-center gap-2 py-0.5">
+                      <ResourceIcon type="data_rule" class="shrink-0 text-[15px] text-[var(--color-text-secondary)]" />
+                      <span class="truncate text-sm text-[var(--color-text-primary)]">{{ asTreeNode(slotNode).title }}</span>
+                      <span
+                        v-if="asTreeNode(slotNode).code"
+                        class="max-w-[200px] shrink truncate font-mono text-xs text-[var(--color-text-muted)]"
+                      >{{ asTreeNode(slotNode).code }}</span>
+                    </div>
+                  </template>
+                </a-tree>
+                <p v-else class="m-0 text-xs text-[var(--color-text-muted)]">还没有数据权限叶子。管理面 27 个接口码不进这里。</p>
+              </div>
+            </div>
+          </a-tab-pane>
+        </a-tabs>
+        <a-alert v-if="selectionChanged" type="warning" show-icon message="选择已变化，请重新预览后再保存" />
+        <template v-if="impact && previewIsCurrent">
+          <a-alert
+            type="warning"
+            show-icon
+            :message="impact.bound_active_members !== undefined
+              ? `角色关联 ${impact.bound_active_members} 名活动成员（直接或用户组继承）；潜在受影响 ${impact.potentially_affected_members} 名`
+              : `潜在受影响 ${impact.potentially_affected_members} 位成员（含直接绑定和用户组继承）`"
+            :description="impact.analysis_note"
+          />
+          <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div class="border border-solid border-[var(--color-border)] px-3 py-2.5 rounded-[8px]">
+              <p class="mb-1.5 mt-0 text-[13px] font-semibold text-[var(--color-success,#166534)]">新增 {{ impact.grant_permission_codes.length }} 项</p>
+              <p v-if="!impact.grant_permission_codes.length" class="m-0 text-[12.5px] text-[var(--color-text-muted)]">无新增授权</p>
+              <p v-for="code in impact.grant_permission_codes" :key="code" class="mb-0.5 mt-0 break-all text-[12.5px] text-[var(--color-text-secondary)]">{{ codeLabel(code) }}</p>
+            </div>
+            <div class="border border-solid border-[var(--color-border)] px-3 py-2.5 rounded-[8px]">
+              <p class="mb-1.5 mt-0 text-[13px] font-semibold text-[var(--color-error,#b91c1c)]">撤销 {{ impact.revoke_permission_codes.length }} 项</p>
+              <p v-if="!impact.revoke_permission_codes.length" class="m-0 text-[12.5px] text-[var(--color-text-muted)]">无撤销授权</p>
+              <p v-for="code in impact.revoke_permission_codes" :key="code" class="mb-0.5 mt-0 break-all text-[12.5px] text-[var(--color-text-secondary)]">{{ codeLabel(code) }}</p>
+            </div>
+          </div>
+          <p v-for="item in impact.permission_impacts" :key="`${item.action}:${item.permission_code}`" class="m-0 text-sm">
+            {{ item.action === 'grant' ? '新增' : '撤销' }} {{ codeLabel(item.permission_code) }}：潜在影响 {{ item.potentially_affected_members }} 名，其他通用角色已覆盖 {{ item.covered_by_other_general_roles }} 名
+          </p>
+          <p v-if="impact.data_scopes_to_delete?.length" class="m-0 text-sm">同时清理失去授权前置条件的数据范围：{{ impact.data_scopes_to_delete.map(item => `${codeLabel(item.permission_code)}（${item.scope_type}）`).join('、') }}</p>
+          <p v-else-if="impact.data_scopes_to_delete" class="m-0 text-sm">无需清理数据范围策略。</p>
+        </template>
+        <div :class="['flex items-center justify-between border-t border-solid border-[var(--color-border)] bg-[var(--color-bg-container)] pt-3', embedded ? 'static' : 'sticky bottom-0 z-[2]']">
+          <a-button v-if="!embedded" @click="open = false">取消</a-button>
+          <div v-else />
+          <div class="flex items-center gap-2">
+            <a-button :loading="previewing" :disabled="loading || saving" @click="previewChanges">预览影响</a-button>
+            <a-button type="primary" :loading="saving" :disabled="loading || previewing || !previewIsCurrent || noChanges" @click="confirmSave">保存授权</a-button>
           </div>
         </div>
       </div>
     </a-spin>
   </component>
 </template>
-
-<style scoped>
-/* ===== P389 双栏布局：左域导航 188px + 右码区；窄屏（<760px）降级单列 ===== */
-.grant-layout { display: grid; grid-template-columns: 188px minmax(0, 1fr); gap: 16px; }
-.grant-nav { display: flex; flex-direction: column; gap: 4px; align-self: start; position: sticky; top: 0; }
-.grant-nav-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 8px 10px; border: 0; border-left: 3px solid transparent; border-radius: 6px;
-  background: transparent; cursor: pointer; text-align: left; font-size: 13px;
-  color: var(--color-text-secondary); transition: background .15s, color .15s, border-color .15s;
-}
-.grant-nav-item:hover { background: var(--color-border); color: var(--color-text-primary); }
-.grant-nav-item.active {
-  background: var(--color-border); border-left-color: var(--color-text-primary);
-  color: var(--color-text-primary); font-weight: 600;
-}
-.grant-nav-count { font-family: var(--mono); font-size: 11px; color: var(--color-text-muted); }
-.grant-nav-item.active .grant-nav-count { color: var(--color-text-primary); }
-.grant-nav-total { margin: 10px 0 0; padding: 10px 10px 0; border-top: 1px dashed var(--color-border); font-size: 12px; color: var(--color-text-muted); }
-.grant-nav-total strong { font-family: var(--mono); color: var(--color-text-primary); }
-
-.grant-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-
-/* P391 单行轻提示：替代原双 alert（对齐 P373 降噪标准），警示变体琥珀色 + tooltip 展开 */
-.grant-hint { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; font-size: 12.5px; color: var(--color-text-muted); }
-.grant-hint-icon { font-size: 13px; }
-.grant-hint-warn { display: inline-flex; align-items: center; gap: 4px; color: var(--color-warning); cursor: help; }
-
-/* 已选摘要条：常驻总览，chip 点击即取消勾选（P391 去灰底减重） */
-.selected-summary {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  padding: 8px 10px; border: 1px dashed var(--color-border);
-  border-radius: 8px;
-}
-.selected-summary-title { font-size: 12.5px; font-weight: 600; color: var(--color-text-primary); margin-right: 2px; }
-.selected-summary-empty { font-size: 12.5px; color: var(--color-text-muted); }
-.selected-chip {
-  display: inline-flex; align-items: center; gap: 4px; max-width: 220px;
-  font-size: 12px; line-height: 20px; padding: 0 8px;
-  border: 1px solid var(--color-border-strong); border-radius: 999px;
-  background: var(--color-bg-container); color: var(--color-text-primary); cursor: pointer;
-}
-.selected-chip:hover { border-color: var(--color-text-secondary); }
-.selected-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.selected-chip-x { color: var(--color-text-muted); font-size: 13px; }
-.selected-chip:hover .selected-chip-x { color: var(--color-text-primary); }
-.selected-more { font-family: var(--mono); font-size: 12px; color: var(--color-text-muted); }
-.selected-clear { margin-left: auto; border: 0; background: transparent; font-size: 12px; color: var(--color-text-secondary); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-.selected-clear:hover { color: var(--color-text-primary); }
-
-/* 码区：右栏独立滚动 */
-.grant-option-list { max-height: 52vh; overflow: auto; padding: 2px; }
-
-/* 组头：左竖条 + 计数徽标 + hint；hairline 分隔 */
-.domain-group { border-bottom: 1px dashed var(--color-border); padding: 6px 0 10px; }
-.domain-group:last-child { border-bottom: 0; }
-.domain-group-head {
-  display: flex; align-items: baseline; gap: 8px; width: 100%;
-  padding: 6px 2px; border: 0; background: transparent; cursor: pointer; text-align: left;
-}
-.domain-group-caret { color: var(--color-text-muted); font-size: 11px; width: 12px; }
-.domain-group-label { font-weight: 600; font-size: 13.5px; color: var(--color-text-primary); border-left: 3px solid var(--color-text-primary); padding-left: 8px; }
-.domain-group-count {
-  font-family: var(--mono); font-size: 11px; padding: 0 7px; border-radius: 999px;
-  background: var(--color-border); color: var(--color-text-secondary);
-}
-.domain-group-hint { margin-left: auto; font-size: 11.5px; color: var(--color-text-muted); }
-.domain-namespace { margin: 8px 0 2px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; color: var(--color-text-muted); }
-
-/* P394 码项行式列表：单列全宽行（替代 P389 双列卡片——右栏窄时描述全被截断）。
-   行 hover 浅底、选中行左墨色竖条 + 浅底、禁选弱化；描述主行左对齐 + mono 码右对齐。 */
-.grant-option-rows { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
-.option-row {
-  display: flex !important; align-items: center; gap: 2px;
-  margin: 0; padding: 7px 10px;
-  border: 0; border-left: 2px solid transparent; border-radius: 6px;
-  transition: background .12s, border-color .12s;
-}
-.option-row:hover { background: var(--color-border); }
-.option-row.checked { background: var(--color-border); border-left-color: var(--color-text-primary); }
-.option-row.option-disabled { opacity: .5; }
-.option-row :deep(.ant-checkbox) { margin-top: 0; }
-.option-row :deep(.ant-checkbox + span) { flex: 1; min-width: 0; padding-inline-start: 10px; padding-inline-end: 0; }
-.option-row-body { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; width: 100%; }
-.option-row-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--color-text-primary); }
-.option-row-code { flex-shrink: 0; font-family: var(--mono); font-size: 11px; color: var(--color-text-muted); }
-
-/* P396 层级起点标记：白话文案 + 三档描边轻标签（靠文字深浅区分层级），与目录页同口径 */
-.level-tag {
-  font-size: 10px; line-height: 15px; margin-left: 8px; padding: 0 5px; border-radius: 2px;
-  border: 1px solid var(--color-border); color: var(--color-text-muted);
-  font-weight: 500; white-space: nowrap; cursor: help;
-}
-.level-tag.level-platform { color: var(--color-text-primary); border-color: var(--color-text-primary); }
-.level-tag.level-tenant { color: var(--color-text-secondary); border-color: var(--color-border-strong); }
-.level-tag.level-app { color: var(--color-text-muted); border-color: var(--color-border); }
-
-/* 预览对比双卡：语义色仅绿/红两处 */
-.impact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.impact-card { border: 1px solid var(--color-border); border-radius: 8px; padding: 10px 12px; }
-.impact-head { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
-.impact-grant .impact-head { color: var(--color-success, #166534); }
-.impact-revoke .impact-head { color: var(--color-error, #b91c1c); }
-.impact-empty { margin: 0; font-size: 12.5px; color: var(--color-text-muted); }
-.impact-item { margin: 0 0 2px; font-size: 12.5px; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-
-/* 固定操作条：滚动时始终可见 */
-.grant-footer {
-  position: sticky; bottom: -24px; z-index: 2;
-  display: flex; align-items: center; justify-content: space-between;
-  margin: 4px -24px -24px; padding: 12px 24px;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg-container);
-}
-@media (max-width: 760px) {
-  .grant-layout { grid-template-columns: 1fr; }
-  .grant-nav { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px dashed var(--color-border); }
-  .grant-nav-item { border-left: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; white-space: nowrap; }
-  .grant-nav-item.active { border-bottom-color: var(--color-text-primary); }
-  .grant-nav-total { display: none; }
-  .impact-grid { grid-template-columns: 1fr; }
-  .grant-footer { bottom: 0; margin: 0; border-radius: 0 0 8px 8px; }
-}
-/* 抽屉内嵌：改单列，避免 188px 导航把 720 抽屉挤窄。 */
-.is-embedded .grant-layout { grid-template-columns: 1fr; }
-.is-embedded .grant-nav { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px dashed var(--color-border); }
-.is-embedded .grant-nav-item { border-left: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; white-space: nowrap; }
-.is-embedded .grant-nav-item.active { border-bottom-color: var(--color-text-primary); }
-.is-embedded .grant-nav-total { display: none; }
-.is-embedded .grant-option-list { max-height: 36vh; }
-.is-embedded .grant-footer { position: static; margin: 12px 0 0; padding: 12px 0 0; }
-</style>

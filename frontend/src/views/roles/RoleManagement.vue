@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { TablePaginationConfig } from 'ant-design-vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
+import { cachedHas, cachedHasAny, getCachedCapabilities } from '@/api/capabilities'
 import { DownOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
@@ -38,7 +38,9 @@ const props = defineProps<{
 const emit = defineEmits<{ changed: [] }>()
 const isPlatformSuperAdmin = computed(() => getCachedCapabilities()?.platform_admin === true)
 // 前四级都可新建自定义平台角色，并给自己看得见的管理码挂权。
-const canCreateRoles = computed(() => isPlatformSuperAdmin.value || cachedHas('org.manage') || cachedHas('rbac.app_role.manage'))
+const canCreateRoles = computed(() =>
+  isPlatformSuperAdmin.value
+  || cachedHasAny(['button.roles.manage']))
 const canMutateRoleMeta = computed(() => isPlatformSuperAdmin.value)
 
 const roles = ref<RoleRecord[]>([])
@@ -88,12 +90,12 @@ function canGrantRole(role: RoleRecord): boolean {
   if (isPlatformSuperAdmin.value) return true
   // 预置模板只能改本级及以下：超管改全部，租户改租户及以下，多应用改多应用及以下，应用改应用及成员。
   if (role.key === 'platform.admin') return false
-  if (role.key === 'tenant.admin') return cachedHas('org.manage')
-  if (role.key === 'apps.admin') return cachedHas('org.manage') || cachedHas('rbac.app_role.assign')
+  if (role.key === 'tenant.admin') return cachedHasAny(['button.roles.manage'])
+  if (role.key === 'apps.admin') return cachedHasAny(['button.app_role.assign'])
   if (role.key === 'app.admin' || role.key === 'app.member') {
-    return cachedHas('org.manage') || cachedHas('rbac.app_role.manage')
+    return cachedHasAny(['button.app_role.manage'])
   }
-  return cachedHas('org.manage') || cachedHas('rbac.app_role.manage')
+  return cachedHasAny(['button.roles.manage', 'button.app_role.manage'])
 }
 
 // 模板按层级藏码；自定义平台角色按操作者可见集，超管不再被 kind=tenant 藏掉 L1 专属码。

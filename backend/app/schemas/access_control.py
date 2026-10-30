@@ -95,6 +95,8 @@ class PermissionCreate(BaseModel):
     scope: str = Field(min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=500)
     catalog_namespace: str | None = Field(default=None, max_length=100)
+    # 四类；菜单下新建按钮时编码仍可能以 menu. 开头，必须显式写入 kind。
+    kind: Literal["menu", "button", "api", "data"] | None = None
     # 权限面与数据范围要求：管理面码默认不强制范围，业务码默认强制（缺策略即拒绝）。
     surface: Literal["management", "business"] = "business"
     requires_data_scope: bool = True

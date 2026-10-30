@@ -74,7 +74,7 @@ def ensure_oidc_signing_key() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["bootstrap-admin", "ensure-oidc-key", "seed-greenfield", "seed-walkthrough"])
+    parser.add_argument("command", choices=["bootstrap-admin", "ensure-oidc-key", "seed-greenfield", "seed-walkthrough", "map-data-scope-codes"])
     parser.add_argument("--demo-tenant", action="store_true", help="seed-greenfield：创建演示租户与 L3 模板")
     parser.add_argument("--demo-application", action="store_true", help="seed-greenfield：连同演示应用与 L2/L4 模板（隐含 --demo-tenant）")
     parsed = parser.parse_args()
@@ -98,3 +98,11 @@ if __name__ == "__main__":
             seed_walkthrough_accounts(db)
             db.commit()
             print("四级走查账号种子完成")
+    elif parsed.command == "map-data-scope-codes":
+        # 把存量 RoleDataScope 映射成 *.scope.* 数据码授权；不删旧策略。
+        from app.services.permission_kinds import map_role_data_scopes_to_codes
+
+        with Session(get_engine()) as db:
+            granted = map_role_data_scopes_to_codes(db)
+            db.commit()
+            print(f"已映射 {granted} 条数据权限码授权")

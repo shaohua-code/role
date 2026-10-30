@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
@@ -36,7 +36,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ changed: [] }>()
 const router = useRouter()
-const canManageTenants = computed(() => cachedHas('platform.tenant.manage'))
+const canManageTenants = computed(() => cachedHasAny(['button.tenants.manage']))
 
 let hydratedCatalogGeneration = -1
 

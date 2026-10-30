@@ -20,6 +20,7 @@ from app.db.session import get_engine
 from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import Tenant, TenantMembership, User
 from app.services.permission_namespace import derive_catalog_namespace_value
+from app.services.permission_kinds import all_ui_codes, seed_ui_permissions
 from app.services.rbac_guards import PLATFORM_MANAGEMENT_CODES
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
@@ -65,7 +66,7 @@ MANAGEMENT_PERMISSION_DESCRIPTIONS: dict[str, str] = {
 
 def seed_permissions(db: Session) -> int:
     """幂等写入管理面权限目录；业务码由应用注册接口创建（强制 requires_data_scope）。"""
-    created = 0
+    created = seed_ui_permissions(db)
     for code in PLATFORM_MANAGEMENT_CODES:
         permission = db.scalar(select(Permission).where(Permission.code == code))
         if permission is None:
@@ -111,7 +112,7 @@ def seed_l1_role(db: Session, platform_tenant: Tenant) -> Role:
         select(RolePermission.permission_id).where(RolePermission.role_id == role.id),
     ).all())
     for permission in db.scalars(select(Permission).where(
-        Permission.code.in_(PLATFORM_MANAGEMENT_CODES),
+        Permission.code.in_(tuple(PLATFORM_MANAGEMENT_CODES) + all_ui_codes()),
     )).all():
         if permission.id not in existing_permission_ids:
             db.add(RolePermission(role_id=role.id, permission_id=permission.id))

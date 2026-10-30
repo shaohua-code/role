@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api, ApiRequestError } from '@/api'
-import { getCachedCapabilities } from '@/api/capabilities'
+import { cachedHasAny, getCachedCapabilities } from '@/api/capabilities'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
@@ -40,8 +40,10 @@ interface UsageSummary {
 }
 
 const props = defineProps<{ active: boolean; view: View; seedTenants?: Tenant[] }>()
-// 模型写/复核是 ops.model.manage（绿场仅 L1 持有）；L2/L3 只读目录与用量。
-const canManageModels = computed(() => getCachedCapabilities()?.platform_admin === true)
+// 页内写按钮认 button.models.manage，过渡期 any-of 接口码 / L1。
+const canManageModels = computed(() =>
+  getCachedCapabilities()?.platform_admin === true
+  || cachedHasAny(['button.models.manage']))
 const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const OUTCOME_FILTER_OPTIONS = [
   { value: 'succeeded', label: '成功' },

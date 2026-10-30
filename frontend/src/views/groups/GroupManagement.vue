@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { DownOutlined } from '@/plugins/icons'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import AdminListPage from '@/components/AdminListPage.vue'
 import GroupRelationModal from '@/components/GroupRelationModal.vue'
 
@@ -33,7 +33,7 @@ const creatableTenantOptions = computed(() => tenants.value
   .filter(tenant => tenant.slug !== 'platform')
   .map(tenant => ({ value: tenant.id, label: tenant.name })))
 
-const canManage = computed(() => cachedHas('org.group.manage'))
+const canManage = computed(() => cachedHasAny(['button.groups.manage']))
 const tenantId = ref('')
 const loading = ref(false)
 const saving = ref(false)

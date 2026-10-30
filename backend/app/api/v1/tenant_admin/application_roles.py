@@ -28,6 +28,7 @@ from app.services.permission_impact import (
     apply_role_permissions,
     preview_role_permissions,
 )
+from app.services.permission_kinds import infer_permission_kind
 from app.services.permission_namespace import (
     assert_application_grant_permissions,
     is_management_code,
@@ -363,6 +364,7 @@ def list_application_permissions(
             "scope": permission.scope,
             "description": permission.description,
             "status": permission.status,
+            "kind": infer_permission_kind(permission.code),
         })
     return payload
 

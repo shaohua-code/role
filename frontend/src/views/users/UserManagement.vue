@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { validateReservedEmailDomain } from '@/utils/emailValidation'
 import { DownOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
@@ -64,7 +64,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ changed: [] }>()
 
 const users = ref<UserRecord[]>([])
-const canManageUsers = computed(() => cachedHas('platform.account.manage'))
+const canManageUsers = computed(() => cachedHasAny(['button.users.manage']))
 const loading = ref(false)
 const searchText = ref('')
 const createOpen = ref(false)

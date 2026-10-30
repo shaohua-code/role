@@ -3,7 +3,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
+import { cachedHasAny, getCachedCapabilities } from '@/api/capabilities'
 import AdminMonoValue from '@/components/AdminMonoValue.vue'
 
 export type ApplicationMoreAction = 'edit' | 'rotateSecret' | 'trust' | 'status' | 'delete'
@@ -84,7 +84,7 @@ const tenantName = computed(() =>
 const isConsumerTenant = computed(() =>
   props.tenants.find(tenant => tenant.id === props.application?.tenant_id)?.kind === 'consumer')
 
-const canSetTrust = computed(() => Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('app.manage'))
+const canSetTrust = computed(() => Boolean(getCachedCapabilities()?.platform_admin) && cachedHasAny(['button.apps.manage']))
 
 function applicationPath(path: string): string {
   return `${props.apiPrefix}${path}`
@@ -97,12 +97,12 @@ function canCreateOnTenant(tenantId: string): boolean {
 
 function canManageApplication(application: SettingsApplication): boolean {
   if (application.can_manage === true) return true
-  return cachedHas('app.manage') && Boolean(getCachedCapabilities()?.platform_admin)
+  return cachedHasAny(['button.apps.manage']) && Boolean(getCachedCapabilities()?.platform_admin)
 }
 
 function canRotateSecret(application: SettingsApplication): boolean {
   if (application.can_rotate_secret === true) return true
-  return cachedHas('app.secret.rotate') && Boolean(getCachedCapabilities()?.platform_admin)
+  return cachedHasAny(['button.apps.secret']) && Boolean(getCachedCapabilities()?.platform_admin)
 }
 
 function canDeleteApplication(application: SettingsApplication): boolean {

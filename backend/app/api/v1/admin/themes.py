@@ -14,7 +14,7 @@ from app.models.application import Application, ApplicationTheme
 from app.models.identity import User
 from app.schemas.auth import ThemeUpdate
 from app.services.theme_config import validate_theme_config
-from app.services.rbac_guards import ensure_roles
+from app.services.rbac_guards import ensure_codes, ensure_roles
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(tags=["登录主题"])
@@ -25,12 +25,7 @@ def list_themes(application_id: UUID, actor: User = Depends(current_user),
                 db: Session = Depends(get_db_session)) -> list[dict]:
     """按版本倒序列出应用全部主题草稿/发布记录（配置含品牌与条款链接）。"""
     tenant_id = _require_application_tenant(db, application_id)
-    ensure_roles(
-        actor, db, list(CONSOLE_ADMIN_ROLE_KEYS),
-        tenant_id=tenant_id,
-        application_id=application_id,
-        detail="缺少管理角色（原 ops.theme.manage）",
-    )
+    ensure_codes(actor, db, "ops.theme.manage", tenant_id=tenant_id, application_id=application_id, detail="缺少管理权限：ops.theme.manage")
     return [{"id": str(t.id), "version": t.version, "status": t.status, "config": t.config, "created_at": t.created_at}
             for t in db.scalars(select(ApplicationTheme).where(ApplicationTheme.application_id == application_id).order_by(ApplicationTheme.version.desc())).all()]
 
@@ -41,12 +36,7 @@ def save_theme(application_id: UUID, body: ThemeUpdate, request: Request, publis
     """保存主题新版本（版本号递增）；publish=true 时归档旧发布版本并发布新版本。"""
     tenant_id = _require_application_tenant(db, application_id)
     # L2 的主题管理钉在本应用（11 号文档 §4.4）：判权带应用上下文，他应用角色默认拒绝。
-    ensure_roles(
-        actor, db, list(CONSOLE_ADMIN_ROLE_KEYS),
-        tenant_id=tenant_id,
-        application_id=application_id,
-        detail="缺少管理角色（原 ops.theme.manage）",
-    )
+    ensure_codes(actor, db, "ops.theme.manage", tenant_id=tenant_id, application_id=application_id, detail="缺少管理权限：ops.theme.manage")
     try:
         validate_theme_config(body.config)
     except ValueError as error:
@@ -68,12 +58,7 @@ def restore_theme(application_id: UUID, theme_id: UUID, request: Request, publis
     历史行保持原样（审计可追溯），恢复动作本身生成新版本记录，避免覆盖历史。
     """
     tenant_id = _require_application_tenant(db, application_id)
-    ensure_roles(
-        actor, db, list(CONSOLE_ADMIN_ROLE_KEYS),
-        tenant_id=tenant_id,
-        application_id=application_id,
-        detail="缺少管理角色（原 ops.theme.manage）",
-    )
+    ensure_codes(actor, db, "ops.theme.manage", tenant_id=tenant_id, application_id=application_id, detail="缺少管理权限：ops.theme.manage")
     target = db.scalar(select(ApplicationTheme).where(
         ApplicationTheme.id == theme_id, ApplicationTheme.application_id == application_id))
     if not target:

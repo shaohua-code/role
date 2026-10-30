@@ -18,7 +18,7 @@ from app.models.model_catalog import ModelCatalog, ModelUsageEvent, ModelUsageRe
 from app.schemas.models import ModelUsageReviewRequest
 from app.services.rbac_guards import (
     actor_has_tenant_admin,
-    ensure_roles,
+    ensure_codes,
     list_actor_management_tenant_ids,
     list_actor_pinned_application_ids,
 )
@@ -91,7 +91,7 @@ def list_model_usage_reviews(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """分页列出超时未结算预留，避免长期待核对队列被固定条数截断。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    ensure_codes(actor, db, "ops.model.read", tenant_id=tenant_id, detail="缺少管理权限：ops.model.read")
     # API 参数由 FastAPI 转成整数；仍在函数内夹紧范围，保证直接调用或内部复用安全。
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
@@ -141,7 +141,7 @@ def resolve_model_usage_review(
         ModelUsageReservation.request_id == body.request_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="找不到对应的额度预留")
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
+    ensure_codes(actor, db, "ops.model.manage", detail="缺少管理权限：ops.model.manage")
 
     # 所有结算入口保持相同锁顺序，确保管理员操作与网关重试互斥。
     model = db.scalar(select(ModelCatalog).where(
@@ -211,7 +211,7 @@ def model_usage_summary(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """返回留存用量汇总；未知目录价格单独计数，不伪装为零成本。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    ensure_codes(actor, db, "ops.model.read", tenant_id=tenant_id, detail="缺少管理权限：ops.model.read")
     stmt = select(
         func.count(ModelUsageEvent.id).label("requests"),
         func.sum(ModelUsageEvent.input_tokens).label("input_tokens"),
@@ -254,7 +254,7 @@ def model_usage_timeline(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """按 UTC 自然日聚合请求量与 Token 消耗，供管理台趋势图使用；筛选口径与 summary 完全一致。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    ensure_codes(actor, db, "ops.model.read", tenant_id=tenant_id, detail="缺少管理权限：ops.model.read")
     filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
     scope = _actor_usage_scope_filters(
         actor, db, tenant_id,
@@ -292,7 +292,7 @@ def model_usage_by_model(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """按模型聚合 Token 消耗与请求量，供管理台分布图使用；按总 Token 降序取前 N。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    ensure_codes(actor, db, "ops.model.read", tenant_id=tenant_id, detail="缺少管理权限：ops.model.read")
     filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
     scope = _actor_usage_scope_filters(
         actor, db, tenant_id,
@@ -338,7 +338,7 @@ def list_model_usage_events(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """最近的计量账目只输出身份/计数/费用元数据，不含模型内容或密钥引用。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    ensure_codes(actor, db, "ops.model.read", tenant_id=tenant_id, detail="缺少管理权限：ops.model.read")
     # 账目可能持续增长；总数和 offset 分页让管理台可以完整审阅历史记录。
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)

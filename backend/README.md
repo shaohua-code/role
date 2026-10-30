@@ -2,6 +2,10 @@
 
 活文档：[产品需求](../docs/产品需求.md) · [应用对接](../docs/应用对接.md) · [部署与运维](../docs/部署与运维.md) · [项目启动](../docs/项目启动.md)。历史见 [CHANGELOG.md](../CHANGELOG.md)。
 
+**2026-10-30 资源权限树：** `GET /admin/permissions/tree` 返回 `{resource, data}`；菜单下挂映射的按钮/接口；`permissions.kind` 写入 ORM；非 L1 路由 `ensure_codes`。验证见根 CHANGELOG。
+
+**2026-10-30 权限四类树：** `GET /admin/permissions/tree`；菜单/按钮种子与模板补授权；业务码自动生成数据叶子；`evaluate_access` 双读数据码 ∪ `RoleDataScope`。已被上条资源树替代展示口径。
+
 **2026-10-29 P405：** 平台/应用权限分层。新增 `apps.admin` 模板；`GET /admin/permissions` 只出管理面码；绑应用角色自动补 `app.member`；`POST /admin/roles` 放宽到 L1/L3。创建/删除应用仍仅 L1/L3。无迁移。
 
 **2026-10-29 P404：** 四级可见范围收口。创建/删除应用仅 L1/L3；`GET /admin/permissions` 按操作者级别过滤；L2 角色/用量/尽力审计仅钉住应用；L3 限本租户。无迁移。

@@ -7,7 +7,7 @@ from fastapi import HTTPException
 NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 PLATFORM_NAMESPACE = "platform"
 # P392 管理面五域前缀：这些域的编码目录命名空间统一归 platform（应用命名空间不得占用）。
-MANAGEMENT_DOMAIN_PREFIXES = ("platform.", "rbac.", "org.", "app.", "ops.")
+MANAGEMENT_DOMAIN_PREFIXES = ("platform.", "rbac.", "org.", "app.", "ops.", "menu.", "button.")
 
 
 def normalize_namespace(value: str) -> str:
@@ -58,6 +58,8 @@ def permission_matches_namespace(code: str, namespace: str) -> bool:
     """判断权限码是否属于指定应用命名空间。"""
     normalized = normalize_namespace(namespace)
     cleaned = code.strip()
+    if cleaned.startswith(MANAGEMENT_DOMAIN_PREFIXES) and normalized == PLATFORM_NAMESPACE:
+        return True
     return cleaned == normalized or cleaned.startswith(f"{normalized}.")
 
 
@@ -97,19 +99,36 @@ HIDDEN_SCOPES_BY_KIND: dict[str, frozenset[str]] = {
 
 
 def is_management_code(code: str) -> bool:
-    """管理面码判定：五域前缀任一命中即管理码。"""
+    """管理面码判定：五域前缀或菜单/按钮码。"""
     return code.startswith(MANAGEMENT_DOMAIN_PREFIXES)
 
 
-def resolve_permission_scope_key(code: str) -> str:
-    """解析权限编码所属作用域组（platform / tenant / app / business）。"""
-    if not is_management_code(code):
-        return "business"
+def _scope_of_api(code: str) -> str:
     if code in PLATFORM_SCOPE_CODES:
         return "platform"
     if code in TENANT_SCOPE_CODES:
         return "tenant"
     return "app"
+
+
+def resolve_permission_scope_key(code: str) -> str:
+    """解析权限编码所属作用域组（platform / tenant / app / business）。
+
+    菜单/按钮跟所挂接口域走：全部是平台码才算平台，租户角色才能看见本级菜单。
+    """
+    if not is_management_code(code):
+        return "business"
+    if code.startswith(("menu.", "button.")):
+        from app.services.permission_kinds import related_apis_for
+        related = related_apis_for(code)
+        if related:
+            scopes = {_scope_of_api(api) for api in related}
+            if scopes == {"platform"}:
+                return "platform"
+            if "platform" not in scopes and scopes <= {"tenant"}:
+                return "tenant"
+            return "app"
+    return _scope_of_api(code)
 
 
 def assert_role_kind_grant_permissions(

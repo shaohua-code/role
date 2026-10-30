@@ -4,7 +4,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
+import { cachedHasAny, getCachedCapabilities } from '@/api/capabilities'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 
@@ -49,11 +49,13 @@ let requestSequence = 0
 
 // 业务码登记：L1（rbac.permission.manage）或钉住该应用的管理者（L2 app.admin / L3 本租户，以后端 can_manage 为准）。
 const canRegisterCatalog = computed(() => {
-  if (Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('rbac.permission.manage')) return true
+  if (Boolean(getCachedCapabilities()?.platform_admin) && cachedHasAny(['button.permissions.manage'])) return true
   return props.application?.can_manage === true
 })
 // 启停仍走平台目录 PATCH /admin/permissions/{id}/status，仅 L1。
-const canChangeStatus = computed(() => Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('rbac.permission.manage'))
+const canChangeStatus = computed(() =>
+  Boolean(getCachedCapabilities()?.platform_admin)
+  && cachedHasAny(['button.permissions.manage']))
 
 function applicationPath(path: string): string {
   return `${props.apiPrefix}${path}`

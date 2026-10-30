@@ -20,7 +20,7 @@ from app.models.authorization import Role, RoleBinding
 from app.models.identity import Tenant, TenantMembership, User, UserInvitation
 from app.schemas.auth import AdminInvitationBatchCreate, AdminInvitationCreate, AdminInvitationResend
 from app.services.email import send_invitation_email
-from app.services.rbac_guards import ensure_roles
+from app.services.rbac_guards import ensure_codes, ensure_roles
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(tags=["成员邀请"])
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 def list_invitations(tenant_id: UUID | None = None, actor: User = Depends(current_user),
                      db: Session = Depends(get_db_session)) -> list[dict]:
     """只列出邀请状态和邮箱信息，永不回传 invitation token 或链接。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 org.invite.manage）")
+    ensure_codes(actor, db, "org.invite.manage", tenant_id=tenant_id, detail="缺少管理权限：org.invite.manage")
     stmt = (select(UserInvitation, Tenant, Role)
             .join(Tenant, Tenant.id == UserInvitation.tenant_id)
             .join(Role, Role.id == UserInvitation.role_id)
@@ -133,7 +133,7 @@ def _deliver_invitation(invite: UserInvitation, raw_token: str, tenant_name: str
 def create_invitation(body: AdminInvitationCreate, request: Request, response: Response,
                       actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """为租户成员签发 48-byte 一次性链接；数据库仅存 SHA-256 摘要，原始链接只回传一次且响应禁止缓存。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=body.tenant_id, detail="缺少管理角色（原 org.invite.manage）")
+    ensure_codes(actor, db, "org.invite.manage", tenant_id=body.tenant_id, detail="缺少管理权限：org.invite.manage")
     tenant, role = _validate_invitation_target(db, body.tenant_id, body.role_id)
     email = str(body.email).casefold()
     invite, raw_token = _create_pending_invitation(db, tenant, role, email,
@@ -161,7 +161,7 @@ def _invitation_link_response(response: Response, invite: UserInvitation, raw_to
 def create_invitations_batch(body: AdminInvitationBatchCreate, request: Request, response: Response,
                              actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """G21 批量邀请：同一租户同一角色一次邀请多个邮箱；单邮箱冲突跳过不阻断其余。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=body.tenant_id, detail="缺少管理角色（原 org.invite.manage）")
+    ensure_codes(actor, db, "org.invite.manage", tenant_id=body.tenant_id, detail="缺少管理权限：org.invite.manage")
     tenant, role = _validate_invitation_target(db, body.tenant_id, body.role_id)
     # 大小写归一并去重，保持首现顺序；响应包含每邮箱的原始链接，同样禁止缓存。
     seen: set[str] = set()
@@ -195,7 +195,7 @@ def resend_invitation(invitation_id: UUID, body: AdminInvitationResend, request:
     invite = db.scalar(select(UserInvitation).where(UserInvitation.id == invitation_id).with_for_update())
     if not invite:
         raise HTTPException(404, "邀请不存在")
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=invite.tenant_id, detail="缺少管理角色（原 org.invite.manage）")
+    ensure_codes(actor, db, "org.invite.manage", tenant_id=invite.tenant_id, detail="缺少管理权限：org.invite.manage")
     if invite.accepted_at:
         raise HTTPException(409, "已接受的邀请不可重发")
     if invite.revoked_at:
@@ -222,7 +222,7 @@ def revoke_invitation(invitation_id: UUID, request: Request,
     invite = db.scalar(select(UserInvitation).where(UserInvitation.id == invitation_id).with_for_update())
     if not invite:
         raise HTTPException(404, "邀请不存在")
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=invite.tenant_id, detail="缺少管理角色（原 org.invite.manage）")
+    ensure_codes(actor, db, "org.invite.manage", tenant_id=invite.tenant_id, detail="缺少管理权限：org.invite.manage")
     if invite.accepted_at:
         raise HTTPException(409, "已接受的邀请不可撤销")
     if invite.revoked_at is None:

@@ -1,6 +1,7 @@
 // P392 权限编码重规划：唯一的「码 → 域」映射（五域：platform / rbac / org / app / ops）。
 // 授权弹窗与权限目录页共用本模块；域与控制台菜单分组对齐，格式 <域>.<对象>.<动作> 三段式。
 // 分组仅服务展示与收敛，不影响判权、可选性与保存校验。
+import { relatedApiCodes } from '@/utils/permissionTree'
 
 export interface PermissionDomain {
   key: string
@@ -21,21 +22,25 @@ export const PERMISSION_DOMAINS: PermissionDomain[] = [
 
 const DOMAIN_BY_KEY = new Map(PERMISSION_DOMAINS.map(domain => [domain.key, domain]))
 
-/** 管理面五域前缀（业务码与「其他」不属于五域）。 */
-export const MANAGEMENT_DOMAIN_PREFIXES = ['platform.', 'rbac.', 'org.', 'app.', 'ops.'] as const
+/** 管理面五域前缀（业务码与「其他」不属于五域）。菜单/按钮跟所挂接口域走。 */
+export const MANAGEMENT_DOMAIN_PREFIXES = ['platform.', 'rbac.', 'org.', 'app.', 'ops.', 'menu.', 'button.'] as const
 
-/** 管理面码判定：五域前缀任一命中即管理码（替代旧 iam. 前缀判断）。 */
+/** 管理面码判定：五域前缀或菜单/按钮码。 */
 export function isManagementCode(code: string): boolean {
   return MANAGEMENT_DOMAIN_PREFIXES.some(prefix => code.startsWith(prefix))
 }
 
-/** 解析权限编码所属域：五域前缀直接映射；管理面孤儿码归「其他」；业务码归「业务码」。 */
+/** 解析权限编码所属域：五域前缀直接映射；菜单/按钮跟所挂接口域走。 */
 export function resolvePermissionDomain(code: string): PermissionDomain {
   if (code.startsWith('platform.')) return DOMAIN_BY_KEY.get('platform')!
   if (code.startsWith('rbac.')) return DOMAIN_BY_KEY.get('rbac')!
   if (code.startsWith('org.')) return DOMAIN_BY_KEY.get('org')!
   if (code.startsWith('app.')) return DOMAIN_BY_KEY.get('app')!
   if (code.startsWith('ops.')) return DOMAIN_BY_KEY.get('ops')!
+  if (code.startsWith('menu.') || code.startsWith('button.')) {
+    const related = relatedApiCodes(code)
+    if (related.length) return resolvePermissionDomain(related[0])
+  }
   if (isManagementCode(code)) return DOMAIN_BY_KEY.get('other')!
   return DOMAIN_BY_KEY.get('business')!
 }
@@ -77,9 +82,23 @@ const TENANT_SCOPE_CODES = new Set([
   'org.read', 'org.manage', 'rbac.role.read', 'rbac.app_role.assign', 'ops.model.manage',
 ])
 
-/** 解析权限编码所属作用域组：平台/租户按静态归属表，其余管理码归应用，业务命名空间归业务码。 */
+/** 解析权限编码所属作用域组：菜单/按钮全部相关接口为平台码才算平台。 */
 export function resolvePermissionScope(code: string): PermissionScope {
   if (!isManagementCode(code)) return SCOPE_BY_KEY.get('business')!
+  if (code.startsWith('menu.') || code.startsWith('button.')) {
+    const related = relatedApiCodes(code)
+    if (related.length) {
+      const scopes = related.map(api => {
+        if (PLATFORM_SCOPE_CODES.has(api)) return 'platform'
+        if (TENANT_SCOPE_CODES.has(api)) return 'tenant'
+        return 'app'
+      })
+      const unique = new Set(scopes)
+      if (unique.size === 1 && unique.has('platform')) return SCOPE_BY_KEY.get('platform')!
+      if (!unique.has('platform') && unique.size === 1 && unique.has('tenant')) return SCOPE_BY_KEY.get('tenant')!
+      return SCOPE_BY_KEY.get('app')!
+    }
+  }
   if (PLATFORM_SCOPE_CODES.has(code)) return SCOPE_BY_KEY.get('platform')!
   if (TENANT_SCOPE_CODES.has(code)) return SCOPE_BY_KEY.get('tenant')!
   return SCOPE_BY_KEY.get('app')!

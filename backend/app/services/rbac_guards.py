@@ -30,10 +30,7 @@ from app.services.role_provisioning import (
     CONSOLE_ADMIN_ROLE_KEYS,
     L1_ROLE_KEY,
     L2M_ROLE_KEY,
-    L2_PERMISSION_CODES,
     L2_ROLE_KEY,
-    L2M_PERMISSION_CODES,
-    L3_PERMISSION_CODES,
     L3_ROLE_KEY,
     L4_ROLE_KEY,
     TEMPLATE_ROLE_KEYS,
@@ -84,22 +81,36 @@ def user_has_management_code(
     """判定用户是否持某管理面码；L1 平台角色覆盖全部管理码（代管）。"""
     if user_is_platform_admin(user, db):
         return True
-    if tenant_id is None:
-        # 未限定租户的平台级码只认 L1；租户级码必须显式给出租户上下文。
-        return False
-    membership = db.scalar(select(TenantMembership).where(
+    statement = select(TenantMembership).where(
         TenantMembership.user_id == user.id,
-        TenantMembership.tenant_id == tenant_id,
         TenantMembership.status == "active",
-    ))
-    if not membership:
-        return False
+    )
+    if tenant_id is not None:
+        statement = statement.where(TenantMembership.tenant_id == tenant_id)
+    memberships = db.scalars(statement).all()
+    for membership in memberships:
+        if _membership_has_management_code(
+            db, membership, code, application_id=application_id, resource_id=resource_id,
+        ):
+            return True
+    return False
+
+
+def _membership_has_management_code(
+    db: Session,
+    membership: TenantMembership,
+    code: str,
+    *,
+    application_id: UUID | None,
+    resource_id: str | None,
+) -> bool:
+    """在单个成员身份上查管理面码（含应用角色加宽）。"""
+    tenant_id = membership.tenant_id
     roles = list_effective_roles(
         db, membership_id=membership.id, tenant_id=tenant_id, application_id=application_id,
     )
     if application_id is None:
-        # 加宽 L2（11 号文档 §5.3）：应用角色授予的管理面码在其租户内生效。
-        # 本函数只判 management surface 码（下方语句硬编码），业务码不会借此跨域泄漏。
+        # 加宽 L2：应用角色授予的管理面码在其租户内生效。
         roles = list(roles) + list(db.scalars(select(Role).where(
             Role.id.in_(authorized_role_ids_statement(membership.id, tenant_id)),
             Role.status == "active",
@@ -108,7 +119,7 @@ def user_has_management_code(
         )).all())
     if not roles:
         return False
-    statement = (
+    query = (
         select(Permission.id)
         .join(RolePermission, RolePermission.permission_id == Permission.id)
         .where(
@@ -119,10 +130,10 @@ def user_has_management_code(
         )
     )
     if resource_id is not None:
-        statement = statement.where(
+        query = query.where(
             RolePermission.resource_id.is_(None) | (RolePermission.resource_id == resource_id),
         )
-    return db.scalar(statement.limit(1)) is not None
+    return db.scalar(query.limit(1)) is not None
 
 
 
@@ -217,6 +228,36 @@ def ensure_roles(
     raise HTTPException(
         status_code=403,
         detail=detail or f"缺少所需角色：{', '.join(role_keys)}",
+    )
+
+
+def ensure_codes(
+    user: User,
+    db: Session,
+    *codes: str,
+    tenant_id: UUID | None = None,
+    application_id: UUID | None = None,
+    role_keys: Sequence[str] | None = None,
+    detail: str | None = None,
+) -> None:
+    """无匹配接口码时 403。L1 整段放行。role_keys 给五级模板回退，避免改模板规格。"""
+    from app.core.security import is_platform_admin_user
+
+    if is_platform_admin_user(user, db):
+        return
+    held = [code for code in codes if code]
+    for code in held:
+        if user_has_management_code(
+            user, db, code, tenant_id=tenant_id, application_id=application_id,
+        ):
+            return
+    if role_keys and user_has_any_role(
+        user, db, role_keys, tenant_id=tenant_id, application_id=application_id,
+    ):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=detail or f"缺少管理权限：{', '.join(held)}",
     )
 
 
@@ -410,16 +451,21 @@ def list_actor_visible_application_ids(user: User, db: Session) -> set[UUID] | N
 
 
 def actor_grantable_management_codes(user: User, db: Session) -> frozenset[str] | None:
-    """操作者可授、因而可在目录看见的管理面码。None=L1 全量。P405 按已有身份并集。"""
+    """操作者可授、因而可在目录看见的管理面码。None=L1 全量。按已挂码并集（含自定义角色）。"""
     if user_is_platform_admin(user, db):
         return None
     codes: set[str] = set()
-    if user_has_any_role(user, db, (L3_ROLE_KEY,)):
-        codes.update(L3_PERMISSION_CODES)
-    if user_has_any_role(user, db, (L2M_ROLE_KEY,)):
-        codes.update(L2M_PERMISSION_CODES)
-    if user_has_any_role(user, db, (L2_ROLE_KEY,)):
-        codes.update(L2_PERMISSION_CODES)
+    memberships = db.scalars(select(TenantMembership).where(
+        TenantMembership.user_id == user.id,
+        TenantMembership.status == "active",
+    )).all()
+    for membership in memberships:
+        roles = db.scalars(select(Role).where(
+            Role.id.in_(authorized_role_ids_statement(membership.id, membership.tenant_id)),
+            Role.status == "active",
+            Role.tenant_id == membership.tenant_id,
+        )).all()
+        codes.update(_codes_for_roles(db, roles))
     return frozenset(codes)
 
 
@@ -507,8 +553,11 @@ def list_management_capabilities(user: User, db: Session) -> dict:
     {"platform_admin": bool, "platform_codes": [...],
      "tenants": [{"tenant_id", "codes", "applications": [{"application_id", "codes"}]}]}
     """
+    from app.services.permission_kinds import all_ui_codes
+
     platform_admin = user_is_platform_admin(user, db)
-    platform_codes = list(PLATFORM_MANAGEMENT_CODES) if platform_admin else []
+    # L1 带上全部菜单/按钮，侧栏与写按钮才能按码裁剪而不是靠 any-of 旧接口。
+    platform_codes = list(PLATFORM_MANAGEMENT_CODES) + list(all_ui_codes()) if platform_admin else []
 
     tenants_payload: list[dict] = []
     memberships = db.scalars(select(TenantMembership).where(

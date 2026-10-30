@@ -176,6 +176,8 @@ def provision_tenant_admin_role(db: Session, tenant_id: UUID) -> Role:
         description="L3：当前租户下的一切——应用、业务权限码、模型、主题、组织、成员、用户组、审计；可任命应用管理员。平台权限目录写仍仅 L1",
     )
     _grant_codes(db, role, L3_PERMISSION_CODES)
+    from app.services.permission_kinds import extra_ui_codes_for, grant_codes_skip_missing
+    grant_codes_skip_missing(db, role.id, extra_ui_codes_for(L3_PERMISSION_CODES))
     # G32：平台目录写仅 L1，存量 L3 上的 rbac.permission.manage 必须剥掉。
     _revoke_codes(db, role, L3_REVOKED_PERMISSION_CODES)
     db.flush()
@@ -190,6 +192,8 @@ def provision_multi_app_admin_role(db: Session, tenant_id: UUID, application_id:
         description="可管理本应用的平台侧配置，并任命该应用的应用管理员；不能新建或删除应用",
     )
     _grant_codes(db, role, L2M_PERMISSION_CODES)
+    from app.services.permission_kinds import extra_ui_codes_for, grant_codes_skip_missing
+    grant_codes_skip_missing(db, role.id, extra_ui_codes_for(L2M_PERMISSION_CODES))
     db.flush()
     return role
 
@@ -202,6 +206,8 @@ def provision_application_admin_role(db: Session, tenant_id: UUID, application_i
         description="本应用的平台侧管理——配置、密钥、成员与应用角色；不能再任命应用管理员，不能新建应用",
     )
     _grant_codes(db, role, L2_PERMISSION_CODES)
+    from app.services.permission_kinds import extra_ui_codes_for, grant_codes_skip_missing
+    grant_codes_skip_missing(db, role.id, extra_ui_codes_for(L2_PERMISSION_CODES))
     db.flush()
     return role
 

@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { isReservedEmailHost } from '@/utils/emailValidation'
 import AdminListPage from '@/components/AdminListPage.vue'
 
@@ -30,7 +30,7 @@ const props = defineProps<{
 }>()
 
 const invitations = ref<Invitation[]>([])
-const canManageInvites = computed(() => cachedHas('org.invite.manage'))
+const canManageInvites = computed(() => cachedHasAny(['button.invitations.manage']))
 // undefined 才能触发 Select 的 placeholder；'' 会被当作已选值导致空框无占位文案
 const selectedTenantId = ref<string | undefined>(undefined)
 const loading = ref(false)
