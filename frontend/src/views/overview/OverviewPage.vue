@@ -17,7 +17,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  navigate: [page: 'application_workspace' | 'applications']
+  navigate: [page: 'application_workspace']
   refresh: []
 }>()
 
@@ -59,10 +59,10 @@ const setupSteps: Array<{ key: PageKey, index: string, icon: Component, title: s
 ]
 
 const capabilityCards: Array<{ title: string, desc: string, icon: Component, page: PageKey }> = [
-  { title: '应用工作台', desc: '选应用后维护权限编码、角色挂码、资源树与数据范围', icon: AppstoreOutlined, page: 'application_workspace' },
-  { title: '组织工作台', desc: '选组织后查看成员与租户用户组', icon: AppstoreOutlined, page: 'organization_workspace' },
+  { title: '应用工作台', desc: '左树新建或选中应用后维护角色、权限编码、资源树与应用设置', icon: AppstoreOutlined, page: 'application_workspace' },
+  { title: '组织工作台', desc: '左树新建或选中组织后维护成员、用户组与组织设置', icon: AppstoreOutlined, page: 'organization_workspace' },
   { title: '用户管理', desc: '给用户绑定多个角色，权限按角色并集', icon: UserOutlined, page: 'users' },
-  { title: '高级管理', desc: '应用 / 角色 / 权限编码等列表页（默认折叠）', icon: SafetyOutlined, page: 'roles' },
+  { title: '高级管理', desc: '平台角色 / 权限编码 / 用户组（默认折叠）', icon: SafetyOutlined, page: 'roles' },
 ]
 
 // 快捷入口与侧栏路由共用 PAGE_PATHS，避免硬编码 path。

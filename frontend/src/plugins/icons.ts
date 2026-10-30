@@ -34,6 +34,8 @@ export {
   UpOutlined,
   LockOutlined,
   CopyOutlined,
+  PlusOutlined,
+  EllipsisOutlined,
   // 圆圈感叹号：页头副标题 / 工具条提示的降噪入口图标，悬停经 a-tooltip 展示完整说明。
   ExclamationCircleOutlined,
   SettingOutlined,

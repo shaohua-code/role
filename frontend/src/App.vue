@@ -17,7 +17,6 @@ import AuthEntry from '@/views/auth/AuthEntry.vue'
 import { NAV_ITEMS, PAGE_INFO as pageInfo, PAGE_PATHS, type PageKey } from '@/router/navigation'
 import { asPagedList } from '@/utils/paged'
 import {
-  ApplicationManagement,
   ApplicationWorkspace,
   AuditLogPage,
   AuthorizationSimulator,
@@ -25,7 +24,6 @@ import {
   InvitationManagement,
   LoginThemeManagement,
   ModelGovernancePage,
-  OrganizationManagement,
   OrganizationWorkspace,
   OverviewPage,
   PermissionCatalog,
@@ -133,8 +131,7 @@ const platformTenantOptions = computed(() => tenants.value.map(tenant => ({
 const heldCodes = computed(() => capabilities.value ? allCodes(capabilities.value) : new Set<string>())
 // 绿场统一导航（11 号文档 §6.3）：平台与租户模式共用 NAV_ITEMS + 能力过滤。
 // Wave 1 对齐 user-centent：「应用与权限」组以应用工作台为主入口。
-// 高级管理改造：应用/角色/权限三个列表页归入侧栏「高级管理」折叠组（低频全局能力），
-// 不再区分平台/租户模式做侧栏排除，能力满足即展示；应用角色只在应用工作台配置。
+// 高级管理只留平台角色 / 权限编码 / 用户组；应用与组织目录已收口到工作台。
 const visibleNavigation = computed(() => {
   if (consoleMode.value === 'no_access') return []
   return NAV_ITEMS.filter(item => hasAnyCode(heldCodes.value, item.requiredPermissions))
@@ -291,7 +288,7 @@ async function initializeConsole(user: { id?: string; capabilities?: Capabilitie
   if (firstTenantId && heldCodes.value.has('org.read')) {
     roleOptions.value = await api<Row[]>(`/tenant-admin/roles?tenant_id=${encodeURIComponent(firstTenantId)}`).catch(() => [])
   }
-  const firstPage = visibleNavigation.value[0]?.key || 'organizations'
+  const firstPage = visibleNavigation.value[0]?.key || 'organization_workspace'
   visitedPages.value = new Set<PageKey>([firstPage])
   await router.replace(PAGE_PATHS[firstPage])
 }
@@ -508,13 +505,13 @@ onUnmounted(() => {
               @refresh="() => loadPage(true)"
             />
           </div>
-          <!-- 应用工作台：左树选应用 + 角色/权限编码/资源树 Tab（日常主入口）。 -->
+          <!-- 应用工作台：左树选应用 + 角色/权限编码/资源树 Tab；新建与设置都走节点更多。 -->
           <div v-if="visitedPages.has('application_workspace')" v-show="page === 'application_workspace'">
             <ApplicationWorkspace
               :active="page === 'application_workspace'"
               :console-mode="consoleMode === 'tenant' ? 'tenant' : 'platform'"
               :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: tenant.can_create_applications === true }))"
+              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), kind: tenant.kind === 'consumer' ? 'consumer' : 'organization', can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: consoleMode === 'platform' || tenant.can_create_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
               :shell-applications="consoleMode === 'platform' ? applications : null"
               :shell-catalog-generation="platformCatalogGeneration"
               @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined"
@@ -539,14 +536,6 @@ onUnmounted(() => {
               :shell-tenants="consoleMode === 'platform' ? tenants : null"
               @changed="() => loadDictionaries(true)"
             />
-          </div>
-          <div v-if="visitedPages.has('applications')" v-show="page === 'applications'">
-            <ApplicationManagement :active="page === 'applications'"
-              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :shell-catalog-generation="platformCatalogGeneration"
-              :shell-applications="consoleMode === 'platform' ? applications : null"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: tenant.can_create_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
-              @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined" />
           </div>
           <div v-if="visitedPages.has('audit')" v-show="page === 'audit'">
             <AuditLogPage :active="page === 'audit'" />
@@ -581,19 +570,15 @@ onUnmounted(() => {
               :active="page === 'users'"
               :current-user-id="String(currentUser?.id || '')"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
+              :applications="applications.map(application => ({ id: String(application.id), name: String(application.name) }))"
               @changed="() => loadDictionaries(true)" />
           </div>
-          <div v-if="visitedPages.has('organizations')" v-show="page === 'organizations'">
-            <OrganizationManagement :active="page === 'organizations'"
-              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined, can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true, can_manage_organizations: consoleMode === 'platform' || tenant.can_manage_organizations === true }))" />
-          </div>
-          <!-- Wave 2 组织工作台：左组织树 + 成员/用户组 Tab；组织仍挂租户，用户组仅在组织上下文展示。 -->
+          <!-- 组织工作台：左组织树 + 成员/用户组 Tab；新建与设置都走节点更多。 -->
           <div v-if="visitedPages.has('organization_workspace')" v-show="page === 'organization_workspace'">
             <OrganizationWorkspace
               :active="page === 'organization_workspace'"
               :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true }))"
+              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined, can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true, can_manage_organizations: consoleMode === 'platform' || tenant.can_manage_organizations === true }))"
             />
           </div>
           <div v-if="visitedPages.has('groups')" v-show="page === 'groups'">

@@ -20,9 +20,22 @@ interface UserRecord {
   tenant_count: number
   created_at: string
 }
-interface RoleOption { id: string; tenant_id: string; key: string; name: string; status: string }
-/** 角色穿梭框数据项：key=角色 ID，roleKey=角色标识（英文）。 */
-interface RoleTransferItem { key: string; title: string; roleKey: string; active: boolean }
+interface RoleOption {
+  id: string
+  tenant_id: string
+  application_id?: string | null
+  key: string
+  name: string
+  status: string
+}
+/** 角色穿梭框数据项：列表展示中文名称，英文标识仅用于搜索。 */
+interface RoleTransferItem {
+  key: string
+  title: string
+  roleKey: string
+  applicationName: string
+  active: boolean
+}
 interface SelectOption { label: string; value: string; disabled?: boolean }
 interface MembershipRecord {
   tenant_id: string
@@ -39,7 +52,15 @@ interface UserSession {
   expires_at: string
 }
 
-const props = defineProps<{ active: boolean; tenants: TenantOption[]; currentUserId?: string }>()
+const props = withDefaults(defineProps<{
+  active: boolean
+  tenants: TenantOption[]
+  applications?: Array<{ id: string; name: string }>
+  currentUserId?: string
+}>(), {
+  applications: () => [],
+  currentUserId: '',
+})
 const emit = defineEmits<{ changed: [] }>()
 
 const users = ref<UserRecord[]>([])
@@ -133,14 +154,24 @@ const boundRoleIds = ref<string[]>([])
 const boundRoleKeySet = computed(() => new Set(boundRoleIds.value))
 // 穿梭框数据源：当前租户全部角色（含停用）；antd Transfer 直接读取 item.disabled，
 // 停用且未绑定的角色禁止新勾入，已绑定的停用角色保留可移除。
+const applicationNameById = computed(() => {
+  const names = new Map<string, string>()
+  for (const application of props.applications) names.set(application.id, application.name)
+  return names
+})
+
 const roleTransferItems = computed<Array<RoleTransferItem & { disabled: boolean }>>(() => roles.value
   .filter(role => role.tenant_id === roleTenantId.value)
   .map(role => {
     const active = role.status === 'active'
+    const applicationName = role.application_id
+      ? (applicationNameById.value.get(role.application_id) || '')
+      : ''
     return {
       key: role.id,
       title: role.name,
       roleKey: role.key,
+      applicationName,
       active,
       disabled: !active && !boundRoleKeySet.value.has(role.id),
     }
@@ -151,11 +182,13 @@ function filterRoleTransfer(inputValue: string, item: RoleTransferItem): boolean
   return !keyword
     || item.title.toLowerCase().includes(keyword)
     || item.roleKey.toLowerCase().includes(keyword)
+    || item.applicationName.toLowerCase().includes(keyword)
 }
 
-// 穿梭框列表项展示英文角色标识；角色名称在 title 中用于搜索与悬浮提示。
+// 列表展示中文角色名；应用角色附带应用名，避免多个「应用管理员」分不清。
 function renderRoleTransfer(item: RoleTransferItem): string {
-  return `${item.roleKey}${item.active ? '' : ' · 已停用'}`
+  const scope = item.applicationName ? `（${item.applicationName}）` : ''
+  return `${item.title}${scope}${item.active ? '' : ' · 已停用'}`
 }
 
 const columns = [
@@ -671,6 +704,7 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
             show-search
             :disabled="!roleTenantId"
             :titles="['可选角色', '已配置角色']"
+            :locale="{ itemUnit: '项', itemsUnit: '项', searchPlaceholder: '搜索角色名称' }"
             :filter-option="filterRoleTransfer"
             :render="renderRoleTransfer"
             :list-style="{ width: '46%', height: '300px' }"

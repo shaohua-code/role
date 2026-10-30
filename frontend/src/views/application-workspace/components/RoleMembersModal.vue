@@ -1,9 +1,11 @@
 <script setup lang="ts">
-// 角色行「配置成员」：只操作当前应用角色的绑定，复用租户台 bind / unbind 接口。
-import { ref, watch } from 'vue'
+// 角色行「配置成员」：已绑定列表 + 「增加成员」多选弹窗；绑定仍走租户台 PUT。
+import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
 import AdminEmpty from '@/components/AdminEmpty.vue'
+import AdminSearchField from '@/components/AdminSearchField.vue'
+import { asPagedList } from '@/utils/paged'
 
 interface RoleAssignment {
   id: string
@@ -17,6 +19,12 @@ interface MemberRecord {
   email: string | null
   display_name: string
   roles: RoleAssignment[]
+}
+interface CandidateRecord {
+  user_id: string
+  email: string | null
+  display_name: string
+  already_bound: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -33,7 +41,6 @@ const props = withDefaults(defineProps<{
 
 const open = defineModel<boolean>('open', { default: false })
 
-const email = ref('')
 const saving = ref(false)
 const loading = ref(false)
 const removingUserId = ref('')
@@ -42,12 +49,41 @@ const total = ref(0)
 const page = ref(1)
 const PAGE_SIZE = 20
 
+const pickerOpen = ref(false)
+const pickerLoading = ref(false)
+const pickerKeyword = ref('')
+const pickerQuery = ref('')
+const pickerPage = ref(1)
+const pickerTotal = ref(0)
+const candidates = ref<CandidateRecord[]>([])
+const selectedKeys = ref<string[]>([])
+const selectedById = ref<Record<string, CandidateRecord>>({})
+const PICKER_PAGE_SIZE = 20
+
 const columns = [
   { title: '成员', dataIndex: 'display_name', key: 'display_name', ellipsis: true },
   { title: '邮箱', dataIndex: 'email', key: 'email', ellipsis: true },
   { title: '来源', dataIndex: 'sources', key: 'sources', width: 120 },
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 96 },
 ]
+
+const pickerColumns = [
+  { title: '成员', dataIndex: 'display_name', key: 'display_name', ellipsis: true },
+  { title: '邮箱', dataIndex: 'email', key: 'email', ellipsis: true },
+  { title: '状态', dataIndex: 'already_bound', key: 'already_bound', width: 120 },
+]
+
+const selectedCount = computed(() => Object.keys(selectedById.value).length)
+
+// 表格多选：已在该角色中的人禁用勾选；跨页保留已选项。
+const pickerRowSelection = computed(() => ({
+  selectedRowKeys: selectedKeys.value,
+  preserveSelectedRowKeys: true,
+  onChange: onPickerSelectChange,
+  getCheckboxProps: (record: CandidateRecord) => ({
+    disabled: record.already_bound || !record.email,
+  }),
+}))
 
 function currentAssignment(record: MemberRecord): RoleAssignment | undefined {
   return record.roles.find(role => role.id === props.roleId)
@@ -81,23 +117,89 @@ async function loadMembers(nextPage = page.value): Promise<void> {
   }
 }
 
-async function bindMember(): Promise<void> {
-  if (!props.canManage || !props.applicationId || !props.roleId) return
-  if (!email.value.trim()) {
-    message.error('请填写租户成员邮箱')
+async function loadCandidates(nextPage = pickerPage.value): Promise<void> {
+  if (!props.applicationId || !props.roleId) {
+    candidates.value = []
+    pickerTotal.value = 0
     return
   }
-  saving.value = true
+  pickerLoading.value = true
   try {
-    await api(`/tenant-admin/applications/${props.applicationId}/role-bindings`, {
-      method: 'PUT',
-      body: JSON.stringify({ email: email.value.trim(), role_id: props.roleId }),
+    const params = new URLSearchParams({
+      role_id: props.roleId,
+      limit: String(PICKER_PAGE_SIZE),
+      offset: String((nextPage - 1) * PICKER_PAGE_SIZE),
     })
-    email.value = ''
-    message.success('已绑定该应用角色，并同时成为该应用的平台成员')
-    await loadMembers(1)
+    if (pickerQuery.value) params.set('q', pickerQuery.value)
+    const result = asPagedList(await api<CandidateRecord[] | { items: CandidateRecord[] }>(
+      `/tenant-admin/applications/${props.applicationId}/member-candidates?${params}`,
+    ))
+    candidates.value = result.items
+    pickerTotal.value = result.total
+    pickerPage.value = nextPage
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '绑定失败；请确认对方已是本租户成员')
+    candidates.value = []
+    pickerTotal.value = 0
+    message.error(error instanceof Error ? error.message : '读取租户成员失败')
+  } finally {
+    pickerLoading.value = false
+  }
+}
+
+function onPickerSelectChange(keys: (string | number)[], rows: CandidateRecord[]): void {
+  const next: Record<string, CandidateRecord> = {}
+  for (const key of keys.map(String)) {
+    const fromRow = rows.find(item => item.user_id === key)
+    const previous = selectedById.value[key]
+    const record = fromRow || previous
+    if (record && !record.already_bound && record.email) next[key] = record
+  }
+  selectedById.value = next
+  selectedKeys.value = Object.keys(next)
+}
+
+function openPicker(): void {
+  pickerKeyword.value = ''
+  pickerQuery.value = ''
+  selectedKeys.value = []
+  selectedById.value = {}
+  pickerOpen.value = true
+  void loadCandidates(1)
+}
+
+function onPickerSearch(query: string): void {
+  pickerQuery.value = query
+  void loadCandidates(1)
+}
+
+async function confirmPicker(): Promise<void> {
+  const toBind = Object.values(selectedById.value).filter(item => item.email && !item.already_bound)
+  if (!toBind.length) {
+    message.warning('请选择要增加的成员')
+    return
+  }
+  if (!props.canManage || !props.applicationId || !props.roleId) return
+  saving.value = true
+  let ok = 0
+  let fail = 0
+  try {
+    for (const member of toBind) {
+      try {
+        await api(`/tenant-admin/applications/${props.applicationId}/role-bindings`, {
+          method: 'PUT',
+          body: JSON.stringify({ email: member.email, role_id: props.roleId }),
+        })
+        ok += 1
+      } catch {
+        fail += 1
+      }
+    }
+    if (ok) message.success(`已绑定 ${ok} 名成员，并同时成为该应用的平台成员`)
+    if (fail) message.error(`${fail} 名成员绑定失败`)
+    if (ok) {
+      pickerOpen.value = false
+      await loadMembers(1)
+    }
   } finally {
     saving.value = false
   }
@@ -125,14 +227,18 @@ function onTableChange(pagination: { current?: number }): void {
   void loadMembers(pagination.current || 1)
 }
 
+function onPickerTableChange(pagination: { current?: number }): void {
+  void loadCandidates(pagination.current || 1)
+}
+
 watch(() => [open.value, props.applicationId, props.roleId] as const, ([visible]) => {
   if (visible) {
-    email.value = ''
     void loadMembers(1)
   } else {
     members.value = []
     total.value = 0
     page.value = 1
+    pickerOpen.value = false
   }
 })
 </script>
@@ -145,19 +251,16 @@ watch(() => [open.value, props.applicationId, props.roleId] as const, ([visible]
     :destroy-on-close="true"
   >
     <div class="flex flex-col gap-4">
-      <p class="m-0 text-xs text-[var(--color-text-muted)]">
-        会同时成为该应用的平台成员；已有则跳过。用户组继承的角色只能改用户组，不能在这里移除。
-      </p>
-      <div v-if="canManage" class="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <a-input
-          v-model:value="email"
-          type="email"
-          autocomplete="off"
-          class="min-w-0 flex-1"
-          placeholder="租户成员邮箱"
-          @press-enter="bindMember"
-        />
-        <a-button type="primary" :loading="saving" :disabled="!email.trim()" @click="bindMember">绑定</a-button>
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <p class="m-0 text-xs text-[var(--color-text-muted)]">
+          会同时成为该应用的平台成员；已有则跳过。用户组继承的角色只能改用户组，不能在这里移除。
+        </p>
+        <a-button
+          v-if="canManage"
+          type="primary"
+          class="shrink-0"
+          @click="openPicker"
+        >增加成员</a-button>
       </div>
       <a-table
         :data-source="members"
@@ -191,4 +294,47 @@ watch(() => [open.value, props.applicationId, props.roleId] as const, ([visible]
       </a-table>
     </div>
   </a-drawer>
+
+  <a-modal
+    v-model:open="pickerOpen"
+    :title="`增加成员 — ${roleName || '应用角色'}`"
+    ok-text="确定"
+    cancel-text="取消"
+    :confirm-loading="saving"
+    :ok-button-props="{ disabled: selectedCount === 0 }"
+    :width="640"
+    :destroy-on-close="true"
+    @ok="confirmPicker"
+  >
+    <div class="flex flex-col gap-3">
+      <AdminSearchField
+        v-model="pickerKeyword"
+        placeholder="搜索姓名或邮箱"
+        @search="onPickerSearch"
+      />
+      <p class="m-0 text-xs text-[var(--color-text-muted)]">
+        列出本租户成员；已在该角色中的不可再选。已选 {{ selectedCount }} 人。
+      </p>
+      <a-table
+        :data-source="candidates"
+        :columns="pickerColumns"
+        :loading="pickerLoading"
+        :row-selection="pickerRowSelection"
+        row-key="user_id"
+        size="small"
+        :pagination="{ current: pickerPage, pageSize: PICKER_PAGE_SIZE, total: pickerTotal, showSizeChanger: false }"
+        @change="onPickerTableChange"
+      >
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'already_bound'">
+            <a-tag v-if="(record as CandidateRecord).already_bound">已在角色中</a-tag>
+            <span v-else class="text-xs text-[var(--color-text-muted)]">可添加</span>
+          </template>
+        </template>
+        <template #emptyText>
+          <AdminEmpty emoji="👥" description="没有可添加的租户成员" />
+        </template>
+      </a-table>
+    </div>
+  </a-modal>
 </template>

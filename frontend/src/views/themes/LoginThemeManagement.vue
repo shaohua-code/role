@@ -55,7 +55,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:selectedApplicationId': [id: string]
-  navigate: [page: 'applications']
+  navigate: [page: 'application_workspace']
 }>()
 
 function createDefaultTheme(): ThemeConfig {
@@ -486,7 +486,7 @@ async function saveTheme(publish: boolean): Promise<void> {
   </div>
   <a-card v-else class="data-card">
     <AdminEmpty emoji="🧩" description="请先创建应用，再配置该应用的登录主题">
-      <a-button type="primary" @click="emit('navigate', 'applications')">前往应用管理</a-button>
+      <a-button type="primary" @click="emit('navigate', 'application_workspace')">前往应用工作台创建</a-button>
     </AdminEmpty>
   </a-card>
 </template>

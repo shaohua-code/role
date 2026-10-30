@@ -18,6 +18,7 @@ from app.api.v1.admin.access_control import (
 from app.api.v1.admin.applications import create_application, delete_application
 from app.api.v1.tenant_admin.application_roles import (
     bind_application_role,
+    list_application_member_candidates,
     list_application_members,
     list_application_permissions,
     list_application_roles,
@@ -275,6 +276,48 @@ class P405LayeringTests(unittest.TestCase):
         self.assertIn(str(self.member.id), ids)
         self.assertNotIn(str(other.id), ids)
         self.assertEqual(filtered["total"], 1)
+
+    def test_list_member_candidates_marks_already_bound(self) -> None:
+        unbound = self._user("unbound")
+        self._membership(unbound)
+        self.db.commit()
+        payload = list_application_member_candidates(
+            self.application.id, None, self.reader.id, 50, 0, actor=self.l2, db=self.db,
+        )
+        by_id = {item["user_id"]: item for item in payload["items"]}
+        self.assertIn(str(unbound.id), by_id)
+        self.assertFalse(by_id[str(unbound.id)]["already_bound"])
+        bind_application_role(
+            self.application.id,
+            ApplicationRoleBindingCreate(email=unbound.email, role_id=self.reader.id),
+            self.request, actor=self.l3, db=self.db,
+        )
+        payload = list_application_member_candidates(
+            self.application.id, None, self.reader.id, 50, 0, actor=self.l2, db=self.db,
+        )
+        by_id = {item["user_id"]: item for item in payload["items"]}
+        self.assertTrue(by_id[str(unbound.id)]["already_bound"])
+
+    def test_l2_cannot_list_other_app_member_candidates(self) -> None:
+        other = Application(
+            tenant_id=self.tenant.id, client_id=f"b-{uuid4().hex[:8]}",
+            name="应用B", permission_namespace="appb",
+            redirect_uris=["https://b.example.com/cb"], status="active",
+        )
+        self.db.add(other)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as ctx:
+            list_application_member_candidates(
+                other.id, None, None, 20, 0, actor=self.l2, db=self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_plain_member_cannot_list_member_candidates(self) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            list_application_member_candidates(
+                self.application.id, None, None, 20, 0, actor=self.member, db=self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
 
     def test_member_gets_business_code_from_application_role(self) -> None:
         self.db.add(RolePermission(role_id=self.reader.id, permission_id=self.business.id))

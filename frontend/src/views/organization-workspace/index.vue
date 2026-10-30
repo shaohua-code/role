@@ -1,16 +1,16 @@
 <script setup lang="ts">
-// 组织工作台（对齐 user-center-sys department 信息架构）：
-// 左树选组织 + 右侧「成员 / 用户组」两个 Tab；组织仍挂租户，用户组仅在组织上下文展示。
-// Wave 4 收口：空态强化组织上下文三步引导，并提供前往组织管理创建的出口。
+// 组织工作台：左树选组织 + 右侧「成员 / 用户组」Tab。
+// 树顶「新建组织」；节点「更多」也可新建下级，并承接负责人 / 启停 / 删除。
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
-import { PAGE_PATHS } from '@/router/navigation'
+import { getCachedCapabilities } from '@/api/capabilities'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 import AdminPathGuide from '@/components/AdminPathGuide.vue'
-import OrgTree, { type OrgTreeOrganization } from './components/OrgTree.vue'
+import OrgTree, { type OrgMoreAction, type OrgTreeOrganization } from './components/OrgTree.vue'
+import CreateOrganizationModal from './components/CreateOrganizationModal.vue'
+import OrganizationMoreHost from './components/OrganizationMoreHost.vue'
 import MembersTab from './tabs/MembersTab.vue'
 import GroupsTab from './tabs/GroupsTab.vue'
 
@@ -18,21 +18,16 @@ interface TenantOption {
   id: string
   name: string
   status: string
+  slug?: string
   can_read_organizations?: boolean
+  can_manage_organizations?: boolean
 }
 
-// 组织上下文三步（空态引导与页头副标题共用口径）。
 const MAIN_PATH_STEPS = [
-  '在「组织管理」创建组织并挂到租户',
+  '在左树顶部点「新建组织」，或在节点「更多」里新建下级',
   '在左侧选中组织，在「成员」查看直接挂接的成员',
   '在「用户组」查看租户用户组并管理成员/角色',
 ] as const
-
-const router = useRouter()
-
-function goOrganizationManagement(): void {
-  void router.push(PAGE_PATHS.organizations)
-}
 
 const props = withDefaults(defineProps<{
   active: boolean
@@ -45,21 +40,44 @@ const props = withDefaults(defineProps<{
 const organizations = ref<OrgTreeOrganization[]>([])
 const selectedId = ref('')
 const loading = ref(false)
+const createOpen = ref(false)
+const createTenantId = ref('')
+const createParentId = ref('')
+const moreAction = ref<OrgMoreAction | ''>('')
+const moreOrganizationId = ref('')
 let requestSequence = 0
 
 const selectedOrganization = computed(() =>
   organizations.value.find(item => item.id === selectedId.value) || null)
 
-// 默认选中首个组织；列表为空或原选择被删时回退。
+const moreOrganization = computed(() =>
+  organizations.value.find(item => item.id === moreOrganizationId.value) || null)
+
+const readableTenants = computed(() => props.tenants.filter(tenant =>
+  tenant.slug !== 'platform' && tenant.can_read_organizations === true))
+
+const creatableTenants = computed(() => props.tenants.filter(tenant => {
+  if (tenant.slug === 'platform' || tenant.status !== 'active') return false
+  if (getCachedCapabilities()?.platform_admin) return true
+  return tenant.can_manage_organizations === true
+}))
+
+const canCreateOrganization = computed(() => creatableTenants.value.length > 0)
+
+const treeTenants = computed(() => readableTenants.value.map(tenant => ({
+  id: tenant.id,
+  name: tenant.name,
+  canCreate: creatableTenants.value.some(item => item.id === tenant.id),
+})))
+
 function ensureSelection(): void {
   if (!organizations.value.some(item => item.id === selectedId.value)) {
     selectedId.value = organizations.value[0]?.id || ''
   }
 }
 
-// 组织目录按可读租户并发拉取后合并；个别租户权限刚被撤销不影响其余目录。
 async function loadOrganizations(): Promise<void> {
-  const readable = props.tenants.filter(tenant => tenant.can_read_organizations)
+  const readable = readableTenants.value
   if (!props.active || !readable.length) {
     organizations.value = []
     selectedId.value = ''
@@ -80,6 +98,8 @@ async function loadOrganizations(): Promise<void> {
       name: String(row.name),
       key: String(row.key ?? ''),
       status: row.status === 'disabled' ? 'disabled' : 'active',
+      owner_user_id: row.owner_user_id ? String(row.owner_user_id) : null,
+      owner_name: typeof row.owner_name === 'string' ? row.owner_name : null,
     })))
     ensureSelection()
   } catch (error) {
@@ -96,7 +116,33 @@ function onSelect(organization: OrgTreeOrganization): void {
   selectedId.value = organization.id
 }
 
-// 激活时加载；租户字典晚于页面就绪时（平台壳异步拉取）自动补载。
+function onOrganizationMore(payload: { id: string; action: OrgMoreAction }): void {
+  selectedId.value = payload.id
+  moreOrganizationId.value = payload.id
+  moreAction.value = payload.action
+}
+
+function openCreate(payload?: { tenantId: string; parentId?: string }): void {
+  createTenantId.value = payload?.tenantId || creatableTenants.value[0]?.id || ''
+  createParentId.value = payload?.parentId || ''
+  createOpen.value = true
+}
+
+async function onOrganizationCreated(payload: { id: string }): Promise<void> {
+  await loadOrganizations()
+  selectedId.value = payload.id
+}
+
+function onSettingsChanged(): void {
+  void loadOrganizations()
+}
+
+function onOrganizationDeleted(): void {
+  selectedId.value = ''
+  moreOrganizationId.value = ''
+  void loadOrganizations()
+}
+
 watch(() => props.active, active => {
   if (active) void loadOrganizations()
 }, { immediate: true })
@@ -112,26 +158,25 @@ watch(() => props.tenants, () => {
       class="shrink-0"
       eyebrow="ORGANIZATION WORKSPACE"
       title="组织工作台"
-      subtitle="组织归属租户：① 左侧选择组织；② 在「成员」查看直接挂接的成员；③ 在「用户组」查看租户用户组并管理成员/角色。成员的组织归属在「用户管理」中维护。"
+      subtitle="组织归属租户：① 左侧选择或新建组织；② 在「成员」查看直接挂接的成员；③ 在「用户组」查看租户用户组。启停与负责人在「设置」。"
     />
-    <!-- UI 检查（P348）修复：窄屏上下堆叠（树在上），lg 及以上保持左右布局。 -->
-    <!-- P358：桌面档左右两栏各自内滚、高度撑满视口底部，消除整页滚动。 -->
     <div class="flex w-full min-w-0 flex-col items-stretch gap-4 lg:min-h-0 lg:flex-1 lg:flex-row">
-      <!-- 窄屏限高：树过长时内部滚动；桌面档两栏等高内滚。 -->
       <OrgTree
         class="max-h-80 w-full shrink-0 overflow-y-auto lg:h-full lg:max-h-none lg:w-64"
         :organizations="organizations"
+        :tenants="treeTenants"
         :selected-id="selectedId"
         :loading="loading"
         @select="onSelect"
+        @create="openCreate"
+        @more="onOrganizationMore"
       />
       <div class="min-w-0 flex-1 lg:h-full lg:min-h-0 lg:overflow-y-auto">
-        <!-- 无任何组织：给出三步引导 + 创建出口（Wave 4 空态强化）。 -->
         <a-card v-if="!selectedOrganization && !loading && !organizations.length" class="mgmt-data-card h-full" :bordered="false">
           <AdminEmpty emoji="🏛️" description="还没有可查看的组织">
             <div class="flex flex-col items-center gap-4">
               <AdminPathGuide :steps="MAIN_PATH_STEPS" title="创建组织后，按以下三步完成日常管理" />
-              <a-button type="primary" @click="goOrganizationManagement">前往组织管理创建</a-button>
+              <a-button v-if="canCreateOrganization" type="primary" @click="openCreate()">新建组织</a-button>
             </div>
           </AdminEmpty>
         </a-card>
@@ -167,5 +212,22 @@ watch(() => props.tenants, () => {
         </a-card>
       </div>
     </div>
+    <CreateOrganizationModal
+      v-model:open="createOpen"
+      :api-prefix="apiPrefix"
+      :tenants="creatableTenants"
+      :organizations="organizations"
+      :preset-tenant-id="createTenantId"
+      :preset-parent-id="createParentId"
+      @created="onOrganizationCreated"
+    />
+    <OrganizationMoreHost
+      v-model:action="moreAction"
+      :organization="moreOrganization"
+      :tenants="tenants"
+      :api-prefix="apiPrefix"
+      @changed="onSettingsChanged"
+      @deleted="onOrganizationDeleted"
+    />
   </section>
 </template>

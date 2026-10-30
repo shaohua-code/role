@@ -5,7 +5,6 @@
 import type { Component } from 'vue'
 import type { PageKey } from '@/router/navigation'
 import {
-  ApplicationManagement,
   ApplicationWorkspace,
   AuditLogPage,
   AuthorizationSimulator,
@@ -13,7 +12,6 @@ import {
   InvitationManagement,
   LoginThemeManagement,
   ModelGovernancePage,
-  OrganizationManagement,
   OrganizationWorkspace,
   OverviewPage,
   PermissionCatalog,
@@ -30,10 +28,8 @@ export const PAGE_COMPONENTS: Partial<Record<PageKey, Component>> = {
   groups: GroupManagement,
   invitations: InvitationManagement,
   application_workspace: ApplicationWorkspace,
-  applications: ApplicationManagement,
   roles: RoleManagement,
   permissions: PermissionCatalog,
-  organizations: OrganizationManagement,
   tenants: TenantManagement,
   tenant_access: TenantAccessManagement,
   themes: LoginThemeManagement,

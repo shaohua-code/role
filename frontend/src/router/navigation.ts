@@ -4,11 +4,9 @@ import {
   AppstoreOutlined,
   AuditOutlined,
   BankOutlined,
-  ClusterOutlined,
   DashboardOutlined,
   ExperimentOutlined,
   FileSearchOutlined,
-  HomeOutlined,
   MailOutlined,
   SafetyCertificateOutlined,
   SafetyOutlined,
@@ -68,7 +66,7 @@ export const NAV_GROUPS: NavGroupMeta[] = [
 
 /**
  * 主路径：组织/应用工作台 + 用户多角色。
- * 散页列表（应用/角色/权限编码/组织/用户组）降级到「高级管理」，路由与深链保留。
+ * 高级管理只留平台角色 / 权限编码 / 用户组；应用与组织的目录 CRUD 收口到对应工作台。
  */
 export const NAV_ITEMS: NavigationItem[] = [
   { key: 'overview', icon: AppstoreOutlined, label: '运营总览', group: 'root', requiredPermissions: ['platform.overview.read'] },
@@ -79,10 +77,8 @@ export const NAV_ITEMS: NavigationItem[] = [
 
   { key: 'application_workspace', icon: ApartmentOutlined, label: '应用工作台', group: 'access', requiredPermissions: ['app.read', 'rbac.app_role.read', 'rbac.role.read'] },
 
-  { key: 'applications', icon: ClusterOutlined, label: '应用管理', group: 'advanced', requiredPermissions: ['app.read', 'app.manage'] },
   { key: 'roles', icon: SafetyCertificateOutlined, label: '平台角色', group: 'advanced', requiredPermissions: ['rbac.role.read', 'rbac.app_role.read'] },
   { key: 'permissions', icon: SafetyOutlined, label: '权限编码', group: 'advanced', requiredPermissions: ['rbac.permission.read'] },
-  { key: 'organizations', icon: HomeOutlined, label: '组织管理', group: 'advanced', requiredPermissions: ['org.read'] },
   { key: 'groups', icon: TeamOutlined, label: '用户组', group: 'advanced', requiredPermissions: ['org.group.read'] },
 
   { key: 'tenants', icon: BankOutlined, label: '租户管理', group: 'platform', requiredPermissions: ['platform.tenant.read'] },
@@ -96,8 +92,10 @@ export const NAV_ITEMS: NavigationItem[] = [
 
 export const TENANT_MERGED_PAGES: Partial<Record<PageKey, PageKey>> = {
   tenant_access: 'users',
-  // 应用角色与成员已收口到应用工作台；旧深链继续跳过去。
+  // 应用角色与成员、应用目录、组织目录均已收口到对应工作台；旧深链继续跳过去。
   application_roles: 'application_workspace',
+  applications: 'application_workspace',
+  organizations: 'organization_workspace',
 }
 
 export const PAGE_INFO: Record<PageKey, { title: string }> = {

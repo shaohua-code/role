@@ -6,6 +6,10 @@ metadata:
 ---
 Admin UI changes must follow the UI hard rules in docs/产品需求.md (reuse shared components; folder/index layout; related files in one folder).
 
+**2026-10-30 app role member picker:** 配置成员 uses 增加成员 modal (tenant roster, multi-select). New `GET /tenant-admin/applications/{id}/member-candidates` gated by application admin access. Bind still PUT email. Isolated unittest 28/28; `npm run build` exit 0. Browser member-picker write not walked. No `--更新`, no migration, no DeerFlow.
+
+**2026-10-30 workspace app/org directory IA:** Retired 应用管理 / 组织管理 nav; `/applications` and `/organizations` redirect to workspaces. Create from left-tree `+`; edit/OIDC/secret/status/owner from tree-node 更多 menus (no 设置 Tab). Advanced admin keeps 平台角色 / 权限编码 / 用户组. Isolated unittest not run; `npm run build` pending this round. No `--更新`, no migration, no DeerFlow.
+
 **2026-10-29 workspace application-role IA:** Retired 应用角色与成员 nav; `/application-roles` redirects to application workspace. Role row opens 应用权限 (resource codes + resource tree + data scope) and 配置成员. Members list accepts `role_id`. Resource tree always uses `/admin`. Isolated unittest 48/48; `npm run build` exit 0. Browser: sidebar/menu/drawer tabs checked; member bind write not exercised. No `--更新`, no migration, no DeerFlow.
 
 **2026-10-29 preset role grants by level:** L1/L3/L2M/L2 can edit preset platform roles at their level or below; cannot edit upward templates or grant codes they do not hold. Isolated unittest 44/44; `npm run build` exit 0. Browser login walkthrough not run.

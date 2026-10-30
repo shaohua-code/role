@@ -38,8 +38,10 @@ export const router = createRouter({
     ...adminRoutes,
     // Wave 1：「新项目接入」已从导航下线，旧深链重定向到应用工作台。
     { path: '/project-integration', redirect: PAGE_PATHS.application_workspace },
-    // 应用角色与成员已收口到应用工作台；保留字面路径以免旧书签 404。
+    // 应用角色与成员、应用目录、组织目录已收口到工作台；保留字面路径以免旧书签 404。
     { path: '/application-roles', redirect: PAGE_PATHS.application_workspace },
+    { path: '/applications', redirect: PAGE_PATHS.application_workspace },
+    { path: '/organizations', redirect: PAGE_PATHS.organization_workspace },
     // 租户专属旧深链重定向到融合后的统一页面。
     ...Object.entries(TENANT_MERGED_PAGES).map(([from, to]): RouteRecordRaw => ({
       path: PAGE_PATHS[from as PageKey],
