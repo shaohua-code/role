@@ -1,4 +1,4 @@
-name: iam-platform
+﻿name: iam-platform
 
 services:
   postgres:
@@ -34,6 +34,30 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  # 绿场种子是独立的一次性数据库写操作；在迁移后执行，写入权限目录/四级角色模板/平台租户。
+  seed-greenfield:
+    image: iam-platform-api:dev-oidc-consent-v1
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: [seed]
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://iam:${IAM_POSTGRES_PASSWORD}@postgres:5432/iam
+      BOOTSTRAP_ADMIN_EMAIL: ${IAM_ADMIN_EMAIL:?Set IAM_ADMIN_EMAIL in the root .env file}
+      BOOTSTRAP_ADMIN_PASSWORD: ${IAM_ADMIN_PASSWORD:?Set IAM_ADMIN_PASSWORD in the root .env file}
+      IAM_RUN_MIGRATIONS: "false"
+      IAM_BOOTSTRAP_ADMIN: "false"
+      IAM_ENSURE_OIDC_KEY: "false"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/manage.py:/app/manage.py:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "manage.py", "seed-greenfield"]
     restart: "no"
 
   # 管理员引导是独立的一次性数据库写操作；必须在显式迁移完成后执行。
@@ -100,8 +124,11 @@ services:
       PUBLIC_REGISTRATION_DELIVERY_INTERVAL_SECONDS: ${IAM_PUBLIC_REGISTRATION_DELIVERY_INTERVAL_SECONDS:-5}
       LOGIN_ATTEMPT_WINDOW_SECONDS: ${IAM_LOGIN_ATTEMPT_WINDOW_SECONDS:-900}
       LOGIN_IDENTIFIER_MAX_FAILURES: ${IAM_LOGIN_IDENTIFIER_MAX_FAILURES:-8}
+      LOGIN_ACCOUNT_MAX_FAILURES: ${IAM_LOGIN_ACCOUNT_MAX_FAILURES:-15}
       LOGIN_IP_MAX_FAILURES: ${IAM_LOGIN_IP_MAX_FAILURES:-60}
       LOGIN_BLOCK_SECONDS: ${IAM_LOGIN_BLOCK_SECONDS:-900}
+      THEME_UPLOAD_DIR: ${IAM_THEME_UPLOAD_DIR:-/app/data/theme-uploads}
+      THEME_UPLOAD_MAX_BYTES: ${IAM_THEME_UPLOAD_MAX_BYTES:-2097152}
       TRUST_PROXY_CLIENT_IP: "false"
       CREDENTIAL_CLEANUP_INTERVAL_SECONDS: ${IAM_CREDENTIAL_CLEANUP_INTERVAL_SECONDS:-3600}
       CREDENTIAL_CLEANUP_BATCH_SIZE: ${IAM_CREDENTIAL_CLEANUP_BATCH_SIZE:-1000}
@@ -116,6 +143,8 @@ services:
       - ./backend/migrations:/app/migrations:ro
       - ./backend/tests:/app/tests:ro
       - iam-oidc-signing-data:/run/iam-secrets
+      # G18 主题素材本地盘卷：API 容器可写，登录素材经公开 GET 只读。
+      - iam-theme-uploads:/app/data/theme-uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -158,3 +187,5 @@ services:
 volumes:
   iam-postgres-data:
   iam-oidc-signing-data:
+  iam-theme-uploads:
+

@@ -6,42 +6,38 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.oidc_keys import public_jwks
-from app.core.security import hash_password
 from app.db.session import get_engine
-from app.models import Tenant, TenantMembership, User
 
 
 def bootstrap_admin() -> None:
-    """建立首个管理员及其租户；配置缺失、弱密钥或重复账号时明确失败。"""
+    """绿场引导：平台租户 + 管理面目录 + L1 角色 + 引导超管绑定，全部幂等。
+
+    权限只认角色绑定（ALLOW_BOOTSTRAP_EMAIL_BYPASS 默认 false），
+    因此引导必须同时完成 L1 绑定，旧「仅建 membership」的流程会产生无权限管理员。
+    """
     settings = get_settings()
     if not settings.bootstrap_admin_email or not settings.bootstrap_admin_password:
         raise SystemExit("BOOTSTRAP_ADMIN_EMAIL 和 BOOTSTRAP_ADMIN_PASSWORD 必须设置")
     if len(settings.bootstrap_admin_password) < 16:
         raise SystemExit("引导管理员密码至少 16 位")
+    from app.db.seed_greenfield import (
+        seed_bootstrap_admin,
+        seed_l1_role,
+        seed_permissions,
+        seed_platform_tenant,
+    )
+
     with Session(get_engine()) as db:
-        email = settings.bootstrap_admin_email.casefold()
-        user = db.scalar(select(User).where(User.email == email))
-        tenant = db.scalar(select(Tenant).where(Tenant.slug == "platform"))
-        if tenant is None:
-            tenant = Tenant(name="平台管理租户", slug="platform")
-            db.add(tenant)
-            db.flush()
-        if user is None:
-            user = User(email=email, display_name="平台管理员", password_hash=hash_password(settings.bootstrap_admin_password))
-            db.add(user)
-            db.flush()
-        # 重跑部署命令或调整管理员邮箱时复用平台租户，避免重复插入固定 slug。
-        membership = db.scalar(select(TenantMembership.id).where(
-            TenantMembership.user_id == user.id, TenantMembership.tenant_id == tenant.id))
-        if membership is None:
-            db.add(TenantMembership(user_id=user.id, tenant_id=tenant.id))
+        seed_permissions(db)
+        platform_tenant = seed_platform_tenant(db)
+        l1_role = seed_l1_role(db, platform_tenant)
+        seed_bootstrap_admin(db, platform_tenant, l1_role)
         db.commit()
-        print(f"管理员已就绪：{email}")
+        print(f"管理员已就绪：{settings.bootstrap_admin_email.casefold()}（已绑定 L1）")
 
 
 def ensure_oidc_signing_key() -> None:
@@ -78,9 +74,27 @@ def ensure_oidc_signing_key() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["bootstrap-admin", "ensure-oidc-key"])
-    command = parser.parse_args().command
-    if command == "bootstrap-admin":
+    parser.add_argument("command", choices=["bootstrap-admin", "ensure-oidc-key", "seed-greenfield", "seed-walkthrough"])
+    parser.add_argument("--demo-tenant", action="store_true", help="seed-greenfield：创建演示租户与 L3 模板")
+    parser.add_argument("--demo-application", action="store_true", help="seed-greenfield：连同演示应用与 L2/L4 模板（隐含 --demo-tenant）")
+    parsed = parser.parse_args()
+    if parsed.command == "bootstrap-admin":
+        # 写库：幂等种子（权限目录 + 平台租户 + L1）并绑定引导超管。
         bootstrap_admin()
-    elif command == "ensure-oidc-key":
+    elif parsed.command == "ensure-oidc-key":
+        # 不写业务库；校验签名密钥文件（仅开发环境允许首次生成）。
         ensure_oidc_signing_key()
+    elif parsed.command == "seed-greenfield":
+        # 写库：幂等绿场种子；--demo-tenant/--demo-application 追加演示数据。
+        from app.db.seed_greenfield import run_seed
+
+        run_seed(demo_tenant=parsed.demo_tenant or parsed.demo_application,
+                 demo_application=parsed.demo_application)
+    elif parsed.command == "seed-walkthrough":
+        # §6 浏览器四级走查造数：demo 应用 + 业务码 + self 范围 + L2/L3/L4 账号（幂等）。
+        from app.db.seed_greenfield import seed_walkthrough_accounts
+
+        with Session(get_engine()) as db:
+            seed_walkthrough_accounts(db)
+            db.commit()
+            print("四级走查账号种子完成")

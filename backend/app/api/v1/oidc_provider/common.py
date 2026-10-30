@@ -9,12 +9,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.application import Application
-from app.models.authorization import Role, RoleBinding
 from app.models.identity import AuditEvent, RefreshSession, Tenant, TenantMembership, User
 from app.services.login_throttle import client_ip_for_request
 
 
 def _issuer() -> str:
+    """读取并校验 issuer 配置：生产必须 HTTPS，仅开发放行 localhost 的 HTTP。"""
     value = get_settings().oidc_issuer
     parts = urlsplit(value or "")
     local_http = parts.scheme == "http" and parts.hostname in {"localhost", "127.0.0.1", "::1"}
@@ -25,6 +25,7 @@ def _issuer() -> str:
 
 
 def _endpoint(path: str) -> str:
+    """拼接 issuer 与版本化前缀，生成对外公布的端点完整地址。"""
     return f"{_issuer()}{get_settings().api_v1_prefix}/oidc/{path}"
 
 
@@ -37,12 +38,14 @@ def _error(error: str, description: str, status_code: int = 400, *, challenge: b
 
 
 def _append_query(uri: str, params: list[tuple[str, str]]) -> str:
+    """向已有 URI 追加查询参数，保留原 query 顺序与空值、fragment。"""
     parts = urlsplit(uri)
     existing = parse_qsl(parts.query, keep_blank_values=True)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode([*existing, *params]), parts.fragment))
 
 
 def _oauth_redirect_error(uri: str, state: str | None, error: str, description: str) -> RedirectResponse:
+    """按 OAuth 规范把错误码经 302 回传到 redirect_uri，回显 state 并附 iss。"""
     params = [("error", error), ("error_description", description)]
     if state:
         params.append(("state", state))
@@ -51,6 +54,7 @@ def _oauth_redirect_error(uri: str, state: str | None, error: str, description: 
 
 
 def _single(params, name: str, *, required: bool = False) -> str | None:
+    """取单值查询参数；出现重复或必填缺失时抛错，由调用方转 invalid_request。"""
     values = params.getlist(name)
     if len(values) > 1 or (required and (not values or not values[0])):
         raise ValueError(name)
@@ -58,10 +62,12 @@ def _single(params, name: str, *, required: bool = False) -> str | None:
 
 
 def _active_client(db: Session, client_id: str) -> Application | None:
+    """按 client_id 查活动状态的应用客户端，停用客户端视同不存在。"""
     return db.scalar(select(Application).where(Application.client_id == client_id, Application.status == "active"))
 
 
 def _redirect_uri(app: Application, requested: str | None) -> str | None:
+    """精确匹配注册回调地址；未传且仅注册一个时自动补全，杜绝开放重定向。"""
     if requested is None and len(app.redirect_uris) == 1:
         return app.redirect_uris[0]
     if requested and requested in app.redirect_uris:
@@ -95,7 +101,7 @@ def _browser_user(db: Session, raw_cookie: str | None) -> User | None:
 
 
 def _app_membership(db: Session, app: Application, user: User) -> TenantMembership | None:
-    """活动租户成员至少绑定一个租户级或应用级有效角色，未绑定角色时默认拒绝 SSO。"""
+    """SSO 入场与 evaluate_access 共用有效角色：直连绑定 ∪ 活跃用户组继承角色。"""
     if not db.scalar(select(Tenant.id).where(Tenant.id == app.tenant_id, Tenant.status == "active")):
         return None
     membership = db.scalar(select(TenantMembership).where(
@@ -104,14 +110,16 @@ def _app_membership(db: Session, app: Application, user: User) -> TenantMembersh
     ))
     if not membership:
         return None
-    role = db.scalar(select(RoleBinding.id).join(Role, Role.id == RoleBinding.role_id).where(
-        RoleBinding.membership_id == membership.id, Role.status == "active", Role.tenant_id == app.tenant_id,
-        or_(Role.application_id.is_(None), Role.application_id == app.id),
-    ).limit(1))
-    return membership if role else None
+    from app.services.effective_roles import list_effective_roles
+
+    effective_roles = list_effective_roles(
+        db, membership_id=membership.id, tenant_id=app.tenant_id, application_id=app.id,
+    )
+    return membership if effective_roles else None
 
 
 def _hash(raw: str) -> str:
+    """opaque 凭证的 SHA-256 摘要，数据库只存摘要不存原文。"""
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

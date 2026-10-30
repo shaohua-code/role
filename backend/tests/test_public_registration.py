@@ -217,7 +217,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
 
     def test_admin_scoped_roles_are_never_eligible_as_registration_default(self) -> None:
         admin_permission = Permission(
-            id=uuid4(), code="iam.user.manage", resource_type="user", scope="read",
+            id=uuid4(), code="platform.account.manage", resource_type="user", scope="read",
             status="active",
         )
         self.db.add(admin_permission)

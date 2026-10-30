@@ -32,6 +32,10 @@ class TenantRegistrationAudienceTests(unittest.TestCase):
         self.db.add(self.application)
         self.db.commit()
         self.actor = User(id=uuid4(), email="admin@example.test", password_hash="test", display_name="管理员")
+        # 绿场规则：actor 需显式绑定 L1 才能通过按码判权。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.actor)
         self.request = Request({
             "type": "http", "http_version": "1.1", "method": "PATCH", "scheme": "http",
             "path": "/api/v1/admin/tenants", "raw_path": b"/api/v1/admin/tenants",

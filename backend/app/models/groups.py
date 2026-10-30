@@ -17,16 +17,25 @@ from app.db.base import Base
 
 
 class UserGroup(Base):
-    """用户组只存在于单一租户内；停用组会立即停止通过组继承角色。"""
+    """用户组只存在于单一租户内；停用组会立即停止通过组继承角色。
+
+    G24 组嵌套：parent_group_id 允许组下挂组（复合外键限同租户），角色沿
+    父→子方向递归继承（见 effective_roles 的递归 CTE）；写入时服务层
+    校验无环，删除父组被 RESTRICT 拒绝。
+    """
 
     __tablename__ = "user_groups"
     __table_args__ = (
         UniqueConstraint("tenant_id", "key", name="uq_user_group_tenant_key"),
         UniqueConstraint("id", "tenant_id", name="uq_user_group_id_tenant"),
+        ForeignKeyConstraint(["parent_group_id", "tenant_id"], ["user_groups.id", "user_groups.tenant_id"],
+                             ondelete="RESTRICT", name="fk_user_group_parent_same_tenant"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
+    # 父用户组自引用（复合外键限同租户）；存在子组时删除会被 RESTRICT 拒绝。
+    parent_group_id: Mapped[UUID | None] = mapped_column(index=True)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))

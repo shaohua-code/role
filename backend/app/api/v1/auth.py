@@ -28,8 +28,9 @@ from app.models.identity import UserInvitation
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRefreshToken
 from app.schemas.auth import (AcceptInvitationRequest, AuthPublicCapabilities, AuthResponse,
                               ConsoleRegistrationContext, InvitationTokenRequest, LoginRequest,
-                              PasswordResetComplete, PasswordResetRequest, PublicRegistrationCapabilities,
-                              RegisterRequest, RegisterVerifyRequest, UserResponse)
+                              MeResponse, PasswordChange, PasswordResetComplete, PasswordResetRequest,
+                              PublicRegistrationCapabilities, RegisterRequest, RegisterVerifyRequest,
+                              RoleBrief, UserResponse)
 from app.services.email import send_password_reset_email
 from app.services.login_throttle import (begin_login_attempt, clear_login_identifier_failures,
                                          client_ip_for_request, record_login_failure)
@@ -113,6 +114,7 @@ def set_refresh_cookie(response: Response, raw_token: str, expires_at: datetime)
 
 
 def clear_refresh_cookie(response: Response) -> None:
+    """删除浏览器刷新令牌 Cookie；属性需与写入时一致才能确保删除生效。"""
     settings = get_settings()
     response.delete_cookie(
         key=REFRESH_COOKIE,
@@ -403,6 +405,7 @@ def login(body: LoginRequest, request: Request, response: Response, db: Session 
         raise HTTPException(429, "登录尝试过于频繁，请稍后再试。", headers={"Retry-After": str(retry_after)})
 
     user = db.scalar(select(User).where(User.email == email).with_for_update())
+    # 用户不存在时仍对比一次性假哈希，抹平响应耗时差异，防止以时间侧信道探测已注册邮箱。
     valid = verify_password(body.password, user.password_hash) if user else verify_password(body.password, dummy_password_hash())
     if not user or not valid or user.status != "active":
         record_login_failure(db, ticket, settings)
@@ -587,13 +590,110 @@ def complete_password_reset(body: PasswordResetComplete, request: Request, respo
     record_event(db, "auth.password_reset.complete", "user", str(user.id), user, request,
                  details={"iam_refresh_sessions_revoked": True})
     db.commit()
+    # G19：改密级联撤销了全部 OIDC 凭证，向业务方推送 back-channel 登出（best-effort）。
+    from app.services.backchannel_logout import deliver_for_user
+
+    deliver_for_user(db, user.id)
     clear_refresh_cookie(response)
     return {"message": "密码已重置，请使用新密码登录。"}
 
 
-@router.get("/me", response_model=UserResponse)
-def me(user: User = Depends(current_user)) -> User:
-    return user
+@router.post("/me/password")
+def change_own_password(body: PasswordChange, request: Request, response: Response,
+                        user: User = Depends(current_user),
+                        db: Session = Depends(get_db_session)) -> dict[str, str]:
+    """登录态自助修改密码：验证当前口令后原子换哈希、提高认证版本并撤销全部会话。
+
+    与邮件重置同一条凭证级联：撤销 IAM/OIDC 续期凭证、消费未兑换的 code/consent
+    与未使用的重置链接；改密成功后当前访问令牌随 auth_version 立即失效，需重新登录。
+    """
+    ensure_signing_key()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    row = db.scalar(select(User).where(User.id == user.id).with_for_update())
+    if not row or row.status != "active":
+        raise HTTPException(401, "账号不存在或已停用")
+    if not verify_password(body.current_password, row.password_hash or ""):
+        # 失败也写审计（不含口令），便于发现他人尝试改密；提交后返回统一文案。
+        record_event(db, "auth.password.change", "user", str(row.id), row, request,
+                     outcome="failure", details={"reason": "current_password_mismatch"})
+        db.commit()
+        raise HTTPException(400, "当前密码不正确")
+
+    row.password_hash = hash_password(body.new_password)
+    row.auth_version = (row.auth_version or 1) + 1
+    now = datetime.now(timezone.utc)
+    db.execute(update(RefreshSession).where(
+        RefreshSession.user_id == row.id, RefreshSession.revoked_at.is_(None),
+    ).values(revoked_at=now))
+    db.execute(update(OAuthRefreshToken).where(
+        OAuthRefreshToken.user_id == row.id, OAuthRefreshToken.revoked_at.is_(None),
+    ).values(revoked_at=now))
+    db.execute(update(OAuthAuthorizationCode).where(
+        OAuthAuthorizationCode.user_id == row.id, OAuthAuthorizationCode.consumed_at.is_(None),
+    ).values(consumed_at=now))
+    db.execute(update(OAuthConsentRequest).where(
+        OAuthConsentRequest.user_id == row.id, OAuthConsentRequest.consumed_at.is_(None),
+    ).values(consumed_at=now))
+    # 改密后作废仍在有效期内的重置链接，防止旧邮件链接继续兑换。
+    db.execute(update(PasswordResetToken).where(
+        PasswordResetToken.user_id == row.id, PasswordResetToken.consumed_at.is_(None),
+    ).values(consumed_at=now))
+    record_event(db, "auth.password.change", "user", str(row.id), row, request,
+                 details={"iam_refresh_sessions_revoked": True})
+    db.commit()
+    # G19：自助改密级联撤销了全部 OIDC 凭证，向业务方推送 back-channel 登出（best-effort）。
+    from app.services.backchannel_logout import deliver_for_user
+
+    deliver_for_user(db, row.id)
+    clear_refresh_cookie(response)
+    return {"message": "密码已修改，请使用新密码重新登录。"}
+
+
+@router.get("/me", response_model=MeResponse)
+def me(user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> MeResponse:
+    """登录后一次返回用户信息、有效角色与由角色派生的 capabilities。
+
+    前端只用 capabilities / permission codes 裁 UI；roles 仅展示或调试。
+    后端安全边界是角色（ensure_roles），不要信任前端回传的码。
+    """
+    from app.services.rbac_guards import list_actor_roles, list_management_capabilities
+
+    capabilities = list_management_capabilities(user, db)
+    roles_raw = capabilities.get("roles") or list_actor_roles(user, db)
+    roles = [
+        RoleBrief(
+            key=item["key"],
+            kind=item["kind"],
+            name=item.get("name"),
+            tenant_id=item["tenant_id"],
+            application_id=item.get("application_id"),
+        )
+        for item in roles_raw
+    ]
+    return MeResponse(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        status=user.status,
+        created_at=user.created_at,
+        roles=roles,
+        capabilities=capabilities,
+    )
+
+
+@router.get("/me/capabilities")
+def me_capabilities(user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
+    """兼容旧前端：与 /auth/me.capabilities 同构；新客户端优先用 /auth/me。
+
+    - platform_admin=true 时 platform_codes 覆盖全部 iam.* 管理码（L1）；
+    - tenants 内按租户列出 L3 码与按应用归组的 L2/业务管理码；
+    - 另含 roles[]（有效角色摘要）；
+    - L4 纯业务用户得到空能力（no_access）。
+    """
+    from app.services.rbac_guards import list_management_capabilities
+
+    return list_management_capabilities(user, db)
 
 
 @router.post("/logout", status_code=204)

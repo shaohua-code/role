@@ -23,7 +23,8 @@ export interface AuthorizationRequest {
   userSubject?: string
   permissionCode: string
   resourceId?: string
-  includeDataScope?: boolean
+  /** null/undefined = auto: true for business codes, false for iam.* management codes */
+  includeDataScope?: boolean | null
 }
 
 /** 多码批量判定请求；批量结果不携带行级数据条件，owner-only 数据操作仍走单码 check。 */
@@ -56,6 +57,11 @@ export interface PostgresScopeOptions {
 export interface PostgresScopeFilter {
   sql: string
   params: Array<string | number | Array<string | number>>
+}
+
+/** Management-plane codes (iam.*) never require a row-level data_scope. */
+export function isManagementPermission(permissionCode: string): boolean {
+  return typeof permissionCode === 'string' && permissionCode.startsWith('iam.')
 }
 
 export class AuthorizationServiceError extends Error {
@@ -93,8 +99,13 @@ export class IamAuthorizationClient {
 
   async check(accessToken: string, request: AuthorizationRequest): Promise<AuthorizationDecision> {
     if (!accessToken) throw new Error('An end-user OIDC access token is required')
+    const management = isManagementPermission(request.permissionCode)
+    const explicitInclude = request.includeDataScope === true
+    const effectiveInclude = request.includeDataScope === undefined || request.includeDataScope === null
+      ? !management
+      : Boolean(request.includeDataScope)
     const verifiedUserSubject = request.userSubject
-    if (request.includeDataScope === true && (!verifiedUserSubject || !verifiedUserSubject.trim())) {
+    if (explicitInclude && (!verifiedUserSubject || !verifiedUserSubject.trim())) {
       throw new Error('A locally verified IAM userSubject is required when requesting a data scope')
     }
     const controller = new AbortController()
@@ -110,7 +121,7 @@ export class IamAuthorizationClient {
           ...(this.applicationId ? { application_id: this.applicationId } : {}),
           permission_code: request.permissionCode,
           ...(request.resourceId ? { resource_id: request.resourceId } : {}),
-          include_data_scope: request.includeDataScope ?? false,
+          include_data_scope: effectiveInclude,
         }),
       })
       if (!response.ok) throw new AuthorizationServiceError(response.status, 'IAM rejected the authorization request')
@@ -141,12 +152,16 @@ export class IamAuthorizationClient {
       throw new AuthorizationServiceError(502, 'IAM returned an invalid authorization decision')
     }
     let dataScope: AuthorizationDecision['data_scope'] = undefined
+    if (result.reason === 'data_scope_policy_missing' && result.allowed) {
+      throw new AuthorizationServiceError(502, 'IAM returned data_scope_policy_missing with an allow decision')
+    }
     if (result.data_scope !== undefined && result.data_scope !== null) {
-      if (!result.allowed || request.includeDataScope !== true) {
+      if (!result.allowed) {
         throw new AuthorizationServiceError(502, 'IAM returned an unexpected data scope')
       }
-      dataScope = validateDataScope(result.data_scope, request.tenantId, verifiedUserSubject ?? '')
-    } else if (result.allowed && request.includeDataScope === true) {
+      // Greenfield 2.0: accept forced business scopes; skip owner equality when userSubject omitted.
+      dataScope = validateDataScope(result.data_scope, request.tenantId, verifiedUserSubject ?? undefined)
+    } else if (result.allowed && (!management || effectiveInclude)) {
       throw new AuthorizationServiceError(502, 'IAM omitted the required data scope')
     }
     const applicationId = result.application_id
@@ -164,6 +179,9 @@ export class IamAuthorizationClient {
   async require(accessToken: string, request: AuthorizationRequest): Promise<AuthorizationDecision> {
     const decision = await this.check(accessToken, request)
     if (!decision.allowed) throw new AuthorizationServiceError(403, `Permission denied: ${decision.reason}`)
+    if (!isManagementPermission(request.permissionCode) && decision.data_scope === undefined) {
+      throw new AuthorizationServiceError(502, 'IAM omitted the required data scope')
+    }
     return decision
   }
 
@@ -337,8 +355,14 @@ export async function compilePostgresDataScope(
   return { sql: `(${branches.join(' OR ')})`, params }
 }
 
-function validateDataScope(value: unknown, expectedTenantId: string, expectedUserSubject: string): NonNullable<AuthorizationDecision['data_scope']> {
-  if (!expectedTenantId || !expectedUserSubject || !value || typeof value !== 'object' || Array.isArray(value)) {
+/**
+ * 校验完整行级条件契约后再交给业务查询。每个 OR 分支必须独立携带已验证租户；
+ * 限定判别值与业务字段名可防止格式异常的 IAM 响应变成无范围查询。
+ * 绿场：expectedUserSubject 允许为 undefined（未显式请求 data_scope 的业务码强制范围）；
+ * 此时保留租户校验，仅跳过 owner 分支与本地 sub 的等值断言。
+ */
+function validateDataScope(value: unknown, expectedTenantId: string, expectedUserSubject: string | undefined): NonNullable<AuthorizationDecision['data_scope']> {
+  if (!expectedTenantId || !value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AuthorizationServiceError(502, 'IAM returned an invalid data scope')
   }
   const scope = value as Record<string, unknown>
@@ -355,7 +379,8 @@ function validateDataScope(value: unknown, expectedTenantId: string, expectedUse
     }
     if (item.kind === 'tenant') return { kind: 'tenant', tenant_id: expectedTenantId }
     if (item.kind === 'owner' && item.field === 'owner_user_id'
-      && typeof item.user_id === 'string' && item.user_id.length > 0 && item.user_id === expectedUserSubject) {
+      && typeof item.user_id === 'string' && item.user_id.length > 0
+      && (!expectedUserSubject || item.user_id === expectedUserSubject)) {
       return { kind: 'owner', tenant_id: expectedTenantId, field: 'owner_user_id', user_id: item.user_id }
     }
     if (item.kind === 'organizations' && item.field === 'organization_id'

@@ -44,6 +44,10 @@ class UserGroupAdminTests(unittest.TestCase):
         self.db.add_all([self.role, self.foreign_role,
                          TenantMembership(tenant_id=self.tenant.id, user_id=self.member.id),
                          TenantMembership(tenant_id=self.other_tenant.id, user_id=self.foreign_member.id)])
+        # 绿场规则：actor 需显式绑定 L1 才能通过按码判权。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.actor)
         self.db.commit()
         self.request = Request({
             "type": "http", "method": "PUT", "path": "/api/v1/admin/groups",
@@ -74,7 +78,7 @@ class UserGroupAdminTests(unittest.TestCase):
             self.request, actor=self.actor, db=self.db,
         )
         self.assertFalse(repeated_members["changed"])
-        self.assertTrue(list_user_group_members(self.group_id, self.db)[0]["in_group"])
+        self.assertTrue(list_user_group_members(self.group_id, actor=self.actor, db=self.db)[0]["in_group"])
 
         result = replace_user_group_roles(
             self.group_id,
@@ -82,7 +86,7 @@ class UserGroupAdminTests(unittest.TestCase):
             self.request, actor=self.actor, db=self.db,
         )
         self.assertTrue(result["changed"])
-        self.assertTrue(next(row for row in list_user_group_roles(self.group_id, self.db)
+        self.assertTrue(next(row for row in list_user_group_roles(self.group_id, actor=self.actor, db=self.db)
                              if row["id"] == str(self.role.id))["assigned"])
         actions = set(self.db.scalars(select(AuditEvent.action)).all())
         self.assertTrue({"user_group.create", "user_group.members.replace", "user_group.roles.replace"}.issubset(actions))

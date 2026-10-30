@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool, field_v
 
 
 class RoleCreate(BaseModel):
+    """创建角色请求：key 为小写编程标识；钉 application_id 即应用（L2/业务）角色。"""
+
     tenant_id: UUID
     application_id: UUID | None = None
     key: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9][a-z0-9._-]+$")
@@ -93,6 +95,9 @@ class PermissionCreate(BaseModel):
     scope: str = Field(min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=500)
     catalog_namespace: str | None = Field(default=None, max_length=100)
+    # 权限面与数据范围要求：管理面码默认不强制范围，业务码默认强制（缺策略即拒绝）。
+    surface: Literal["management", "business"] = "business"
+    requires_data_scope: bool = True
 
 
 class PermissionStatusUpdate(BaseModel):
@@ -105,12 +110,31 @@ class PermissionStatusUpdate(BaseModel):
 
 
 class RoleBindingCreate(BaseModel):
+    """角色绑定请求：把指定角色授予租户成员；成员与角色同租户由服务端校验。"""
+
     tenant_id: UUID
     user_id: UUID
     role_id: UUID
 
 
+class MembershipRoleBindingsUpdate(BaseModel):
+    """Replace direct role bindings for a membership in one tenant (excludes group inheritance)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_id: UUID
+    role_ids: list[UUID] = Field(max_length=200)
+
+    @model_validator(mode="after")
+    def role_ids_must_be_unique(self):
+        if len(set(self.role_ids)) != len(self.role_ids):
+            raise ValueError("role_ids must be unique")
+        return self
+
+
 class AuthorizationCheck(BaseModel):
+    """单权限码判权请求；include_data_scope 为真时响应附带数据范围过滤条件。"""
+
     tenant_id: UUID
     application_id: UUID | None = None
     permission_code: str = Field(min_length=3, max_length=180)

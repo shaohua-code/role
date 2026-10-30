@@ -1,5 +1,15 @@
 # 后端技术、目录与接口说明
 
+活文档：[产品需求](../docs/产品需求.md) · [应用对接](../docs/应用对接.md) · [部署与运维](../docs/部署与运维.md) · [项目启动](../docs/项目启动.md)。历史见 [CHANGELOG.md](../CHANGELOG.md)。
+
+**2026-10-29 P405：** 平台/应用权限分层。新增 `apps.admin` 模板；`GET /admin/permissions` 只出管理面码；绑应用角色自动补 `app.member`；`POST /admin/roles` 放宽到 L1/L3。创建/删除应用仍仅 L1/L3。无迁移。
+
+**2026-10-29 P404：** 四级可见范围收口。创建/删除应用仅 L1/L3；`GET /admin/permissions` 按操作者级别过滤；L2 角色/用量/尽力审计仅钉住应用；L3 限本租户。无迁移。
+
+**2026-10-29 P403：** G27 入口消歧、G28 用户有效权限、G29 角色/权限真分页、G32 L3 模板剥 `rbac.permission.manage`（20 码）。`GET /admin/roles` 与 `GET /admin/permissions` 改为 `{items,total,limit,offset}`；`GET /admin/users/{id}/profile` 追加 `effective_permissions`。无迁移。
+
+**2026-10-29 P402：** 产品裁决 L3 可建/改本租户应用。`has_application_admin_access` 认 `tenant.admin` ∪ 钉住应用的 `app.admin`；`list_readable_application_capabilities` 对 L3 短接租户内全可管。新增 `tests/test_application_admin_access.py`。无迁移。
+
 **2026-10-17 P312 授权批量判定端点：** 新增 `POST /api/v1/authorization/check-batch`——`AuthorizationCheckBatch` schema（`permission_codes` 1–32 个、去重校验）+ 逐码复用 `/check` 同一判定路径（抽出 `_public_decision` 共享响应逻辑，无批量旁路）；配套契约测试 `tests/test_authorization_check_batch.py` 6 例。前端管理台租户控制台改为单次批量调用（消除每 membership 5 路逐码请求）。验证：一次性容器契约测试 6/6；dev 容器运行时冒烟 401/200 且与单码 `/check` 输出逐字节一致；`vue-tsc`/Vite build 通过；`verify-local.ps1` 全量套件见 [CHANGELOG](../CHANGELOG.md) 2026-10-17 P312/P314。无 schema/迁移。
 
 **2026-10-16 P298 模型用量筛选：** `summary` 与 `events` 增加可选 `model_id`、`outcome`、`created_from`、`created_to`（UTC 自然日，结束日含当天；开始晚于结束返回 400）。待核对列表不变。无 schema/迁移。API 容器契约测试 6/6；开发库集成测试未跑。只读确认 current=head=0031、ready 200。币种和失败原因字段仍没有。详见[验收记录](../docs/验收记录.md)。
@@ -24,7 +34,7 @@
 
 **2026-10-14 P284：** verify-local.ps1 在随机隔离 PostgreSQL 测试库运行后端完整套件 169/169 通过，测试库迁移到 head 并自动清理，未触及 IAM 开发库。当前开发库 0021_resume_wallet_perms、源码 head 0031_model_usage_reconciliation、readiness 503；本轮未运行目标库迁移或更改后端源码。
 
-**本地迁移操作入口：** [快速启动指南](../docs/快速启动指南.md)现列出版本核对、受保护备份、隔离恢复演练、迁移授权及迁移后复核顺序；本次仅改文档，未运行目标库迁移或后端测试。
+**本地迁移操作入口：** 最短启动见 [项目启动](../docs/项目启动.md)；备份、迁移授权与回退见 [部署与运维](../docs/部署与运维.md)。
 
 **2026-10-14 DeerFlow B04：** 后 104 文件切片 **2,368 passed、2 failed、86 skipped、4 warnings**（通知预算修复前）；扩展管理器、通知生命周期、API pin 定向回归 **126 passed、40 skipped**，Ruff check/format 通过。缺少 `uv` 的 38 个 manager 集成用例现显式 skip；剩余 package metadata 为 `0.2.16`，源码/lock 为 `0.2.18`，后切片未在最终修复后重跑。完整快照仍是历史 17,062/142/349/3/0。用户报告 IAM UI 数据库待迁移，本轮未运行 migration 或改 quota。
 
@@ -235,8 +245,8 @@ AI Resume 用户钱包接口由 IAM `resume.wallet.read` 和 `resume.wallet.rech
 backend/
 ├── app/
 │   ├── api/v1/               # 按认证协议和业务域组织的 HTTP adapter
-│   │   ├── oidc.py           # 稳定兼容导出与 OIDC 总路由入口
 │   │   ├── oidc_provider/
+│   │   │   ├── __init__.py   # OIDC 总路由装配与稳定导出（P363 起兼并原 oidc.py 垫片）
 │   │   │   ├── authorization.py # 登录上下文、PKCE 授权和用户同意
 │   │   │   ├── tokens.py     # Token、UserInfo、Introspection、JWKS、Revoke
 │   │   │   ├── logout.py     # RP-Initiated Logout
@@ -245,7 +255,9 @@ backend/
 │   │   │   └── constants.py  # OIDC 协议常量
 │   │   ├── auth.py           # 管理会话认证与公开邀请
 │   │   ├── authorization.py  # 业务端在线授权判定
-│   │   ├── tenant_admin.py   # 租户委派管理入口（逐租户鉴权）
+│   │   ├── tenant_admin/     # 租户委派管理入口（逐租户鉴权）
+│   │   │   ├── __init__.py   # 聚合路由：挂载组织/应用/用户组与应用角色子路由
+│   │   │   └── application_roles.py # 应用范围角色、权限目录与授权管理
 │   │   ├── model_usage.py    # 模型网关用量与配额
 │   │   ├── health.py         # 健康与就绪检查
 │   │   └── admin/
@@ -289,7 +301,7 @@ backend/
 └── .env.example
 ```
 
-前端 Vue 代码独立放在仓库根目录 `frontend/`，后端不导入前端模块；API 请求和响应通过 PRD/OpenAPI 契约连接。登录主题 API 位于 `api/v1/admin/themes.py`，由前端 `features/themes/LoginThemeManagement.vue` 调用；模型目录及用量 API 由 `features/models/ModelGovernancePage.vue` 消费，租户生命周期由 `features/tenants/TenantManagement.vue` 消费，应用列表/资料/信任/密钥操作由 `features/applications/ApplicationManagement.vue` 消费，成员邀请管理由 `features/invitations/InvitationManagement.vue` 消费，审计查询由 `features/audit/AuditLogPage.vue` 消费，角色及通用权限/数据范围管理由 `features/roles/RoleManagement.vue` 消费，权限目录由 `features/permissions/PermissionCatalog.vue` 消费。角色 feature 通过既有 `/api/v1/admin/roles*`、`/permissions` 和 `/organizations` 契约工作；权限目录支持读取、创建和带 `expected_status` 的软停用/恢复，返回关联角色数，稳定编码不能编辑或物理删除。Alembic `0016_permission_status` 为旧目录项补默认 `active` 状态；停用保留授权与数据范围、判权时排除，并拒绝新增停用权限授权；角色批量编辑可保留或撤销已存在的停用权限，但不能新增。状态更新锁定权限目录项并与审计同事务，恢复会重新激活仍保留的授予。邀请页面调用既有 `GET/POST /api/v1/admin/invitations` 和撤销接口，创建响应中的 bearer 链接只在页面内展示一次；服务端以 `Cache-Control: no-store`、`Pragma: no-cache` 禁止响应缓存，邀请接受仍属于公开认证路由。审计响应契约位于 `app/schemas/audit.py`，路由 `app/api/v1/admin/audit.py` 由管理路由聚合器统一执行平台管理员保护；新管理页调用 `GET /api/v1/admin/audit/search`，支持 `limit`（1–500）、`offset`（0–100000）、`action`、`target_type`、`target_id`、`outcome`、`actor_user_id`、`tenant_id`、`start_at` 和 `end_at` 精确/范围筛选。时间必须携带时区，开始时间包含、结束时间不包含；响应为 `{items, limit, offset, total, has_more}`，按 `created_at DESC, id DESC` 稳定排序。详情字段只读返回，未新增表或迁移。旧 `GET /api/v1/admin/audit` 仍返回原有记录数组并继续接受 limit/action，供已有调用方兼容。`tests/test_audit_query.py` 覆盖组合筛选、分页边界、时间校验及旧数组响应；2026-10-05 后端完整 unittest 共 99 项通过、28 项 PostgreSQL 集成用例因未提供 `DATABASE_URL` 跳过；审计查询、时间范围和旧列表契约均有隔离 SQLite 覆盖。运行使用位于系统临时目录的锁定 `pwdlib[argon2]` 依赖 overlay；没有连接数据库，也没有修改 DeerFlow 的 Python 环境。领域状态和表单均留在 Vue 工程。管理端路由按领域放在 `api/v1/admin/<domain>.py`，`admin/__init__.py` 只负责统一管理员保护和路由装配。新管理功能继续维持该边界，将可复用策略放入 `services/`、表结构放入领域模型文件；模块职责和依赖方向见[架构说明](../docs/技术架构与接入.md)。
+前端 Vue 代码独立放在仓库根目录 `frontend/`，后端不导入前端模块；API 请求和响应通过 PRD/OpenAPI 契约连接。登录主题 API 位于 `api/v1/admin/themes.py`，由前端 `features/themes/LoginThemeManagement.vue` 调用；模型目录及用量 API 由 `features/models/ModelGovernancePage.vue` 消费，租户生命周期由 `features/tenants/TenantManagement.vue` 消费，应用列表/资料/信任/密钥操作由 `features/applications/ApplicationManagement.vue` 消费，成员邀请管理由 `features/invitations/InvitationManagement.vue` 消费，审计查询由 `features/audit/AuditLogPage.vue` 消费，角色及通用权限/数据范围管理由 `features/roles/RoleManagement.vue` 消费，权限目录由 `features/permissions/PermissionCatalog.vue` 消费。角色 feature 通过既有 `/api/v1/admin/roles*`、`/permissions` 和 `/organizations` 契约工作；权限目录支持读取、创建和带 `expected_status` 的软停用/恢复，返回关联角色数，稳定编码不能编辑或物理删除。Alembic `0016_permission_status` 为旧目录项补默认 `active` 状态；停用保留授权与数据范围、判权时排除，并拒绝新增停用权限授权；角色批量编辑可保留或撤销已存在的停用权限，但不能新增。状态更新锁定权限目录项并与审计同事务，恢复会重新激活仍保留的授予。邀请页面调用既有 `GET/POST /api/v1/admin/invitations` 和撤销接口，创建响应中的 bearer 链接只在页面内展示一次；服务端以 `Cache-Control: no-store`、`Pragma: no-cache` 禁止响应缓存，邀请接受仍属于公开认证路由。审计响应契约位于 `app/schemas/audit.py`，路由 `app/api/v1/admin/audit.py` 由管理路由聚合器统一执行平台管理员保护；新管理页调用 `GET /api/v1/admin/audit/search`，支持 `limit`（1–500）、`offset`（0–100000）、`action`、`target_type`、`target_id`、`outcome`、`actor_user_id`、`tenant_id`、`start_at` 和 `end_at` 精确/范围筛选；P345 起另支持 `action_prefix` 前缀聚合（供前端「登录与认证」Tab 按 `auth.` 前缀分类，LIKE 通配符 `%`/`_` 按字面转义）。时间必须携带时区，开始时间包含、结束时间不包含；响应为 `{items, limit, offset, total, has_more}`，按 `created_at DESC, id DESC` 稳定排序。详情字段只读返回，未新增表或迁移。旧 `GET /api/v1/admin/audit` 仍返回原有记录数组并继续接受 limit/action，供已有调用方兼容。`tests/test_audit_query.py` 覆盖组合筛选、分页边界、时间校验及旧数组响应；2026-10-05 后端完整 unittest 共 99 项通过、28 项 PostgreSQL 集成用例因未提供 `DATABASE_URL` 跳过；审计查询、时间范围和旧列表契约均有隔离 SQLite 覆盖。运行使用位于系统临时目录的锁定 `pwdlib[argon2]` 依赖 overlay；没有连接数据库，也没有修改 DeerFlow 的 Python 环境。领域状态和表单均留在 Vue 工程。管理端路由按领域放在 `api/v1/admin/<domain>.py`，`admin/__init__.py` 只负责统一管理员保护和路由装配。新管理功能继续维持该边界，将可复用策略放入 `services/`、表结构放入领域模型文件；模块职责和依赖方向见[架构说明](../docs/技术架构与接入.md)。
 
 前端用户管理由 `features/users/UserManagement.vue` 消费现有 `/admin/users`、`/admin/users/{id}/memberships`、`/admin/role-bindings` 与 `/admin/users/{id}/organizations` 契约；组织目录由 `features/organizations/OrganizationManagement.vue` 消费 `/admin/organizations` 契约。创建密码只随受保护请求提交且不回显；成员角色和组织关联仍由后端校验租户边界，未增加 API 或 schema。前端 `app/auth/AuthEntry.vue` 管理公开登录、OIDC 同意和邀请接受，`app/App.vue` 管理已登录会话及页面装配；公共 Ant Design Vue 组件先加载，管理组件注册器 `app/ui/registerManagementUi.ts` 由 `app/ui/antd.ts` 在登录/会话恢复时动态加载。认证 UI、导航/侧栏和各领域管理页面均位于独立 Vue 工程，后端只通过 HTTP/OpenAPI 契约与其集成，不导入前端源码。
 
@@ -313,7 +325,7 @@ AI 简历 Express 是首个接入服务：已显式绑定 IAM 的账户在简历
 
 ## 当前 API
 
-租户委派 API 由 `api/v1/tenant_admin.py` 单独挂载；它复用组织和应用领域路由，并通过 `services/admin_authorization.py` 及共享 `evaluate_access` 校验目标租户/应用。组织/数据范围使用 `iam.organization.read/manage`；应用目录使用 `iam.application.read/manage/secret.rotate`，manage 包含读取，密钥轮换单独授权。应用权限可授给无 application_id 的租户角色，也可授给由 `Role.application_id` 限定的应用角色；目录按授权过滤，单项写操作再逐请求鉴权。单应用角色管理由 `api/v1/tenant_admin_application_roles.py` 承载，严格限定租户/应用角色并只列出已有应用角色成员；应用管理员可维护业务权限但不能新增 `iam.*`，只能绑定已有活动租户成员，不能发邀请或维护用户组。创建新应用只接受租户范围 manage。受信/静默授权仍由 `platform_admin` 依赖保护。平台 `/api/v1/admin/*` 继续由 `admin/__init__.py` 统一强制平台管理员身份。
+租户委派 API 由 `api/v1/tenant_admin/` 包单独挂载；它复用组织和应用领域路由，并通过 `services/admin_authorization.py` 及共享 `evaluate_access` 校验目标租户/应用。组织/数据范围使用 `org.read/manage`；应用目录使用 `app.read/manage/secret.rotate`，manage 包含读取，密钥轮换单独授权。应用权限可授给无 application_id 的租户角色，也可授给由 `Role.application_id` 限定的应用角色；目录按授权过滤，单项写操作再逐请求鉴权。单应用角色管理由 `api/v1/tenant_admin/application_roles.py` 承载，严格限定租户/应用角色并只列出已有应用角色成员；应用管理员可维护业务权限但不能新增管理面码（五域前缀 `platform./rbac./org./app./ops.`），只能绑定已有活动租户成员，不能发邀请或维护用户组。创建新应用只接受租户范围 manage。受信/静默授权仍由 `platform_admin` 依赖保护。平台 `/api/v1/admin/*` 继续由 `admin/__init__.py` 统一强制平台管理员身份。
 
 完整的开发版 API 路径、行为和边界在 [PRD 当前 API 契约](../docs/产品需求.md) 中。重要接口：
 
@@ -336,15 +348,18 @@ AI 简历 Express 是首个接入服务：已显式绑定 IAM 的账户在简历
 - 角色复制通过 `RoleCloneRequest.copy_authorizations` 逐次选择授权策略，默认 `false`；启用时只复制状态为 active 的权限授予（保留 `resource_id`）及同权限数据范围，停用权限的历史授予不进入新副本。源角色状态为 disabled 时副本继续 disabled。六项隔离 SQLite 测试覆盖默认清空、显式复制、停用权限过滤、成员/组绑定隔离、重复 key 事务回滚及源角色不存在；真实 PostgreSQL 并发及浏览器写入仍待专项验收。
 - `POST /api/v1/authorization/check`：认证用户在其有效租户成员关系下执行默认拒绝 RBAC 判定；仅对允许的 OIDC 请求附带已验签上下文 `application_id`，供受信业务服务关联用量，不能从请求体伪造。
 - `POST /api/v1/admin/authorization/simulate`：仅平台管理员可调用；指定成员与授权请求后，调用共享 `app/services/authorization.py` 规则评估器，返回判定、检查原因、命中角色与可选数据范围。此接口不写授权/审计数据；业务 `/authorization/check` 仍仅返回 `decision`，不泄露诊断明细。
-- `GET /api/v1/admin/roles/{id}/permissions` 返回角色通用及资源实例授权；`POST /api/v1/admin/roles/{id}/permissions/preview` 只读比较拟保存的通用权限，统计直接绑定及活动用户组继承的去重活动成员，逐权限扣除适用范围内其它活动角色的通用授权覆盖，并列出失去最后一条授权时将删除的数据范围策略。实例级授权、逐业务资源和数据范围没有逐项求值，人数仍是潜在覆盖估算，不代表精确净差异。
-- `PUT /api/v1/admin/roles/{id}/permissions` 锁定角色并原子替换通用授权、清理已无任何授权依托的数据范围，单事务写审计；必须带预览时的 `expected_current_permission_ids`，若预览后并发变更则返回 409。资源实例授权保留。旧单项 PUT/DELETE API 仍兼容。
-- `GET/POST /api/v1/admin/permissions` 返回稳定编码、状态及引用角色数；`PATCH /api/v1/admin/permissions/{id}/status` 要求 `expected_status` 并在同事务写审计。停用权限被在线 RBAC 判定排除，新角色不能授予；已有授权和数据范围保留。恢复会使剩余历史授权重新生效。
+- `GET /api/v1/admin/roles` 支持可选 `q/kind/tenant_id/application_id/status` 服务端过滤，返回 `{items,total,limit,offset}`（默认 50、上限 500）；`q` 匹配名称、标识或说明。
+- `GET /api/v1/admin/users/{id}/profile` 聚合资料、成员关系、角色绑定、有效权限码并集（直授/用户组来源）、活动会话与最近认证事件。
+- `GET /api/v1/admin/roles/{id}/permissions` 返回角色通用及资源实例授权；`POST /api/v1/admin/roles/{id}/permissions/preview` 只读比较拟保存的通用权限，统计直接绑定及活动用户组继承的去重活动成员，逐权限扣除适用范围内其它活动角色的通用授权覆盖，并列出失去最后一条授权时将删除的数据范围策略。实例级授权、逐业务资源和数据范围没有逐项求值，人数仍是潜在覆盖估算，不代表精确净差异。预览与保存均按角色 `kind` 拒绝**新增**越域码（与授权弹窗矩阵一致，历史已持有允许保留/撤销）。
+- `PUT /api/v1/admin/roles/{id}/permissions` 锁定角色并原子替换通用授权、清理已无任何授权依托的数据范围，单事务写审计；必须带预览时的 `expected_current_permission_ids`，若预览后并发变更则返回 409。越域新增返回 422。资源实例授权保留。旧单项 PUT/DELETE API 仍兼容。
+- `GET/POST /api/v1/admin/permissions` 返回稳定编码、状态及引用角色数；列表为 `{items,total,limit,offset}`（默认/上限 1000）。`PATCH /api/v1/admin/permissions/{id}/status` 要求 `expected_status` 并在同事务写审计。停用权限被在线 RBAC 判定排除，新角色不能授予；已有授权和数据范围保留。恢复会使剩余历史授权重新生效。SDK `list_permissions` 兼容包装对象与旧裸数组。
 - 鉴权依赖严格分开验证管理会话 HS256 和 OIDC RS256 access token；两种 JWT 都必须带唯一随机 `jti` 且未在撤销表中。OIDC token 必须为 `token_use=access_token` 且 `aud == client_id`，并在线检查用户、活动租户/应用、租户成员和至少一个匹配角色。停用、撤销角色或撤销 token 会立即拒绝后续在线授权接口请求；OIDC token 不能调用平台管理员接口。
 - OIDC access token 包含 `tenant_id`，授权检查中的 tenant/application 被绑定到签发上下文；`application_id` 可省略（后端使用 token 对应应用），提交其它应用或租户会默认拒绝。允许结果会回传该 token 绑定的 `application_id`，便于受信业务后端向内部模型用量 API 提交可信关联。HS256 管理令牌保留现有管理 API 行为。
-- `GET/POST/PATCH /api/v1/admin/organizations`：按租户维护组织父子关系和启停；父节点、成员组织关系有数据库复合外键确保同租户。
+- `GET/POST/PATCH /api/v1/admin/organizations`：按租户维护组织父子关系和启停；父节点、成员组织关系有数据库复合外键确保同租户。列表响应含 `parent_id`（组织工作台前端拼层级树用，旧字段 `parent_name` 保留）。
+- `GET /api/v1/admin/organizations/{id}/members`：列出直接挂接该组织的成员（含 `is_primary` 与成员/账号状态，支持 `q` 关键词搜索，不递归子组织）；供组织工作台「成员」Tab 使用，组织归属变更仍走 `/users/{id}/organizations`。
 - `/api/v1/admin/users/{id}/organizations`：读取或替换指定租户成员的多组织归属，可指定唯一主组织；只允许选择启用组织。
 - `/api/v1/admin/roles/{id}/data-scopes`：为角色已拥有的单项权限配置 `tenant`、`self`、`organization`、`organization_tree` 或 `selected_organizations` 策略。
-- 租户委派 API 位于 `/api/v1/tenant-admin/*`，组织/成员归属/角色数据范围复用 `admin/organizations.py`，OAuth 应用管理复用 `admin/applications.py`。应用权限 `iam.application.read/manage/secret.rotate` 仍由角色显式授予。源码迁移 0017–0021 已于 2026-10-09 应用到本地开发库；这些迁移不自动授予权限。真实租户登录态浏览器验收待完成。
+- 租户委派 API 位于 `/api/v1/tenant-admin/*`，组织/成员归属/角色数据范围复用 `admin/organizations.py`，OAuth 应用管理复用 `admin/applications.py`。应用权限 `app.read/manage/secret.rotate` 仍由角色显式授予。源码迁移 0017–0021 已于 2026-10-09 应用到本地开发库；这些迁移不自动授予权限。真实租户登录态浏览器验收待完成。
 - `/api/v1/authorization/check` 请求 `include_data_scope=true` 时先执行 RBAC，再返回机器可读 `data_scope.mode=any_of` 条件；范围策略缺失或解析后没有有效条件则默认拒绝。所有子句都带 `tenant_id`；本人条件额外匹配 `owner_user_id`，组织条件额外匹配 `organization_id`。Python/TypeScript SDK 还要求每次数据范围请求携带来自本地可信 session 的 user subject 并校验本人条件一致；该 subject 不传输到 IAM。业务服务必须把租户条件 AND 到每条 OR 子句中，不能只采信 UI 或在结果页隐藏数据。
 - `sdk/python` 与 `sdk/typescript` 提供参数化 PostgreSQL 数据范围编译器；每个 OR 分支都包含 tenant 条件，owner 和 organization 约束使用参数值，列名来自业务代码固定映射。SDK 不访问业务数据库，也不推断业务表字段；本地用户/组织主键不同于 IAM ID 时由业务仓储传入可信映射。空组织范围明确编译为零行谓词，无法映射租户/资源列时必须 fail closed。真实业务查询仍需在 AI 简历、DeerFlow、知识库逐项目集成验收。
 - 停用用户时在同一数据库事务撤销其全部刷新会话，随后重新启用账号也不会复活旧浏览器凭据；access JWT 仍由每次请求的账号状态查询立即阻断。
@@ -391,7 +406,7 @@ API Docker 镜像由 `requirements.lock` 固定 Python 包版本，并在镜像�
 - RBAC 采用 `RoleBinding → Role → RolePermission → Permission`。授权检查匹配权限编码及资源 ID，未匹配一律拒绝。前端的可见性不构成授权。
 - 用户组请求契约位于 `app/schemas/groups.py`，路由位于 `app/api/v1/admin/groups.py`，表结构位于 `app/models/groups.py`。用户组通过 `UserGroupMembership` 加入租户成员、通过 `UserGroupRole` 继承同租户角色；授权服务合并直接角色与活动组角色，组停用后不再授予继承权限，组配置保留。最近一次本地开发 PostgreSQL revision `0010_tenant_user_groups`、61 项后端 unittest、API readiness 与匿名 401 快照日期为 2026-09-29。2026-09-30 再次验证本地 API `8011` readiness，以及匿名访问概览、租户、应用、用户、用户组、组织、模型、审计列表全部返回 401；本轮未能连接测试运行环境或重验数据库 revision/完整 unittest。已登录管理员浏览器操作和生产迁移仍需单独验收。
 - 模型目录路由位于 `app/api/v1/admin/models.py`，模型目录与内部用量/配额契约位于 `app/schemas/models.py`；内部 `/api/v1/internal/model-usage/*` 路由保持独立。模型端点继续只接受 HTTPS 或开发 localhost，供应商凭证只保存 Secret Manager 引用。
-- 组织树、成员目录/归属与角色数据范围处理器位于 `app/api/v1/admin/organizations.py`，请求契约位于 `app/schemas/organizations.py`；平台管理路径保持 `/admin/*`，委派租户管理入口由 `app/api/v1/tenant_admin.py` 暴露 `/tenant-admin/*` 并使用 `app/services/admin_authorization.py` 执行租户级 RBAC。两条路由复用相同数据校验与写入审计事务。
+- 组织树、成员目录/归属与角色数据范围处理器位于 `app/api/v1/admin/organizations.py`，请求契约位于 `app/schemas/organizations.py`；平台管理路径保持 `/admin/*`，委派租户管理入口由 `app/api/v1/tenant_admin/` 包暴露 `/tenant-admin/*` 并使用 `app/services/admin_authorization.py` 执行租户级 RBAC。两条路由复用相同数据校验与写入审计事务。
 - 管理修改和审计事件在相同数据库事务提交；审计摘要不得记录口令、JWT、客户端秘密或供应商密钥。
 - 登录主题只接收白名单 JSON 字段、十六进制颜色以及 HTTPS/站内资源地址；不执行 HTML、脚本或任意 CSS。
 - 模型目录只存供应方、模型名、能力、RPM/TPM 限额元数据和 `vault://`/`secret://` 外部凭证引用。平台管理员可用 `PATCH /api/v1/admin/models/{id}` 更新非身份字段（含 RPM/TPM）；tenant/key 不属于 PATCH 契约。API 响应与审计摘要均不返回/记录凭证引用原文。当前没有 Secret Manager 读取或模型代理调用；配额限额仅在显式启用服务端开关时由 reserve API 强制。

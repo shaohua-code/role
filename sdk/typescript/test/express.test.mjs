@@ -178,3 +178,127 @@ test('currentUser exposes the verified session without contacting IAM', async ()
   assert.equal(req.iamUser.tenantId, tenantId)
   assert.equal(requireCalled, false)
 })
+
+
+test('requireRoles allows when session holds any listed role', async () => {
+  const client = clientMock()
+  const iam = createIamExpress({
+    client,
+    loadSession: async () => ({
+      accessToken,
+      tenantId,
+      iamSubject,
+      roleKeys: ['app.member', 'deerflow_member'],
+    }),
+  })
+  const req = { headers: {} }
+  const res = makeRes()
+  let nextCalled = false
+  await iam.requireRoles('app.admin', 'app.member')(req, res, () => { nextCalled = true })
+  assert.equal(nextCalled, true)
+  assert.equal(req.iamUser.iamSubject, iamSubject)
+  assert.equal(res.calls.status, null)
+})
+
+test('requireRoles denies when session lacks all listed roles', async () => {
+  const client = clientMock()
+  const iam = createIamExpress({
+    client,
+    loadSession: async () => ({
+      accessToken,
+      tenantId,
+      iamSubject,
+      roleKeys: ['app.member'],
+    }),
+  })
+  const req = { headers: {} }
+  const res = makeRes()
+  let nextCalled = false
+  await iam.requireRoles('app.admin')(req, res, () => { nextCalled = true })
+  assert.equal(nextCalled, false)
+  assert.equal(res.calls.status, 403)
+  assert.deepEqual(res.calls.body, { detail: 'Missing required role: app.admin' })
+})
+
+test('requireRoles fails closed when created with no role keys', () => {
+  const iam = makeIam(clientMock())
+  assert.throws(() => iam.requireRoles(), /at least one role key/)
+})
+
+
+test('requireRoles fetches /auth/me when roleKeys missing and apiBaseUrl set', async () => {
+  const client = clientMock()
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), 'https://iam.example/api/v1/auth/me')
+    assert.equal(init.headers.Authorization, `Bearer ${accessToken}`)
+    return {
+      ok: true,
+      async json() {
+        return { roles: [{ key: 'app.member' }, { key: 'deerflow_member' }] }
+      },
+    }
+  }
+  try {
+    const iam = createIamExpress({
+      client,
+      apiBaseUrl: 'https://iam.example',
+      loadSession: async () => ({ accessToken, tenantId, iamSubject }),
+    })
+    const req = { headers: {} }
+    const res = makeRes()
+    let nextCalled = false
+    await iam.requireRoles('app.member')(req, res, () => { nextCalled = true })
+    assert.equal(nextCalled, true)
+    assert.deepEqual(req.iamUser.roleKeys, ['app.member', 'deerflow_member'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('requireRoles uses custom fetchRoles and skips network', async () => {
+  const client = clientMock()
+  let fetched = false
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => { fetched = true; throw new Error('network should not run') }
+  try {
+    const iam = createIamExpress({
+      client,
+      apiBaseUrl: 'https://iam.example',
+      fetchRoles: async () => ['app.admin'],
+      loadSession: async () => ({ accessToken, tenantId, iamSubject }),
+    })
+    const req = { headers: {} }
+    const res = makeRes()
+    let nextCalled = false
+    await iam.requireRoles('app.admin')(req, res, () => { nextCalled = true })
+    assert.equal(nextCalled, true)
+    assert.equal(fetched, false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('requireRoles with fetchRoles false does not fetch and denies empty roles', async () => {
+  const client = clientMock()
+  let fetched = false
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => { fetched = true; return { ok: true, async json() { return { roles: [{ key: 'app.member' }] } } } }
+  try {
+    const iam = createIamExpress({
+      client,
+      apiBaseUrl: 'https://iam.example',
+      fetchRoles: false,
+      loadSession: async () => ({ accessToken, tenantId, iamSubject }),
+    })
+    const req = { headers: {} }
+    const res = makeRes()
+    let nextCalled = false
+    await iam.requireRoles('app.member')(req, res, () => { nextCalled = true })
+    assert.equal(nextCalled, false)
+    assert.equal(fetched, false)
+    assert.equal(res.calls.status, 403)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

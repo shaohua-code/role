@@ -40,9 +40,12 @@ class UserStatusContractTests(unittest.TestCase):
         db, request, actor = Mock(), Mock(), SimpleNamespace(id=actor_id)
         db.scalar.return_value = row
 
-        with patch("app.api.v1.admin.users.audit") as write_audit, patch(
+        # 绿场规则：平台权限只认角色绑定；Mock 契约测试直接假定 actor 持 L1。
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True), \
+             patch("app.api.v1.admin.users.audit") as write_audit, patch(
             "app.api.v1.admin.users.commit_or_conflict"
-        ) as commit:
+        ) as commit, patch("app.api.v1.admin.users.deliver_for_user"):
+            # 全局锁定后还会做站内信 back-channel 投递，Mock db 无法承载其内部查询，需一并打桩。
             result = set_user_status(
                 user_id, UserStatusUpdate(expected_status="active", status="locked"), request, actor, db,
             )
@@ -67,7 +70,8 @@ class UserStatusContractTests(unittest.TestCase):
         row = SimpleNamespace(id=user_id, status="disabled", auth_version=2)
         db, request, actor = Mock(), Mock(), SimpleNamespace(id=actor_id)
         db.scalar.return_value = row
-        with patch("app.api.v1.admin.users.audit") as write_audit, patch(
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True), \
+             patch("app.api.v1.admin.users.audit") as write_audit, patch(
             "app.api.v1.admin.users.commit_or_conflict"
         ) as commit:
             with self.assertRaises(HTTPException) as stale:

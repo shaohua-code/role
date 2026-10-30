@@ -45,9 +45,15 @@ def audit(
         elif details and details.get("application_id"):
             related_app = db.get(Application, UUID(str(details["application_id"])) )
             tenant_id = related_app.tenant_id if related_app else None
+    # 破窗旁路（默认关闭）产生的写审计必须显式标记，便于灾备后复盘。
+    from app.services.rbac_guards import user_is_break_glass
+
+    audit_details = dict(details or {})
+    if user_is_break_glass(actor):
+        audit_details.setdefault("break_glass", True)
     db.add(AuditEvent(actor_user_id=actor.id, tenant_id=tenant_id, action=action,
                       target_type=target_type, target_id=target_id,
-                      source_ip=client_ip_for_request(request, get_settings()), details=details or {}))
+                      source_ip=client_ip_for_request(request, get_settings()), details=audit_details))
 
 
 def commit_or_conflict(db: Session) -> None:

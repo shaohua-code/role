@@ -42,6 +42,10 @@ class UserSessionManagementIntegrationTests(unittest.TestCase):
         self.tenant = Tenant(name="Session Test Tenant", slug=f"session-{uuid4().hex[:24]}")
         self.db.add_all([self.actor, self.user, self.tenant])
         self.db.flush()
+        # 绿场规则：actor 需显式绑定 L1 才能通过按码判权。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.actor)
         self.application = Application(
             tenant_id=self.tenant.id,
             client_id=f"session-client-{uuid4().hex}",
@@ -182,15 +186,16 @@ class UserSessionManagementIntegrationTests(unittest.TestCase):
         self.assertEqual(final_audit_count, 1)
 
     def test_admin_cannot_remote_revoke_own_user_sessions(self) -> None:
+        # 非隔离库可能已有历史审计，改用调用前后对比验证拒绝路径未新增审计。
+        audit_before = self.db.scalar(select(func.count()).select_from(AuditEvent))
         with self.assertRaises(HTTPException) as denied:
             revoke_user_session(
                 self.actor.id, "management", uuid4(), self.request(), self.actor, self.db,
             )
 
         self.assertEqual(denied.exception.status_code, 400)
-        self.assertEqual(
-            self.db.scalar(select(func.count()).select_from(AuditEvent)), 0,
-        )
+        audit_after = self.db.scalar(select(func.count()).select_from(AuditEvent))
+        self.assertEqual(audit_after, audit_before)
 
 
 if __name__ == "__main__":

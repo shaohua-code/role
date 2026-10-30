@@ -1,0 +1,92 @@
+<script setup lang="ts">
+// 角色挂码编辑弹窗（共享）：目录 + 当前通用授权加载、变更影响预览、确认保存。
+// 平台角色走 /admin/roles/{id}/permissions；应用角色走 /tenant-admin/.../roles/{id}/permissions，
+// 由 catalogPath / grantsPath 注入，角色管理页与应用工作台「角色」Tab 共用。
+import { computed, ref, watch } from 'vue'
+import { message, Modal } from 'ant-design-vue'
+import { api } from '@/api'
+import { ExclamationCircleOutlined } from '@/plugins/icons'
+import { isManagementCode, PERMISSION_CLASSES, SCOPE_LEVEL_LABELS, SCOPE_LEVEL_ORDER, SCOPE_LEVEL_TIPS, permissionNamespace, resolvePermissionClass, resolvePermissionScope } from '@/utils/permissionGroups'
+
+interface PermissionRecord { id: string; code: string; description?: string | null; status: 'active' | 'disabled' }
+interface PermissionGrant { permission_id: string; resource_id: string | null }
+/** 平台与应用两个预览接口的联合视图；差异字段全部可选。 */
+interface PermissionImpact {
+  current_permission_ids: string[]
+  grant_permission_codes: string[]
+  revoke_permission_codes: string[]
+  data_scopes_to_delete?: { permission_id: string; permission_code: string; scope_type: string }[]
+  bound_active_members?: number
+  potentially_affected_members: number
+  analysis_note: string
+  permission_impacts: { permission_code: string; action: 'grant' | 'revoke'; eligible_members: number; covered_by_other_general_roles: number; potentially_affected_members: number }[]
+}
+
+const props = withDefaults(defineProps<{
+  roleId: string
+  roleName?: string
+  catalogPath: string
+  grantsPath: string
+  // 应用侧规则：iam.* 管理码禁止新增（只能保留/撤销）；平台侧规则：仅停用码禁选
+  disableIamCodes?: boolean
+  // 管理员不能管理管理员：自定义角色禁选授权权码（已持有的也会被强制取消，后端同口径 422 兜底）
+  lockAuthorityCodes?: boolean
+  // P390 作用域收敛：按角色 kind 隐藏越域码组（'' = 不收敛，展示全量目录）
+  roleKind?: '' | 'platform' | 'tenant' | 'application'
+  // 应用角色的业务码命名空间（编码首段匹配）；仅 roleKind='application' 时生效
+  roleNamespace?: string
+}>(), {
+  roleName: '',
+  disableIamCodes: false,
+  lockAuthorityCodes: false,
+  roleKind: '',
+  roleNamespace: '',
+})
+
+// P395 收敛矩阵（两类分组口径）：各 kind 隐藏的作用域组（组值沿用 P393，逐码结果不变）。
+// tenant 排除 L1 专属 6 码 + 业务码（业务码随应用，租户全域角色不配）；
+// application 排除 L1 专属 + L3 起共 12 码（治理码 rbac.role.read / rbac.role.manage / rbac.permission.manage
+// 分属两层被覆盖），业务码组仅显示本应用命名空间。
+// 已持有的码始终豁免隐藏（可撤销，不静默剥夺）。
+const HIDDEN_SCOPES_BY_KIND: Record<string, Set<string>> = {
+  platform: new Set(),
+  tenant: new Set(['platform', 'business']),
+  application: new Set(['platform', 'tenant']),
+}
+
+// 与后端 role_provisioning.AUTHORITY_MANAGE_CODES 对齐的授权权码集合。
+const AUTHORITY_MANAGE_CODES = new Set([
+  'rbac.app_role.manage', 'org.member.manage', 'org.invite.manage', 'org.group.manage',
+])
+
+const emit = defineEmits<{ saved: [] }>()
+const open = defineModel<boolean>('open', { default: false })
+
+const loading = ref(false)
+const previewing = ref(false)
+const saving = ref(false)
+// 中文描述与编码并列展示：description 来自权限目录（授权弹窗主文案），code 保留可辨识性。
+const options = ref<{ label: string; code: string; description: string; value: string; scope: string; disabled?: boolean }[]>([])
+const selectedIds = ref<string[]>([])
+const impact = ref<PermissionImpact | null>(null)
+const impactPreviewKey = ref('')
+
+// P388 分组展示（P393 起按作用域组）：组筛选（'all' = 全部）与组折叠状态，纯展示层不影响选择与保存。
+const scopeFilter = ref('all')
+const collapsedScopes = ref(new Set<string>())
+
+interface OptionItem { label: string; code: string; description: string; value: string; scope: string; disabled?: boolean }
+interface RenderSubGroup { namespace: string; options: OptionItem[] }
+interface RenderGroup { key: string; label: string; hint: string; count: number; subGroups: RenderSubGroup[] }
+
+/** 按两类口径（P395：平台编码 / 业务码）分桶；平台编码组内按层级起点序排，业务码组按命名空间二级分组。 */
+const groupedOptions = computed<RenderGroup[]>(() => {
+  const platformList: OptionItem[] = []
+  const businessList: OptionItem[] = []
+  for (const option of options.value) {
+    if (resolvePermissionClass(option.code) === 'platform-class') platformList.push(option)
+    else businessList.push(option)
+  }
+  // 平台编码组内按层级起点序（L1 专属 → L3 起 → L2 起）+ 编码字母序
+  platformList.sort((a, b) => {
+    const delta = (SCOPE_LEVEL_ORDER[resolvePermission

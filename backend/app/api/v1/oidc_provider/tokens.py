@@ -26,11 +26,13 @@ router = APIRouter()
 
 
 def _b64url(raw: bytes) -> str:
+    """标准 URL-safe base64（去填充），用于 at_hash 等摘要编码。"""
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
 def _access_token(user: User, app: Application, scope: str, membership_version: int = 1,
                   family_id: UUID | None = None) -> tuple[str, int]:
+    """签发 RS256 access token；claims 携带身份/成员版本号供资源服务器离线验权。"""
     now = datetime.now(timezone.utc)
     claims = {
         "iss": _issuer(), "sub": str(user.id), "aud": app.client_id,
@@ -48,6 +50,7 @@ def _access_token(user: User, app: Application, scope: str, membership_version: 
 
 
 def _id_token(user: User, app: Application, scopes: set[str], nonce: str | None, access_token: str) -> str:
+    """按 scope 裁剪身份断言；nonce 与 at_hash 绑定授权请求和 access token。"""
     now = datetime.now(timezone.utc)
     claims: dict = {"iss": _issuer(), "sub": str(user.id), "aud": app.client_id,
                     # Tenant context is part of the signed identity assertion so
@@ -70,6 +73,7 @@ def _id_token(user: User, app: Application, scopes: set[str], nonce: str | None,
 def _token_payload(db: Session, user: User, app: Application, scopes: set[str], nonce: str | None,
                    membership: TenantMembership,
                    *, family_id: UUID | None = None) -> tuple[dict, OAuthRefreshToken | None]:
+    """组装 token 响应；仅当请求含 offline_access 时创建 refresh token（opaque 存摘要）。"""
     scope = " ".join(sorted(scopes))
     membership_version = membership.auth_version or 1
     session_family_id = (family_id or uuid4()) if "offline_access" in scopes else None
@@ -92,6 +96,7 @@ def _token_payload(db: Session, user: User, app: Application, scopes: set[str], 
 
 
 def _token_response(payload: dict) -> JSONResponse:
+    """token 响应统一禁止缓存，防止令牌落入共享代理。"""
     return JSONResponse(payload, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
 
@@ -145,6 +150,7 @@ async def token(request: Request, authorization: str | None = Header(default=Non
                 or not hmac.compare_digest(code_row.redirect_uri, redirect_uri)):
             return _error("invalid_grant", "授权码不存在、已使用、过期或回调地址不匹配")
         verifier_hash = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+        # S256(verifier) 必须与授权请求登记的 challenge 完全一致，防止授权码被截获后冒用。
         if code_row.code_challenge_method != "S256" or not hmac.compare_digest(verifier_hash, code_row.code_challenge):
             return _error("invalid_grant", "PKCE 校验失败")
         user = db.scalar(select(User).where(User.id == code_row.user_id, User.status == "active"))

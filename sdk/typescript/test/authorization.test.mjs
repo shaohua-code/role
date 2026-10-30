@@ -114,10 +114,25 @@ test('rejects cross-tenant, empty, unknown and missing data-scope responses', as
   } finally { globalThis.fetch = originalFetch }
 })
 
-test('rejects a data scope returned when no scoped decision was requested', async () => {
+// 绿场 breaking（2.0）：业务权限码 requires_data_scope=true 时 IAM 会忽略
+// include_data_scope=false 并强制返回行级条件；SDK 必须接受并校验该范围。
+test('accepts a forced data scope returned without an explicit scope request', async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => new Response(JSON.stringify({
     allowed: true, reason: 'matching_role_grant',
+    data_scope: { mode: 'any_of', constraints: [{ kind: 'tenant', tenant_id: tenantId }] },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  try {
+    const result = await clientWith().check('access-token', { tenantId, permissionCode: 'resume.read' })
+    assert.equal(result.allowed, true)
+    assert.equal(result.data_scope.constraints.length, 1)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('rejects a data scope attached to a denied decision', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    allowed: false, reason: 'data_scope_policy_missing',
     data_scope: { mode: 'any_of', constraints: [{ kind: 'tenant', tenant_id: tenantId }] },
   }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   try {
@@ -272,6 +287,54 @@ test('checkBatch validates inputs before any network call', async () => {
     await assert.rejects(
       () => clientWith().checkBatch('', { tenantId, permissionCodes: ['resume.read'] }),
       (error) => error instanceof Error && error.message.includes('access token is required'),
+    )
+  } finally { globalThis.fetch = originalFetch }
+})
+
+
+test('business allow without scope fails even when scope not requested', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    allowed: true, reason: 'matching_role_grant',
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  try {
+    await assert.rejects(
+      () => clientWith().check('access-token', { tenantId, permissionCode: 'resume.read', includeDataScope: false }),
+      (error) => error instanceof AuthorizationServiceError
+        && error.statusCode === 502
+        && error.message.includes('omitted the required data scope'),
+    )
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('management allow without scope is ok and does not request scope by default', async () => {
+  const originalFetch = globalThis.fetch
+  let requestBody
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(init.body)
+    return new Response(JSON.stringify({
+      allowed: true, reason: 'matching_role_grant',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const result = await clientWith().check('access-token', { tenantId, permissionCode: 'iam.role.read' })
+    assert.equal(result.allowed, true)
+    assert.equal(result.data_scope, undefined)
+    assert.equal(requestBody.include_data_scope, false)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('require rejects data_scope_policy_missing with 403', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    allowed: false, reason: 'data_scope_policy_missing',
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  try {
+    await assert.rejects(
+      () => clientWith().require('access-token', { tenantId, permissionCode: 'resume.read' }),
+      (error) => error instanceof AuthorizationServiceError
+        && error.statusCode === 403
+        && error.message.includes('data_scope_policy_missing'),
     )
   } finally { globalThis.fetch = originalFetch }
 })

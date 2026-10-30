@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.models.application import Application
-from app.models.authorization import Permission, Role, RoleBinding, RolePermission
-from app.models.groups import UserGroup, UserGroupMembership, UserGroupRole
+from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import Tenant, TenantMembership, User
 from app.models.model_catalog import ModelCatalog
 from app.models.organization import MembershipOrganization, Organization, RoleDataScope
+from app.services.effective_roles import authorized_role_ids_statement
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 
 # 即使应用停用，也必须允许有权限的管理员查看它并重新启用。
 APPLICATION_ADMIN_PERMISSION_CODES = frozenset({
-    "iam.application.read",
-    "iam.application.manage",
-    "iam.application.secret.rotate",
+    "app.read",
+    "app.manage",
+    "app.secret.rotate",
 })
 
 
@@ -95,22 +95,13 @@ def evaluate_access(body: AuthorizationCheck, user: User, db: Session, *, enforc
         record("model", True, "model_active")
 
     # 直接角色与活动用户组角色均按同一租户成员身份计算；组已停用时保留配置但不授予权限。
-    inherited_role_ids = (select(UserGroupRole.role_id)
-                          .join(UserGroup, UserGroup.id == UserGroupRole.group_id)
-                          .join(UserGroupMembership,
-                                (UserGroupMembership.group_id == UserGroup.id)
-                                & (UserGroupMembership.tenant_id == UserGroup.tenant_id))
-                          .where(UserGroupMembership.membership_id == membership.id,
-                                 UserGroupMembership.tenant_id == tenant_id,
-                                 UserGroupRole.tenant_id == tenant_id,
-                                 UserGroup.status == "active"))
-    authorized_role_ids = (select(RoleBinding.role_id)
-                           .where(RoleBinding.membership_id == membership.id)
-                           .union(inherited_role_ids))
+    # 角色集合复用全站唯一的有效角色实现（evaluate_access / OIDC 入场 / rbac_guards 共用）。
+    authorized_role_ids = authorized_role_ids_statement(membership.id, tenant_id)
 
     statement = (select(
         RolePermission.role_id,
         Permission.id.label("permission_id"),
+        Permission.requires_data_scope.label("requires_data_scope"),
         Role.key.label("role_key"),
         Role.name.label("role_name"),
         Role.application_id,
@@ -142,7 +133,10 @@ def evaluate_access(body: AuthorizationCheck, user: User, db: Session, *, enforc
         record("permission_grant", False, "no_matching_grant")
         return finish(False, "no_matching_grant")
     record("permission_grant", True, "matching_role_grant")
-    if not body.include_data_scope:
+    # 绿场规则：业务权限（requires_data_scope=true）忽略调用方 include_data_scope=False，
+    # 强制解析数据范围；管理面码可不带 scope 直接放行。
+    permission_requires_scope = bool(matching_grants[0].requires_data_scope)
+    if not body.include_data_scope and not permission_requires_scope:
         record("data_scope", None, "not_requested")
         return finish(True, "matching_role_grant")
 
@@ -159,6 +153,7 @@ def evaluate_access(body: AuthorizationCheck, user: User, db: Session, *, enforc
         return finish(False, "data_scope_policy_missing")
 
     scopes = {policy.scope_type for policy in policies}
+    # 任一策略声明 tenant 范围即整租户放行，跳过组织/个人级过滤。
     if "tenant" in scopes:
         data_scope = {"mode": "any_of", "constraints": [{"kind": "tenant", "tenant_id": str(tenant_id)}]}
         record("data_scope", True, "tenant_scope")
@@ -187,6 +182,7 @@ def evaluate_access(body: AuthorizationCheck, user: User, db: Session, *, enforc
         if "organization" in organization_scope_types:
             scoped_organization_ids.update(assigned_ids)
         if "organization_tree" in organization_scope_types:
+            # 从分配组织沿父指针向下 BFS，把可见范围扩展到全部子孙组织。
             children_by_parent: dict[UUID | None, set[UUID]] = {}
             for organization in active_organizations:
                 children_by_parent.setdefault(organization.parent_id, set()).add(organization.id)

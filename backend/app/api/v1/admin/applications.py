@@ -4,12 +4,13 @@ import secrets
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.v1.admin.common import audit, commit_or_conflict, flush_or_conflict, valid_redirect_uri
-from app.core.security import current_user, hash_password, is_platform_admin_user, platform_admin
+from app.core.security import current_user, hash_password, is_platform_admin_user
+from app.services.rbac_guards import ensure_roles
 from app.db.session import get_db_session
 from app.models.application import Application, ApplicationTheme
 from app.models.authorization import Permission, Role, RolePermission
@@ -29,16 +30,30 @@ from app.services.admin_authorization import (
     require_application_admin_access,
 )
 from app.services.public_registration import eligible_registration_role
+from app.services.role_provisioning import (
+    L1_ROLE_KEY,
+    L3_ROLE_KEY,
+    provision_application_platform_roles,
+)
 
 router = APIRouter(tags=["应用管理"])
 
 @router.get("/applications")
-def list_applications(tenant_id: UUID | None = None, actor: User = Depends(current_user),
+def list_applications(tenant_id: UUID | None = None,
+                      q: str | None = Query(default=None, max_length=160),
+                      status: str | None = Query(default=None),
+                      trusted: bool | None = Query(default=None),
+                      actor: User = Depends(current_user),
                       db: Session = Depends(get_db_session)) -> list[dict]:
-    """平台管理员可看全局目录；租户管理员只能看通过租户/应用资源授权的客户端。"""
-    platform_admin_access = is_platform_admin_user(actor)
+    """平台管理员可看全局目录；租户管理员只能看通过租户/应用资源授权的客户端。
+
+    q/status/trusted 为可选服务端过滤（管理台已有前端本地过滤，参数供深链与未来分页使用）。
+    """
+    platform_admin_access = is_platform_admin_user(actor, db)
     if not platform_admin_access and tenant_id is None:
         raise HTTPException(status_code=422, detail="租户管理员查询应用时必须提供 tenant_id")
+    if status not in (None, "active", "disabled"):
+        raise HTTPException(status_code=422, detail="status 仅支持 active 或 disabled")
 
     capabilities = list_readable_application_capabilities(actor, tenant_id, db) if tenant_id else None
     stmt = select(Application)
@@ -49,6 +64,14 @@ def list_applications(tenant_id: UUID | None = None, actor: User = Depends(curre
             return []
         # 在 LIMIT 前先套用授权清单，避免用户获准的应用恰好排在前 500 条之外。
         stmt = stmt.where(Application.id.in_(capabilities.keys()))
+    search = q.strip()[:160] if q else ""
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(Application.name.ilike(pattern) | Application.client_id.ilike(pattern))
+    if status:
+        stmt = stmt.where(Application.status == status)
+    if trusted is not None:
+        stmt = stmt.where(Application.trusted == trusted)
     stmt = stmt.order_by(Application.created_at.desc()).limit(500)
     rows = db.scalars(stmt).all()
     return [{"id": str(a.id), "tenant_id": str(a.tenant_id), "name": a.name, "client_id": a.client_id,
@@ -58,17 +81,23 @@ def list_applications(tenant_id: UUID | None = None, actor: User = Depends(curre
              "registration_role_id": str(a.registration_role_id) if a.registration_role_id else None,
              "registration_terms_version": a.registration_terms_version,
              "registration_privacy_version": a.registration_privacy_version,
+             "backchannel_logout_uri": a.backchannel_logout_uri,
              "redirect_uris": a.redirect_uris, "post_logout_redirect_uris": a.post_logout_redirect_uris,
              "created_at": a.created_at,
              **({"can_manage": capabilities[a.id]["can_manage"],
                  "can_rotate_secret": capabilities[a.id]["can_rotate_secret"]}
-                if capabilities is not None and a.id in capabilities else {})}
+                if capabilities is not None and a.id in capabilities
+                # 平台管理员的全局视图（无租户过滤）不走 capabilities 换算；
+                # L1 在 has_application_admin_access 恒过，这里直接标注可管理。
+                else {"can_manage": True, "can_rotate_secret": True})}
             for a in rows if capabilities is None or a.id in capabilities]
 
 
 @router.post("/applications", status_code=201)
 def create_application(body: ApplicationCreate, request: Request, response: Response,
                        actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
+    # P404：创建应用仅 L1 / L3；L2 即使持 app.manage 也不能新建。
+    ensure_roles(actor, db, [L3_ROLE_KEY], tenant_id=body.tenant_id, detail="缺少租户管理员角色，无法创建应用")
     require_application_admin_access(actor, body.tenant_id, db, manage=True)
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant or tenant.status != "active": raise HTTPException(404, "活动租户不存在")
@@ -86,7 +115,10 @@ def create_application(body: ApplicationCreate, request: Request, response: Resp
                       description=body.description, redirect_uris=body.redirect_uris,
                       post_logout_redirect_uris=body.post_logout_redirect_uris,
                       trusted=False, client_secret_hash=hash_password(client_secret))
-    db.add(row); flush_or_conflict(db); audit(db, actor, request, "application.create", "application", str(row.id), {"client_id": row.client_id, "tenant_id": str(body.tenant_id), "trusted": False}); commit_or_conflict(db)
+    db.add(row); flush_or_conflict(db)
+    # P405：应用开通即预置多应用管理员 / 应用管理员 / 应用成员三个平台角色模板。
+    provision_application_platform_roles(db, row.tenant_id, row.id)
+    audit(db, actor, request, "application.create", "application", str(row.id), {"client_id": row.client_id, "tenant_id": str(body.tenant_id), "trusted": False}); commit_or_conflict(db)
     # 一次性返回的客户端密钥不得进入共享缓存或代理缓存。
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
@@ -134,6 +166,8 @@ def list_application_permission_catalog(
             "scope": permission.scope,
             "description": permission.description,
             "status": permission.status,
+            "surface": permission.surface,
+            "requires_data_scope": permission.requires_data_scope,
             "assigned_role_count": int(assigned_role_count),
         }
         for permission, assigned_role_count in rows
@@ -166,6 +200,10 @@ def create_application_permission(
         resource_type=body.resource_type.strip(),
         scope=body.scope.strip(),
         description=body.description.strip() if body.description else None,
+        # 应用命名空间下登记的权限一律是业务码；管理面码只能由 L1 在平台目录创建。
+        # 菜单/按钮类资源不做行级数据过滤（evaluate_access 按 requires_data_scope 放行）。
+        surface="business",
+        requires_data_scope=body.resource_type.strip() not in {"menu", "button"},
     )
     db.add(row)
     flush_or_conflict(db)
@@ -199,6 +237,15 @@ def update_application(application_id: UUID, body: ApplicationUpdate, request: R
     if not row or not has_application_admin_access(actor, row.tenant_id, db, manage=True, application_id=row.id):
         raise HTTPException(404, "应用不存在")
     changes = body.model_dump(exclude_unset=True)
+    # G19：Back-Channel Logout 地址复用回调白名单的 URI 规则（HTTPS，开发限 localhost）；空串归一为清除。
+    if "backchannel_logout_uri" in changes:
+        cleaned_uri = changes["backchannel_logout_uri"]
+        if cleaned_uri:
+            cleaned_uri = cleaned_uri.strip()
+            if not valid_redirect_uri(cleaned_uri):
+                raise HTTPException(422, "Back-Channel Logout 地址必须是 HTTPS（开发环境限 localhost）")
+        changes["backchannel_logout_uri"] = cleaned_uri or None
+        body = body.model_copy(update={"backchannel_logout_uri": changes["backchannel_logout_uri"]})
     registration_policy = changes.get("registration_policy", row.registration_policy)
     registration_role_id = changes.get("registration_role_id", row.registration_role_id)
     terms_version = changes.get("registration_terms_version", row.registration_terms_version)
@@ -228,6 +275,7 @@ def update_application(application_id: UUID, body: ApplicationUpdate, request: R
             "registration_role_id": str(row.registration_role_id) if row.registration_role_id else None,
             "registration_terms_version": row.registration_terms_version,
             "registration_privacy_version": row.registration_privacy_version,
+            "backchannel_logout_uri": row.backchannel_logout_uri,
             "updated_fields": sorted(changes)}
 
 
@@ -254,8 +302,10 @@ def list_application_registration_roles(application_id: UUID, actor: User = Depe
 
 @router.patch("/applications/{application_id}/trusted")
 def set_application_trusted(application_id: UUID, trusted: bool, request: Request,
-                            actor: User = Depends(platform_admin), db: Session = Depends(get_db_session)) -> dict:
-    """只由平台管理员显式设置信任；撤销信任时同时撤销可静默续期的 OAuth 刷新会话。"""
+                            actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
+    """只由持平台管理码的管理员显式设置信任；撤销信任时同时撤销可静默续期的 OAuth 刷新会话。"""
+    # 信任标记属平台级策略：按码判权（L1 覆盖全部管理码），废除路由级 platform_admin 依赖
+    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 app.manage）")
     row = db.get(Application, application_id)
     if not row:
         raise HTTPException(404, "应用不存在")
@@ -336,3 +386,46 @@ def set_application_status(
     })
     commit_or_conflict(db)
     return {"id": str(row.id), "status": row.status}
+
+
+@router.delete("/applications/{application_id}", status_code=204)
+def delete_application(
+    application_id: UUID,
+    request: Request,
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> None:
+    """删除应用：主题/OIDC 令牌/授权码/注册挑战级联清除，应用角色退化为租户角色。
+
+    存在模型用量账目（事件/预留，RESTRICT）时阻塞并给出可操作文案。
+    """
+    from app.models.model_catalog import ModelUsageEvent, ModelUsageReservation
+
+    # 拒绝越权请求后再获取写锁，与状态端点同序，避免无权调用占用应用状态行。
+    candidate = db.get(Application, application_id)
+    if not candidate:
+        raise HTTPException(404, "应用不存在")
+    if not has_application_admin_access(actor, candidate.tenant_id, db, manage=True,
+                                        application_id=candidate.id):
+        raise HTTPException(404, "应用不存在")
+    # P404：删除应用仅 L1 / L3；L2 可见本应用但不能删。
+    ensure_roles(
+        actor, db, [L3_ROLE_KEY], tenant_id=candidate.tenant_id,
+        detail="缺少租户管理员角色，无法删除应用",
+    )
+    row = db.scalar(select(Application).where(Application.id == application_id).with_for_update())
+    if not row:
+        raise HTTPException(404, "应用不存在")
+    if not has_application_admin_access(actor, row.tenant_id, db, manage=True,
+                                        application_id=row.id):
+        raise HTTPException(404, "应用不存在")
+    usage_exists = db.scalar(select(ModelUsageEvent.id).where(ModelUsageEvent.application_id == row.id).limit(1))
+    reservation_exists = db.scalar(select(ModelUsageReservation.id).where(ModelUsageReservation.application_id == row.id).limit(1))
+    if usage_exists or reservation_exists:
+        raise HTTPException(409, "该应用存在模型用量账目，无法删除；请先归档用量数据")
+    # 审计先写（audit 内部按 target 反查租户归属），再级联删除；OIDC 令牌/主题随外键级联，
+    # 应用角色（roles.application_id SET NULL）保留并退化为租户角色。
+    audit(db, actor, request, "application.delete", "application", str(application_id),
+          {"tenant_id": str(row.tenant_id), "client_id": row.client_id, "name": row.name})
+    db.delete(row)
+    commit_or_conflict(db)

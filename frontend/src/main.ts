@@ -1,8 +1,8 @@
 import { createApp } from 'vue'
 import 'ant-design-vue/dist/reset.css'
-import App from './app/App.vue'
-import { router } from './app/router'
-import { installPublicUi } from './app/ui/antd'
+import App from './App.vue'
+import { router } from './router'
+import { installPublicUi } from '@/plugins/antd'
 import './style.css'
 import './appearance.css'
 

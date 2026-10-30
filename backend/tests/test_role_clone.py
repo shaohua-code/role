@@ -57,6 +57,10 @@ class RoleCloneIsolationTests(unittest.TestCase):
                            password_hash="test-only", display_name="原角色成员")
         self.db.add_all([self.tenant, self.actor, self.member])
         self.db.flush()
+        # 绿场规则：平台权限只认角色绑定，actor 需显式绑定 L1。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.actor)
         self.application = Application(
             id=uuid4(), tenant_id=self.tenant.id, client_id=f"client-{uuid4().hex}",
             name="复制测试应用", redirect_uris=["http://localhost/callback"],

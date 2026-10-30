@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ModelCatalogCreate(BaseModel):
+    """登记模型条目：credential_ref 只存外部密钥管理器引用，不接收密钥明文。"""
+
     tenant_id: UUID
     key: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     provider: str = Field(min_length=1, max_length=100)
@@ -80,6 +82,7 @@ class ModelUsageReservationRequest(BaseModel):
     application_id: UUID
     user_id: UUID
     reserved_input_tokens: int = Field(ge=0, le=10_000_000)
+    # 输出预留下限为 1，区别于允许为 0 的输入预留。
     reserved_output_tokens: int = Field(ge=1, le=10_000_000)
 
 
@@ -102,6 +105,7 @@ class ModelUsageReviewRequest(BaseModel):
     request_id: str = Field(min_length=8, max_length=180, pattern=r"^[A-Za-z0-9._:-]+$")
     decision: Literal["settle", "release"]
     reason: str = Field(min_length=3, max_length=500)
+    # 结算时必须为假；释放时必须为真，即确认 Provider 从未被调用。
     provider_not_called: bool = False
     input_tokens: int | None = Field(default=None, ge=0, le=10_000_000)
     output_tokens: int | None = Field(default=None, ge=0, le=10_000_000)

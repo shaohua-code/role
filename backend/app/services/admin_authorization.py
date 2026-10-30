@@ -8,18 +8,16 @@ from sqlalchemy.orm import Session
 
 from app.core.security import is_platform_admin_user
 from app.models.application import Application
-from app.models.authorization import Permission, Role, RoleBinding, RolePermission
-from app.models.groups import UserGroup, UserGroupMembership, UserGroupRole
+from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import Tenant, TenantMembership, User
-from app.schemas.access_control import AuthorizationCheck
-from app.services.authorization import evaluate_access
+from app.services.effective_roles import list_effective_roles
 
 
-ORGANIZATION_READ = "iam.organization.read"
-ORGANIZATION_MANAGE = "iam.organization.manage"
-APPLICATION_READ = "iam.application.read"
-APPLICATION_MANAGE = "iam.application.manage"
-APPLICATION_SECRET_ROTATE = "iam.application.secret.rotate"
+ORGANIZATION_READ = "org.read"
+ORGANIZATION_MANAGE = "org.manage"
+APPLICATION_READ = "app.read"
+APPLICATION_MANAGE = "app.manage"
+APPLICATION_SECRET_ROTATE = "app.secret.rotate"
 
 
 def has_organization_admin_access(
@@ -29,25 +27,19 @@ def has_organization_admin_access(
     *,
     manage: bool = False,
 ) -> bool:
-    """平台管理员可跨租户；其他成员须由该租户内有效角色授予相应管理编码。
+    """L1 代管；否则须持本租户 tenant.admin 或任一 app.admin（L2 模板含人治码）。
 
-    manage 权限同时允许读取管理界面所需的数据；纯 read 权限不能写组织或数据范围。
-    evaluate_access 会再次确认用户、租户成员、角色、应用上下文和权限状态，
-    OIDC token 的租户上下文也继续由验签依赖固定。
+    manage 仅保留调用签名兼容；角色门禁不再区分 read/manage 细码。
     """
-    if is_platform_admin_user(actor):
-        return True
+    del manage  # 角色门禁：组织台读写统一认 L3/L2 角色。
+    from app.services.rbac_guards import user_has_any_role
+    from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS
 
-    permission_codes = [ORGANIZATION_MANAGE] if manage else [ORGANIZATION_READ, ORGANIZATION_MANAGE]
-    for permission_code in permission_codes:
-        evaluation = evaluate_access(
-            AuthorizationCheck(tenant_id=tenant_id, permission_code=permission_code),
-            actor,
-            db,
-        )
-        if evaluation["decision"]["allowed"]:
-            return True
-    return False
+    if is_platform_admin_user(actor, db):
+        return True
+    return user_has_any_role(
+        actor, db, CONSOLE_ADMIN_ROLE_KEYS, tenant_id=tenant_id,
+    )
 
 
 def require_organization_admin_access(
@@ -72,36 +64,39 @@ def has_application_admin_access(
     rotate_secret: bool = False,
     application_id: UUID | None = None,
 ) -> bool:
-    """检查租户级或指定应用级权限；密钥轮换单独授权。
+    """L1 代管；L3 管本租户全部应用；L2 仅钉住的应用。未指定 application_id 视为创建入口，仅 L3。
 
-    不传 application_id 时，只匹配租户级角色，调用方用于新建应用等租户级操作。
-    指定 application_id 后，共享判权还会匹配绑定到该应用的角色/资源授权。
+    P404：L2 不能借「租户内任一 app.admin」走创建/删除。rotate_secret / manage 保留签名。
     """
-    if is_platform_admin_user(actor):
+    del manage
+    from app.services.rbac_guards import user_has_any_role, user_has_management_code
+    from app.services.role_provisioning import APP_SCOPED_ADMIN_ROLE_KEYS, L3_ROLE_KEY
+
+    if is_platform_admin_user(actor, db):
         return True
-
-    if rotate_secret:
-        permission_codes = [APPLICATION_SECRET_ROTATE]
-    elif manage:
-        permission_codes = [APPLICATION_MANAGE]
-    else:
-        # manage 包含读取目录；只授予密钥轮换的角色不因此获得应用清单读取权。
-        permission_codes = [APPLICATION_READ, APPLICATION_MANAGE]
-
-    for permission_code in permission_codes:
-        evaluation = evaluate_access(
-            AuthorizationCheck(
-                tenant_id=tenant_id,
-                application_id=application_id,
-                permission_code=permission_code,
+    # L3 租户角色 application_id 为空，指定应用时仍命中。
+    if user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
+        if rotate_secret:
+            return user_has_management_code(
+                actor, db, APPLICATION_SECRET_ROTATE,
+                tenant_id=tenant_id, application_id=application_id,
                 resource_id=str(application_id) if application_id else None,
-            ),
-            actor,
-            db,
+            )
+        return True
+    # 未钉应用 = 租户级生命周期（创建）；L2 必须带具体 application_id。
+    if application_id is None:
+        return False
+    if not user_has_any_role(
+        actor, db, APP_SCOPED_ADMIN_ROLE_KEYS, tenant_id=tenant_id, application_id=application_id,
+    ):
+        return False
+    if rotate_secret:
+        return user_has_management_code(
+            actor, db, APPLICATION_SECRET_ROTATE,
+            tenant_id=tenant_id, application_id=application_id,
+            resource_id=str(application_id) if application_id else None,
         )
-        if evaluation["decision"]["allowed"]:
-            return True
-    return False
+    return True
 
 
 def require_application_admin_access(
@@ -127,12 +122,14 @@ def list_readable_application_capabilities(
     tenant_id: UUID,
     db: Session,
 ) -> dict[UUID, dict[str, bool]]:
-    """批量筛选可读应用，保持列表匹配与 evaluate_access 的租户/应用/资源边界一致。
+    """批量筛选可读应用：L1 全量；L3 本租户全可管；否则按有效角色钉住的应用（及租户级码兼容）。
 
-    列表不能逐条发起三次判权查询，因此在同一个查询里合并直接角色与活动用户组角色；
-    单项读写仍由 has_application_admin_access 调用共享 evaluator 再次判定。
+    列表用有效角色并集；单项写/轮换仍走 has_application_admin_access。
     """
-    if is_platform_admin_user(actor):
+    from app.services.rbac_guards import user_has_any_role
+    from app.services.role_provisioning import L3_ROLE_KEY
+
+    if is_platform_admin_user(actor, db):
         applications = db.scalars(select(Application).where(Application.tenant_id == tenant_id)).all()
         return {
             application.id: {"can_manage": True, "can_rotate_secret": True}
@@ -150,49 +147,67 @@ def list_readable_application_capabilities(
     if not active_tenant or not membership:
         return {}
 
+    # L3 与写路径对齐：不依赖模板是否仍持 app.manage 码。
+    if user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
+        applications = db.scalars(select(Application).where(Application.tenant_id == tenant_id)).all()
+        return {
+            application.id: {"can_manage": True, "can_rotate_secret": True}
+            for application in applications
+        }
+
     applications = db.scalars(select(Application).where(
         Application.tenant_id == tenant_id,
     )).all()
     if not applications:
         return {}
 
-    inherited_role_ids = (
-        select(UserGroupRole.role_id)
-        .join(UserGroup, UserGroup.id == UserGroupRole.group_id)
-        .join(UserGroupMembership,
-              (UserGroupMembership.group_id == UserGroup.id)
-              & (UserGroupMembership.tenant_id == UserGroup.tenant_id))
-        .where(
-            UserGroupMembership.membership_id == membership.id,
-            UserGroupMembership.tenant_id == tenant_id,
-            UserGroupRole.tenant_id == tenant_id,
-            UserGroup.status == "active",
-        )
+    effective_roles = list_effective_roles(
+        db, membership_id=membership.id, tenant_id=tenant_id, application_id=None,
     )
-    authorized_role_ids = select(RoleBinding.role_id).where(
-        RoleBinding.membership_id == membership.id,
-    ).union(inherited_role_ids)
+    # 应用级授权需要按每个应用单独求值；数量有限（租户应用数），可接受。
+    per_application_roles: dict[UUID, list[Role]] = {}
+    for application in applications:
+        per_application_roles[application.id] = list_effective_roles(
+            db, membership_id=membership.id, tenant_id=tenant_id,
+            application_id=application.id,
+        )
+
+    all_roles = {role.id: role for role in effective_roles}
+    for roles in per_application_roles.values():
+        for role in roles:
+            all_roles[role.id] = role
     grant_rows = db.execute(
-        select(Role.application_id, Permission.code, RolePermission.resource_id)
-        .join(RolePermission, RolePermission.role_id == Role.id)
+        select(RolePermission.role_id, Role.application_id, Permission.code, RolePermission.resource_id)
+        .join(Role, Role.id == RolePermission.role_id)
         .join(Permission, Permission.id == RolePermission.permission_id)
         .where(
-            Role.id.in_(authorized_role_ids),
-            Role.tenant_id == tenant_id,
-            Role.status == "active",
+            RolePermission.role_id.in_(all_roles) if all_roles else False,
             Permission.status == "active",
             Permission.code.in_((APPLICATION_READ, APPLICATION_MANAGE, APPLICATION_SECRET_ROTATE)),
         )
     ).all()
 
+    grants_by_role: dict[UUID, list[tuple]] = {}
+    for role_id, role_application_id, code, resource_id in grant_rows:
+        grants_by_role.setdefault(role_id, []).append((role_application_id, code, resource_id))
+
+    def matched_codes_for(role_ids: list[UUID], application_id_value: UUID) -> set[str]:
+        """汇总一组角色在指定应用上命中的管理码（resource_id 为空表示通用授权）。"""
+        matched: set[str] = set()
+        for role_id in role_ids:
+            for _, code, resource_id in grants_by_role.get(role_id, []):
+                if resource_id is None or resource_id == str(application_id_value):
+                    matched.add(code)
+        return matched
+
     capabilities: dict[UUID, dict[str, bool]] = {}
     for application in applications:
-        matched_codes = {
-            code
-            for role_application_id, code, resource_id in grant_rows
-            if (role_application_id is None or role_application_id == application.id)
-            and (resource_id is None or resource_id == str(application.id))
-        }
+        # 租户级角色授予的应用码 + 钉住该应用的角色授权，合并为该应用能力。
+        matched_codes = matched_codes_for(
+            [role.id for role in effective_roles], application.id,
+        ) | matched_codes_for(
+            [role.id for role in per_application_roles[application.id]], application.id,
+        )
         can_manage = APPLICATION_MANAGE in matched_codes
         if APPLICATION_READ not in matched_codes and not can_manage:
             # secret.rotate 不能据此枚举应用或暴露应用资料。

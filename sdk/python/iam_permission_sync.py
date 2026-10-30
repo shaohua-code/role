@@ -52,20 +52,49 @@ class IamAdminClient:
     绝不把异常原文透给调用方。
     """
 
-    def __init__(self, api_base_url: str, timeout_seconds: float = 3.0) -> None:
-        self.permissions_endpoint = api_base_url.rstrip("/") + "/api/v1/admin/permissions"
+    def __init__(
+        self,
+        api_base_url: str,
+        timeout_seconds: float = 3.0,
+        *,
+        application_id: str | None = None,
+        api_surface: str = "admin",
+    ) -> None:
+        """api_surface: "admin"（默认）或 "tenant-admin"。
+
+        - 未传 application_id：平台目录 /{surface}/permissions（通常需 L1）。
+        - 传入 application_id：应用命名空间
+          /{surface}/applications/{id}/permissions（L2 应用管理员可用）。
+        """
+        base = api_base_url.rstrip("/")
+        surface = (api_surface or "admin").strip().strip("/")
+        if surface not in {"admin", "tenant-admin"}:
+            raise ValueError("api_surface must be 'admin' or 'tenant-admin'")
+        self.application_id = (application_id or "").strip() or None
+        if self.application_id:
+            self.permissions_endpoint = (
+                f"{base}/api/v1/{surface}/applications/{self.application_id}/permissions"
+            )
+        else:
+            self.permissions_endpoint = f"{base}/api/v1/{surface}/permissions"
         self.timeout_seconds = timeout_seconds
 
     def list_permissions(self, management_token: str) -> list[dict[str, Any]]:
         """返回权限目录条目列表；响应不是数组或缺 code 即契约错误（502）。"""
         body = self._request("GET", self.permissions_endpoint, management_token)
-        # 后端契约：GET /admin/permissions 返回裸数组（limit 1000，按 code 排序）。
-        if not isinstance(body, list) or any(
+        # G29：平台目录改为 {items,total,limit,offset}；应用侧与旧裸数组仍兼容。
+        if isinstance(body, dict) and isinstance(body.get("items"), list):
+            items = body["items"]
+        elif isinstance(body, list):
+            items = body
+        else:
+            raise IamAdminError(502, "IAM returned an invalid permission catalog response")
+        if any(
             not isinstance(item, dict) or not isinstance(item.get("code"), str) or not item["code"]
-            for item in body
+            for item in items
         ):
             raise IamAdminError(502, "IAM returned an invalid permission catalog response")
-        return body
+        return items
 
     def create_permission(
         self,
@@ -84,6 +113,9 @@ class IamAdminClient:
             "catalog_namespace": namespace,
             "resource_type": resource_type,
             "scope": scope,
+            # 绿场业务码默认；应用侧 API 也会强制 business+requires_data_scope
+            "surface": "business",
+            "requires_data_scope": True,
         }
         if description is not None:
             payload["description"] = description
@@ -94,7 +126,7 @@ class IamAdminClient:
     ) -> Any:
         """统一传输层：HS256 管理 JWT 走 Bearer 头；错误语义对齐既有 SDK 约定。"""
         if not management_token:
-            raise ValueError("A platform management access token is required")
+            raise ValueError("A management access token is required (L1 for catalog, or L2 app admin for application-scoped sync)")
         request = Request(
             endpoint,
             data=json.dumps(payload).encode("utf-8") if payload is not None else None,

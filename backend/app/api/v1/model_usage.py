@@ -62,6 +62,7 @@ def _validate_reservation_subject(body: ModelUsageReservationRequest, db: Sessio
 
 
 def _reservation_matches(row: ModelUsageReservation, body: ModelUsageReservationRequest) -> bool:
+    """校验重试请求与既有预留的五元组及额度完全一致，防止同 ID 复用不同载荷。"""
     return (row.tenant_id == body.tenant_id and row.model_id == body.model_id
             and row.application_id == body.application_id and row.user_id == body.user_id
             and row.reserved_input_tokens == body.reserved_input_tokens
@@ -85,7 +86,7 @@ def reserve_usage(
 
     enforced = settings.model_quota_enforcement_enabled and (
         model.rpm_limit is not None or model.tpm_limit is not None)
-    # 即使未开启限额拦截，也先持久化预留，避免 Provider 已执行但 DeerFlow 崩溃后没有账目可核。
+    # 即使未开启限额拦截，也先持久化预留，避免 Provider 已执行但业务系统崩溃后没有账目可核。
     if enforced:
         model = db.scalar(select(ModelCatalog).where(ModelCatalog.id == body.model_id).with_for_update())
         if not model or model.status != "active":

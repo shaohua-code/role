@@ -1,6 +1,7 @@
 """集中导入 ORM 实体，确保 Alembic 加载元数据时注册完整模型集合。"""
 
 from app.models.application import Application, ApplicationTheme
+from app.models.application_resource import ApplicationResource, RoleApplicationResource
 from app.models.authorization import Permission, Role, RoleBinding, RolePermission
 from app.models.groups import UserGroup, UserGroupMembership, UserGroupRole
 from app.models.identity import (
@@ -35,6 +36,8 @@ __all__ = [
     "Permission",
     "Application",
     "ApplicationTheme",
+    "ApplicationResource",
+    "RoleApplicationResource",
     "AuditEvent",
     "LoginAttemptBucket",
     "PasswordResetThrottle",

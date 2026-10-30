@@ -1,5 +1,729 @@
 # 变更日志
 
+## 2026-10-30 文档收口为四份中文手册
+
+`docs/` 只保留 [产品需求](docs/产品需求.md)、[应用对接](docs/应用对接.md)、[部署与运维](docs/部署与运维.md)、[项目启动](docs/项目启动.md)。进度 / 验收记录、配权说明书、产品口径、技术架构、对接手册、快速启动、UI 设计系统散页、prototypes、`_archive` 与 closeout 已删除；内容并入四件套或改以本 CHANGELOG 为历史真源。`AGENTS.md` 不再要求每轮改进度文件。
+
+- **验证：** 未运行。仅文档整理，未改业务代码、未迁移、未启动服务。
+
+## 2026-10-29 应用工作台收口应用角色与应用权限
+
+侧栏下线「应用角色与成员」；旧深链 `/application-roles` 重定向到应用工作台。角色行改为「应用权限」「配置成员」：应用权限抽屉收资源权限（挂码 + 资源树）与数据权限；去掉顶栏邮箱分配条。成员列表支持 `role_id` 过滤。资源树读写固定走 `/admin`。
+
+- **验证：** 容器 unittest 上述四文件 **48/48 OK**；宿主机 `npm run build` exit 0。浏览器确认侧栏无独立菜单、角色行两个操作、应用权限抽屉两 Tab、无顶栏分配条。未做成员绑定写操作走查。
+
+## 2026-10-29 预置平台角色四级可改本级授权
+
+系统预置平台角色改为四个管理员都可配权：超管改全部，租户管理员改租户及以下，多应用管理员改多应用及以下，应用管理员改应用与成员。只能勾自己已有的码，不能配上级权限。
+
+- **验证：** 容器 unittest 44/44 OK；宿主机 `npm run build` exit 0。未运行浏览器登录走查。
+
+## 2026-10-29 角色管理改名平台角色，四级按可见集配权
+
+高级管理「角色管理」改称「平台角色」。平台超管可配全部管理码；租户管理员、多应用管理员、应用管理员可新建自定义平台角色并只配自己看得见的码。「应用角色与成员」拆成独立菜单，租户台也能进平台角色页。
+
+- **验证：** 容器 unittest 43/43 OK；宿主机 `npm run build` exit 0。未运行浏览器登录走查。
+
+## 2026-10-29 租户台应用角色可配租户/应用管理码
+
+权限平台 `/roles` 给应用角色配权时，不再只出业务码。租户管理员能勾选自己看得见的租户管理码，应用管理员能勾选应用管理码；本应用业务码仍可挂。看不见的码（例如 L2 勾 `org.read`）422。
+
+- **接口：** `GET /tenant-admin/applications/{id}/permissions?include_management=true`；默认不加该参数仍只出业务码。
+- **守卫：** `assert_application_grant_permissions` 按 `actor_grantable_management_codes` 放行。
+- **前端：** 租户台弹窗分组展示；工作台挂码弹窗同步打开管理码。
+- **验证：** 容器 unittest 上述三文件 **40/40 OK**，P404/应用管理员回归 **12/12 OK**；宿主机 `npm run build` exit 0。未运行浏览器登录走查。
+
+## 2026-10-29 IAM P405 — 平台 / 应用权限分层落地
+
+按《产品口径-平台与应用权限分层》把平台角色与应用角色拆开。无迁移、无 DeerFlow、不上线包。
+
+- **五级平台模板：** 新增 `apps.admin`（钉应用，码集 = `app.admin` + `rbac.app_role.assign`）。应用开通预置三个平台角色；`app.member` 不再挂业务码，走查业务码改挂 `demo.reader`。
+- **任命链：** L3 可任命多应用/应用管理员；多应用管理员可再任命其已有应用的应用管理员；应用管理员不能任命管理员。绑应用角色自动补 `app.member`。
+- **两套目录：** `GET /admin/permissions` 默认只出 `surface=management`；工作台角色列表排除五模板；高级角色页 `role_class=platform`。去掉 P383 自定义角色授权权禁选。
+- **前端：** 权限编码页不再混出业务码；角色页只建自定义平台角色；工作台按邮箱分配应用角色并写明会同时成为平台成员。
+- **验证：** 容器 unittest `test_p405_layering` + `test_p404_visibility` + `test_role_hierarchy_guards` + `test_application_admin_access` **38/38 OK**；宿主机 `npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器登录走查。
+
+## 2026-10-29 目标口径草稿 — 平台权限 / 应用权限分层（只出文档）
+
+把口述需求整理成 [docs/产品口径-平台与应用权限分层.md](docs/产品口径-平台与应用权限分层.md)。不改代码、不改 PRD 现网口径。
+
+- **目标：** 平台权限与应用权限物理分开；**两类角色**：平台角色（五级：超管 / 租户管理员 / 多应用管理员 / 应用管理员 / 应用成员，只挂平台权限）与应用角色（只挂应用内业务码 / 菜单 / 按钮）。
+- **已确认：** 租户管理员可建删本租户应用；可任命多应用管理员，也可直接任命应用管理员；多应用管理员可再任命应用管理员；同一人可跨租户兼任，范围不串；五级身份都是平台角色，不要把它们当成应用角色；超管 / 租户管理员 / 多应用管理员 / 应用管理员都可新建角色、权限自由搭配，但只能看见并配置自己已有范围内的权限；应用成员不能新建角色。
+- **现网：** 仍以 P404 四级与配权说明书为准。本文不是现网承诺。
+- **验证：** 未运行（无代码改动）。
+
+## 2026-10-29 IAM P404 — 四级角色可见范围收口
+
+按 L1 > L3 > L2 > 应用自定义角色 > L4 收口可见范围：下级看不到上级编码、看不到越权对象。无迁移、无 DeerFlow、不上线包。
+
+- **创建/删除应用仅 L1/L3：** `POST/DELETE /applications` 改 `ensure_roles(tenant.admin)`；`has_application_admin_access(..., application_id=None)` 对 L2 为假。前端拆 `can_create_applications`（租户域码），L2 不再看到「新建应用」。
+- **权限目录按操作者过滤：** `GET /admin/permissions` = 可授管理码 ∩ 可见业务命名空间。挂码弹窗消费已过滤目录，再按目标角色 kind 隐藏越域组。
+- **L2 列表隔离：** 角色列表只出钉住应用的 application 角色；持有者/授权深链越权 404。用量钉住应用；审计无 application_id 列，尽力量化 `target_type=application` 且 target 钉住。L3 用量与业务码限本租户。
+- **验证：** 容器 unittest `test_application_admin_access` + `test_p404_visibility` + `test_role_hierarchy_guards` + `test_g16_g24` **37/37 OK**；宿主机 `npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器登录走查。
+
+## 2026-10-29 IAM P403 — G27 入口消歧 / G28 有效权限 / G29 真分页 / G32 L3 模板 / G30 造数
+
+继续执行 P402 盘点未落地项。不上线包（G03 MFA / G04 注销 / 配额 / G05 A04）。无迁移、无 DeerFlow。
+
+- **G27：** 侧栏 L1 入口改「运营总览」；租户 `/roles` 标「应用角色与成员」，页头指向日常「应用工作台」。
+- **G28：** 用户详情 `effective_permissions`：有效权限码并集 + 直授/用户组来源。
+- **G29：** `GET /admin/roles`、`GET /admin/permissions` 返回 `{items,total,limit,offset}`；角色列表服务端真分页；权限目录带 total。SDK 兼容包装对象。
+- **G32：** L3 模板 21→20，剥 `rbac.permission.manage`；预置时剥离存量。平台目录写仍仅 L1。
+- **G30：** `docker compose exec api python -B manage.py seed-walkthrough` 已造 demo-app 与 `l2-admin`/`l3-admin`/`l4-member@demo.example.com`（密码 `Walkthrough#2026`）。
+- **验证：** 容器 unittest `test_role_hierarchy_guards` + `test_g16_g24` + `test_application_admin_access` **28/28 OK**；Python SDK `test_iam_permission_sync` **17/17 OK**；TS SDK permission-sync **16/16 pass**；宿主机 `npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器登录走查。
+
+## 2026-10-29 IAM P402 — 产品层缺点盘点 + 日常配权硬伤
+
+对照 PRD、配权说明书与现网代码做产品层盘点；G25–G32 入进度第 4 节。PRD §4.1 信息架构、G01①「审计人员」、§2.1 DeerFlow 试点口径标待裁决。第一刀只修日常配权断流，不重做五域码表、无迁移。
+
+- **产品裁决：** L3 `tenant.admin` 可建/改本租户全部应用（对齐 P383「租户管理员管当前租户下一切」）。
+- **后端：** `has_application_admin_access` 认 `tenant.admin` ∪ 钉住应用的 `app.admin`；`list_readable_application_capabilities` 对 L3 短接租户内全可管，与写路径对齐。
+- **前端：** 工作台「权限编码」新建按 `application.can_manage` 开放给 L2/L3（启停仍仅 L1）；空态三步写明应用管理员可登记业务码，无创建权时改为联系租户管理员；L4 `/no-access` 与应用角色页去掉过时 `iam.*`。
+- **验证：** 容器 `python -B -m unittest tests.test_application_admin_access` **3/3 OK**；宿主机 `npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器登录走查（自动化填登录凭据被拦截）；无 L2/L3 走查账号（未跑 `seed-walkthrough`）。
+
+## 2026-10-29 IAM P401 — 角色管理与权限编码交互梳理
+
+对照配权说明书与现网代码，补齐「高级管理 → 角色/权限编码」与「应用工作台角色/权限 Tab」的日常主路径断层；不改五域码表、不重做两类分组与授权弹窗、无迁移。
+
+- **角色列表服务端筛选：** `GET /admin/roles` 增 `application_id`，`q` 覆盖名称/标识/说明；高级角色页把 `q/kind/tenant_id/status` 接到 API（回车搜索）；工作台 RolesTab 平台模式改 `kind=application&application_id=`，不再拉全站 500 条再本地滤。
+- **角色行交互：** 修 `kind-application` 虚线边 CSS；权限列「N 项」可点开挂码；只读操作改为「查看权限」；工作台操作列收成「配置权限 + 更多」；高级「资源授权」改名为「实例资源授权」并与工作台资源树消歧；数据范围中文描述主行 + mono 码；新建角色成功后询问立刻挂码。
+- **权限编码降噪：** 目录页去掉与 subtitle/hint 重复的页顶 alert，五域 chips + 命名空间收进「更多筛选」；「平台直接登记」加 tooltip 引导业务码去工作台。工作台 Panel 改 `AdminTableToolbar`、描述主显、登记框 `addon-before` 锁定 namespace。
+- **后端越域 422：** `permission_namespace.assert_role_kind_grant_permissions` 与授权弹窗矩阵同口径（历史已持有豁免）；`PUT/preview .../roles/{id}/permissions` 拒绝新增越域码。
+- **验证：** 容器内 `python -B -m unittest tests.test_permission_namespace tests.test_role_hierarchy_guards` **19/19 OK**；`npm run build`（vue-tsc -b + Vite）exit 0。未运行：浏览器走查（工作台选应用 → 登记码 → 建角色 → 挂码 → 高级列表筛选/点「N 项」；待用户登录复看）。
+
+## 2026-10-29 IAM P400 — /model-usage 模型用量页重设计（新增聚合图表区）
+
+用户要求用 frontend-design / trae-design / build-web-data-visualization 插件能力重新设计模型用量页。经 dataviz 路由裁决：页面缺「时间变化」与「模型排名」两个分析层；后端只有总量 summary 无按日/按模型聚合，为保图表真实（不从前端分页数据造假聚合），同批补两个同口径只读聚合端点。
+
+- **后端（`admin/model_usage.py`，零迁移零写路径）：** 新增 `GET /admin/model-usage/timeline`（按 UTC 自然日聚合请求数/输入/输出 Token/失败数，`created_at AT TIME ZONE 'UTC'` 分桶与既有筛选边界同口径）与 `GET /admin/model-usage/by-model`（按模型聚合 Token/请求/估算费用，总 Token 降序 limit≤20）；两者复用 `_usage_event_filters` 同套筛选与 L2/L3 `ensure_roles` 守卫，与 summary 口径完全一致。
+- **前端新组件 `views/models/components/ModelUsageCharts.vue`：** 复用概览图表基建（echarts 按需注册、CSS token 取色、data-theme MutationObserver 即时重绘、动效压至 200ms）。02 用量趋势：每日输入/输出 Token 堆叠柱（墨色/中灰双墨阶 + 卡头 HTML 色例随主题自动翻转），中间无调用日期补零避免柱距相等造成「时间均匀」错觉，tooltip 直读请求/输入/输出/失败；03 模型分布：Top 8 横向柱降序（第一名恒在最上）+ 条尾直标紧凑 Token（k/M/B 缩写）+ tooltip 含输入/输出/费用（未知费用如实标注不伪装为零）。三态齐全：加载/失败（琥珀提示）/空态（AdminEmpty）。
+- **页面集成（`ModelGovernancePage.vue`）：** 编号重排为 01 用量汇总 → 02 用量趋势 → 03 模型分布 → 04 待核对调用 → 05 调用账目（目录视图仍为 01 模型目录）；图表与汇总共用同一筛选参数（租户/结果/模型/UTC 日期口径一致）；选中具体模型时分布卡整体隐藏且不发请求（单柱无意义）；聚合请求失败保留旧图（stale-but-visible）+ 失败态提示；筛选/切租户即清空旧聚合，请求序号防竞态沿用既有机制。
+- **顺手修存量构建阻塞（与本次无关的既有断裂）：** App.vue 模板引用 `userInitial` 但 script 从未定义，`vue-tsc -b` 直接报错无法出包——补 computed（展示名/邮箱首字符大写，空则隐藏头像）。
+- **验证：** `npm run build`（vue-tsc -b + Vite）exit 0；eslint `src/views/models` exit 0；后端 `py_compile` exit 0（Python 3.14）。未运行：后端接口实测与浏览器走查（本机无运行中的 PostgreSQL/FastAPI；深浅主题与窄屏待用户复看）。
+- **视觉修订（同日用户截图反馈「好丑」）：** ①冷启动收敛——无任何聚合数据时不再渲染「02/03 两张大白空框 + 标题行四段文字挤成一条线」的骨架，整段降为单条空档带（图标 chip + 「暂无模型调用记录」+ 一句去向说明；加载/失败同构），有数据才展开双图布局；②图例改药丸 chips（bg-subtle 圆角底）并砍掉「每日 Token · UTC」散文本，右栏说明缩短为「Top 8 · 总 Token 降序」加 nowrap，消除居中漂浮文本与右缘裁切；③watch 加 `flush: 'post'`，修复「空态 → 有数据」切换时宿主节点刚挂载、echarts 首渲染落空的时序缺陷；④04 待核对区「灰字说明 + 大黄条」两行堆叠合为一条轻警示。修订后 lint + `npm run build` 复跑 exit 0。
+
+## 2026-10-29
+
+- 文档：确认**应用资源树为正式方案**；废除「资源≈权限编码 / 不建 Resource」口径。 新增 `docs/配权说明书.md`；更新 `glm-align-user-centent-prompt.md`、`plan-frontend-codes-backend-roles.md`、`项目总览与进度.md`、对接手册 §11 脚注。 仅文档，无业务代码变更；git 仓库仍按用户决定暂不新建。
+
+## 2026-10-28 IAM P398 — 全站工具条筛选条统一重设计
+
+用户截图反馈 applications 页工具条「搜索/筛选换行参差、下拉过宽与搜索框等宽、操作按钮孤在右侧」，要求重设计所有页面的搜索区。uicraft 流程定位根因：`style.css` 全局规则把工具条内**所有控件**（搜索框与下拉）一刀切 `width: min(100%, 320px)`，且该规则未分层、优先级高于 Tailwind 工具类，页面上的 `min-w-*` 宽度类全部失效；下拉与搜索框等宽导致换行后参差无节奏。
+
+- **三级宽度体系（`style.css` 唯一权威源）：** 搜索框 `min(100%, 320px)` 主锚点；普通筛选下拉固定 `160px`；长枚举下拉（租户/命名空间等带搜索）新增 `admin-filter-wide` 标注类 `208px`。固定宽度使换行后第二行与首行左对齐成整齐节奏。
+- **`AdminTableToolbar` 结构升级：** 左区筛选控件统一 `gap-2`（8px 节奏）；右区（hint 图标 + 操作按钮）改 `lg:ml-auto` 右对齐并加细分隔线（`lg:border-l` + `pl-4`），移除原 `flex-1 + max-w-[520px]` 造成的挤压换行；hint-only 场景保持 `justify-between`。
+- **页面清理：** applications/tenants 删失效 `min-w-*` 类，租户筛选标 `admin-filter-wide`；roles 删死样式 `.role-search`/`.role-tenant-filter`，租户筛选标宽档；permissions 命名空间下拉改 `admin-filter-wide` 并删 scoped 死宽度；groups/organizations 删无模板引用的死样式 `.table-toolbar`/`.tenant-filter` 并给租户下拉标宽档；models/groups/organizations/TenantAccess 的 scoped `.tenant-filter` 宽度（250/280px）删除、统一走全局 208px（保留窄屏 100% 与不收缩）；顺带修 models 页 `.tenant-filter-label` 死变量 `var(--subtle)` → `var(--color-text-muted)`。
+- **token 修正：** 工具条控件阴影 `rgb(15 23 42 / 0.04)`（slate 残留）→ `var(--shadow-sm)`；深色主题边框 slate rgba → zinc rgba（212,212,216）。
+- **验证：** vue-tsc + Vite 生产构建 exit 0（10.65s）。未运行：浏览器走查（筛选条换行对齐/宽窄档/深色主题/窄屏待用户复看；截图中聚焦 select 的绿色描边为用户本机自定义主色，非缺陷）。
+
+## 2026-10-28 IAM P397 — 管理台五页重设计（统计带 + 精简表格 + 行点击详情抽屉）
+
+用户反馈 /applications /roles /permissions /application-workspace /tenants 五页「使用起来不方便」，要求重新规划表设计、页面交互与审美。经 Plan 模式方案评审后实施（前后端均允许修改）。
+
+- **统一信息架构：** 列表页统一「统计带（可选）→ 工具条（搜索+筛选+主操作）→ 精简表格 → 行点击下钻详情抽屉」；详情/浏览类改抽屉、编辑/创建类留弹窗、危险操作确认文案不变。
+- **新通用组件（`src/components/`，index.ts 导出）：** `AdminStatBand`（账本式统计卡带，点击筛选/再点还原，disabled 概念位）、`AdminDetailDrawer`（详情抽屉骨架，default/footer/header-extra 插槽）、`AdminMonoValue`（mono 值 + hover 一键复制）；`CopyOutlined` 入 icons 统一出口。
+- **/tenants（提升最大）：** 补搜索（名称/标识）+ 类型/状态筛选；6 列收敛（租户名+slug mono 副行、成员数点击开成员抽屉）；行点击开详情抽屉（基本信息/旗下应用列表点击携 `application_id` 深链跳工作台预选/成员抽屉复用 `GET /admin/members`）；平台引导租户禁删禁切换特判全保留。
+- **/roles：** 顶部作用域四卡统计带（全部/平台/租户/应用，替代类型下拉）；8→7 列（租户+应用范围合并「归属」副行，角色标识 AdminMonoValue）；权限数量徽标可点击 → 持码清单抽屉（按权限域分组，footer 直达授权弹窗），替代原 tooltip 全码平铺；行点击同样下钻。
+- **/permissions：** 统计卡带组件化（numbered 账本样式保留）；权限域下拉改多选 chips（色点+域名+计数，命中任一选中域即保留）；「关联角色数」可点击 → 引用角色抽屉（前端 `roles.permission_codes` 反查，零后端改动）；登记弹窗新增「所属权限域」选择（自动补 `域.` 前缀 + 完整编码实时预览 + 管理面前缀校验）；业务码行附「需数据范围」标记；接口类型补 `surface`/`requires_data_scope`。
+- **/applications（11→7 列）：** 回调两列合并「登录 n · 登出 m」徽标；授权模式/自助注册/说明收进详情抽屉（协议信息+回调清单+操作集中，操作后同步最新记录）；状态+受信合并单元格；工具条补搜索（名称/ClientID/说明）+ 租户/状态/受信筛选；租户模式合并数据后前端过滤兼容不变。
+- **/application-workspace：** AppTree 租户组节点加应用计数徽标（搜索过滤联动）；选中应用卡片加概览统计条（角色/权限码/资源三项计数，三 Tab 经 `stats` 事件上报，切换应用清零重报）；支持 `?application_id=` 深链预选（租户详情抽屉跳转入口）。
+- **后端（轻量增强，同批落地）：** `GET /admin/tenants` 补 `q/kind/status` 过滤 + `application_count` 一次聚合（group by tenant_id）；`GET /admin/roles` 补 `q/kind/tenant_id/status`，tenant_id 与 actor 租户范围求交（越范围 403），permission_codes N+1 修复（当前结果集一次 join 聚合）；`GET /admin/applications` 补 `q/status/trusted`（capability 过滤后、limit 前套用；非平台管理员必带 tenant_id 校验不动）。前端本地即时过滤为主路径，服务端参数供深链与未来分页。
+- **验证：** vue-tsc + Vite 生产构建 exit 0（8.97s）；后端 3 文件 `py_compile` 通过（Python 3.14，宿主机 PATH 无 python 需显式路径）。未运行：浏览器走查（本机无 PostgreSQL/后端运行环境与登录凭据）——统计带筛选、行点击抽屉、复制提示、深链预选、暗色主题、375 窄屏、tenant 模式回归待用户复看。
+
+## 2026-10-28 IAM P396 — 层级起点标记感知增强（白话文案 + 三档视觉 + hover 解释）
+
+用户反馈目录页的层级标记「不够清晰，让用户感知更强」——`L1 专属`/`L3 起`/`L2 起` 小灰 tag 是 RBAC 行话，非背景用户读不懂且视觉太弱。
+
+- **白话文案（`SCOPE_LEVEL_LABELS`）：** `L1 专属`→**仅平台超管**、`L3 起`→**租户管理员起**、`L2 起`→**应用管理员起**；新增 `SCOPE_LEVEL_TIPS` hover 解释（如「仅平台超级管理员（L1）持有；租户、应用管理员不可见」）。
+- **三档视觉强度（目录页 + 授权弹窗同步）：** 实底黑（仅平台超管，最强）→ 深描边（租户管理员起）→ 浅描边（应用管理员起），黑白灰体系内以视觉重量呼应层级递减；tag 加 `cursor: help` 与 a-tooltip（P373 降噪模式）。
+- **弹窗行同步：** 授权弹窗行式列表（P394）在描述后追加同口径层级标记，目录页与弹窗视觉语言一致。
+- **验证：** vue-tsc + Vite 生产构建 exit 0。未运行：浏览器走查（标记文案/三档样式/tooltip 待用户复看）。
+- **减重修订（同日用户反馈实底黑块「丑」）：** 首版实底黑 tag 每行重复、满屏黑块视觉噪音过大；改回**描边式轻标签**——去实底、字号 10px/圆角 2px/细边框，三档靠文字深浅区分（黑字黑框 → 中灰字灰框 → 浅灰字浅框），tooltip 与白话文案不变；目录页与弹窗同步。
+
+## 2026-10-28 IAM P395 — 权限编码两类分组（平台编码 + 应用业务编码）
+
+用户评审 P393 作用域四卡与层级三卡草案后两级收敛：「权限编码要有层级关系——平台编码负责平台的所有，应用负责应用相关所有」→「是不是只要分两种——平台编码，和一种租户下的应用业务编码」。prd-authoring 产出 PRD（`docs/prototypes/permission-hierarchy-view/PRD.html`）并批准实施。本质洞察：「平台 ⊃ 租户 ⊃ 应用」的层级关系由模板码集天然承载（L1 持 27 ⊃ L3 持 21 ⊃ L2 持 15），不需要靠分组表达；分组只分两类。
+
+- **两类分组（单一来源 `permissionGroups.ts`）：** 新增 `PERMISSION_CLASSES`（平台编码 / 应用业务编码）与 `resolvePermissionClass()`（`isManagementCode` 判定）；`SCOPE_LEVEL_LABELS`（L1 专属 / L3 起 / L2 起）与 `SCOPE_LEVEL_ORDER` 供行标记与排序；P393 作用域归属（`resolvePermissionScope`）保留为层级起点依据。
+- **目录页（`PermissionCatalog.vue`）：** 统计卡带 5 张作用域卡 → 3 张两类卡（00 全部 27+N / 01 平台编码 27 / 02 应用业务编码 N，业务码 0 置灰概念位）；`scopeFilter` 改按类过滤；权限编码列描述后附层级起点轻量 tag（仅管理码）；排序保持「L1 专属 → L3 起 → L2 起 → 业务码」聚块；命名空间下拉、功能域下拉、列结构均不变。
+- **授权弹窗（`RolePermissionGrantModal.vue`）：** 左栏导航从作用域四组改两类（全部 / 平台编码 / 业务码）；分区渲染两类化——平台编码组内按层级起点序（L1 专属 → L3 起 → L2 起 + 编码字母序），业务码组保留命名空间二级分组；收敛矩阵数值零变化（tenant 隐 L1 专属+业务码、application 隐 L1 专属+L3 起，各角色可见码集逐码一致），仅注释口径更新；P394 行式列表、越域豁免、授权权禁选、保存链路全部不变。
+- **验证：** vue-tsc + Vite 生产构建 exit 0（修复 `SCOPE_LEVEL_ORDER` 对象误用 `.get()` 的类型错误后复跑）。未运行：浏览器走查（两类卡带/行标记/弹窗两组导航待用户复看）。
+- **补充（同日用户反馈「平台编码要和业务编码区分」）：** 目录页表格在两类交界处插入**横贯式分组标题行**（「平台编码 · N 个编码」/「应用业务编码 · N 个编码」，浅底通栏），业务码段为空时不显示空组头；经 AdminListPage `$attrs` 透传 `rowClassName` 实现组头行底色，数据行不受影响。
+
+## 2026-10-28 IAM P394 — 授权弹窗布局断裂修复 + 码项行式重设计
+
+用户截图反馈授权弹窗「丑，重新设计」：截图实锤弹窗布局整体断裂——已选摘要条 chips 顶出弹窗边界、底部操作条悬空错位、码卡片全部挤压截断。经 uicraft 流程审计定位根因。
+
+- **P389 遗留 grid bug 修复（布局断裂根因）：** 右栏容器误复用外层 `.grant-layout` class（188px+1fr 两列 grid），导致 hint/摘要条/选项/操作条被当作 grid items 错误拆列——改为语义正确的 `.grant-main`（flex column），摘要条、操作条、滚动容器全部归位。
+- **码项行式重设计：** 双列卡片在 ~600px 右栏下单卡仅 ~290px，中文描述与 mono 码全部截断；改为**单列全宽行式列表**——勾选框 + 描述主行左对齐 + mono 码右对齐同行，hover 浅底、选中行左墨色竖条+浅底、禁选弱化；信息完整不截断，27 码纵向密度更高（黑白灰编辑风）。
+- **绿色勾选框说明：** 非代码缺陷——来自用户本机「外观设置」存的自定义主色（localStorage `iam-primary-color`），checkbox 选中色跟随全局 colorPrimary；调回石墨黑即可恢复黑白灰。
+- **验证：** vue-tsc + Vite 生产构建 exit 0。未运行：浏览器走查（弹窗布局/行式列表/摘要条归位待用户复看）。
+
+## 2026-10-28 IAM P393 — 权限编码作用域一级分组（平台 → 租户 → 应用）
+
+用户复看 P392 后的权限编码目录页，反馈「权限编码还是混在一起，区分平台、租户、应用的，这个是一级」——功能五域是技术视角，与「这条码归哪一级用」的管理心智不一致。经 prd-authoring 产出 PRD（`docs/prototypes/permission-scope-grouping/PRD.html`），AskUserQuestion 三裁决：分组层级「一级平台 / 二级租户 / 三级业务码」、范围=目录页+授权弹窗同步、功能五域降为筛选维度。
+
+- **归属规则（确定性推导，零逐码人肉裁定）：** 由 P383 模板码集派生——仅 L1 持有 → 平台组 6 码（platform 5 + `rbac.role.manage`）；L3 持有且 L2 不持有 → 租户组 6 码（`org.read/manage`、`rbac.role.read`、`rbac.permission.manage`、`rbac.app_role.assign`、`ops.model.manage`）；L2 持有（L3 全量兼容）→ 应用组 15 码；业务命名空间 → 业务码组。6+6+15=27 验算零遗漏零重复。
+- **单一来源（`utils/permissionGroups.ts`）：** 新增 `PERMISSION_SCOPES`（四组定义）与 `resolvePermissionScope()`（静态归属表 + `isManagementCode` 兜底业务码），目录页与授权弹窗共用；功能域 `PERMISSION_DOMAINS`/`resolvePermissionDomain` 保留供筛选下拉与编码行域名展示。
+- **目录页（`PermissionCatalog.vue`）：** 统计卡带从五域改为 5 张作用域卡（00 全部 / 01 平台 6 / 02 租户 6 / 03 应用 15 / 04 业务码 N）——业务码数量为 0 时保持概念位但置灰不可点；新增 `scopeFilter` 与权限域下拉/命名空间/搜索叠加过滤；列表默认排序按作用域组序+编码字母序（同类码天然聚块）；命名空间下拉空态文案「全部分组」→「全部命名空间」（消除概念冲突）；列结构零改动。
+- **授权弹窗（`RolePermissionGrantModal.vue`）：** 域导航与分区渲染一级改为作用域四组（业务码组内保留命名空间二级分组）；收敛矩阵等价改写为作用域口径——tenant 隐藏【平台+业务码】组、application 隐藏【平台+租户】组+业务码限本命名空间，旧 `APPLICATION_HIDDEN_CODES` 治理码黑名单（`rbac.role.read/manage`、`rbac.permission.manage`）分属租户/平台组被组级隐藏覆盖，删除码级黑名单；历史已持有越域码豁免隐藏（P390 哲学）与授权权码禁选（P383）不变；保存链路（勾选→预览→PUT）报文与判权零改动。
+- **验证：** vue-tsc + Vite 生产构建 exit 0。未运行：浏览器走查（卡带筛选/弹窗三角色收敛/深浅主题待用户复看）。
+
+## 2026-10-28 IAM P392 — 权限编码绿场重命名 + DeerFlow 资产清零下线
+
+用户反馈「角色和权限编码这块很乱」，要求编码与角色全部重写、旧数据不要、UI 重新设计。经 prd-authoring 产出 PRD（`docs/prototypes/permission-rebrand/PRD.html`），AskUserQuestion 三裁决：**绿场一键重置** / **DeerFlow 资产一并清零**（执行中用户追加「deerflow 相关对接也全部删除，后面我会重新对接」）/ **三段式五域重命名**。
+
+- **全链路改码（27 码 + 2 角色 key）：** node 批量脚本（修复 walk 把文件当目录的 ENOTDIR 后分两轮补齐）将 `iam.*` 码映射为五域码——`platform.overview.read`、`platform.tenant.*`、`platform.account.*`（原 iam.user）、`rbac.role.*`、`rbac.permission.*`、`rbac.app_role.*`、`org.*`（原 iam.organization/member/group/invitation.manage→`org.invite.manage`）、`app.*`（原 iam.application，含 secret.rotate）、`ops.model.*`、`ops.theme.manage`、`ops.audit.read`、`ops.authz.simulate`；角色 key `platform.super_admin`→`platform.admin`、`tenant.org_admin`→`tenant.admin`（`app.admin`/`app.member` 不变）。覆盖 backend/app+tests+manage.py+前端 18 文件；L1=27/L3=21/L2=15/L4=0 模板码集语义逐一验算零变化。
+- **配套改造：** `permission_namespace.py` 新增 `MANAGEMENT_DOMAIN_PREFIXES`——五域前缀码的目录命名空间统一归 `platform`（修复 `derive_catalog_namespace` 在 `app.read` 等新码下语义翻转）；`permissionGroups.ts` 重写为五域版（七组：五域+business+other）；`RolePermissionGrantModal` 收敛域矩阵与授权权码常量更新（`rbac.app_role.manage`/`org.member.manage`/`org.invite.manage`/`org.group.manage`）；`public_registration.eligible_registration_role` 改按管理面码前缀禁止注册默认角色（补 import）。
+- **测试修复 3 项：** test_user_lifecycle 补 `deliver_for_user` mock（G19 back-channel 在裸 Mock db 上遍历报 not iterable）；test_session_management 全局审计计数断言改调用前后对比（非隔离库含 340 条历史审计，环境敏感）；test_permission_namespace 断言更新为五域归 `platform`。
+- **DeerFlow 清零：** 绿场重置后应用/角色/授权/`deerflow.*` 业务码目录全部消失；`OverviewPage.vue` 试点 pill 改「试点应用待接入」、角色页/租户接入页/`model_usage.py` 文案中性化、`permissionGroups.ts` 注释示例改 demoapp；技术架构文档删除第 5 章「DeerFlow 试点接入」并加 P392 状态标注（第 6/7 章保留历史背景注）；产品需求/对接手册/快速启动指南/根目录 11-menu 文档同步（码表新口径 + 试点下线状态 + 历史注）。`verify_role_isolation.py` 跨应用目标动态化：优先复用既有非 crud-demo 应用，否则临时创建 isolation-target 探测应用并在 finally 删除。
+- **绿场重置实测：** 重置前 `pg_dump` 受保护备份 `backups/pre-p392-rebrand-20261028-163335.sql`（236KB，含旧码数据）→ `compose down -v` → greenfield-reset.ps1 因 UTF-8 BOM 在 PS5.1 解析失败（param 块失效），按脚本逻辑手动四步复刻：migrate（0001→0004 全链应用）→ seed（输出「权限目录：新增 27 条管理面码」+ admin 绑 L1 `platform.admin` + demo 租户）→ api/console 启动 healthy。
+- **端到端验证：** admin 登录 `/auth/me/capabilities` 实测 `platform_codes` **恰 27**（platform 5 / rbac 7 / org 7 / app 3 / ops 5）、roles=`platform.admin`、`iam.*` 残留 0。4 测试模块 27 项全绿（9 skip 为需 Docker 的 PG 集成）；全量 discover 258 项仅剩 4E 存量（test_admin_authorization 陈旧 mock，P367 已记录）；前端 `npm run build` exit 0；源码+测试旧码 grep 零残留（剩余命中仅受保护备份/归档迁移/历史文档）。
+- **未运行：** 浏览器新码 UI 走查（菜单/弹窗/域分组渲染待用户复看）；verify_role_isolation.py（重置后无 crud-demo 应用与联调用户，需重新造数）；P1 后端保存校验加固（越域授权 422）维持独立跟进。
+
+## 2026-10-28 IAM P391 — 授权弹窗提示降噪（用户截图反馈「提示太重」）
+
+用户复看 P389/P390 截图反馈「页面太丑了，提示太重」：弹窗顶部两个大 a-alert（蓝「先预览」+ 黄「自定义角色不可持授权权」）占近 1/3 高度，违反 P373 全站提示降噪标准。对齐降噪哲学快修（纯展示层）。
+
+- **双 alert → 单行轻提示**：合并为一行 `.grant-hint`（ExclamationCircleOutlined + 12.5px muted 小字「先预览授权变更再提交保存；仅编辑通用权限，资源实例级授权不受影响」）；`lockAuthorityCodes` 时追加琥珀色（`--color-warning` token）「自定义角色不可持有授权权码」轻标注，大段细节收进 a-tooltip 悬停展开。
+- **摘要条减重**：去灰底（`background: var(--color-border)` → transparent）+ 边框减淡（border-strong → border），消除与码卡片的灰块堆叠感。
+- **验证：** vue-tsc + Vite 构建 exit 0（10.08s）。未运行：浏览器走查（待用户复看降噪效果）。
+
+## 2026-10-28 IAM P390 — 角色创建作用域向导 + 授权弹窗严格三级收敛（PRD 批准后实施）
+
+用户评审通过《角色创建作用域向导与授权收敛 PRD》（`docs/prototypes/role-creation-scope/PRD.html`，裁决原 permission-grouping PRD 的 Q1/Q2：平台角色不开放新建 + 严格三级矩阵收敛）后实施。PRD 两项裁决：①平台角色置灰「由系统种子定义，不可新建」（与绿场四级写死/P381·P382 防呆哲学一致）；②收敛口径从 P383 模板码集推导。
+
+- **FR-01 新建角色作用域向导（`RoleManagement.vue`）：** 新建弹窗顶部三张作用域卡——平台（disabled「由系统种子定义，不可新建」）/ 租户（→选租户）/ 应用（→选租户 + **所属应用必填**，切换作用域清空租户/应用）；未选作用域时字段区显示引导 alert；校验：未选作用域 422 前置拦截、应用角色无应用报错。提交字段与现状一致（零后端改动）；编辑弹窗不出现向导，新增「角色作用域」只读行（kindLabel）。
+- **FR-02 授权弹窗严格收敛（`RolePermissionGrantModal.vue`）：** 新增 `roleKind` / `roleNamespace` props（空 = 不收敛，向后兼容）；收敛矩阵——tenant 隐藏【平台专属/业务码/其他】、application 隐藏【平台专属/租户治理/其他】且业务码仅显示本应用命名空间（编码首段匹配）、platform 全量；**历史已持有的越域码豁免隐藏**（可撤销但不可静默剥夺，与「停用码仅可撤销」同哲学）。隐藏组整体不渲染（域导航/组头/摘要 chips 同步消失）。
+- **FR-03 调用方接线：** `RoleManagement.vue` 打开弹窗传 `role.kind` + 钉定应用 namespace（ApplicationOption 补 `permission_namespace`，App.vue 映射补字段——后端 `/admin/applications` 本就返回）；`RolesTab.vue` 恒传 `role-kind="application"` + `props.application.permission_namespace`（workspace 链路本就携带）。P386 的动态作用域 alert 由向导替代删除。
+- **验证：** vue-tsc + Vite 生产构建 exit 0（7.97s）；修复实施中 RolesTab modal 开标签被误替换的损坏（重复标签+粘连，已还原正确结构）。未运行：浏览器走查（向导三卡/字段联动/弹窗收敛矩阵/深浅主题待用户复看）；后端保存校验加固（租户角色挂业务码 422）维持 P1 独立跟进。
+
+## 2026-10-28 IAM P389 — 管理台权限页面重度重设计（双栏弹窗 + 域总览统计卡，零后端零契约改动）
+
+用户反馈「页面太丑了、交互也不友好」，点名 frontend-design/trae-design 重度重设计管理台权限页面。AskUserQuestion 澄清确认：目标=授权弹窗+权限目录页、方向=黑白灰重度精修、交互四维全覆盖。方案经 Plan Mode 审批（`.trae/documents/redesign-admin-permission-pages.md`）后实施。零后端、零 props/emits 契约改动、保存链路（v-model → preview → PUT）零改动。
+
+- **授权弹窗（`RolePermissionGrantModal.vue`）双栏重构：** 宽 680→880px；左栏 188px 域导航（全部+各域，显示「该域已选/总数」，active 左竖条+浅底，sticky 跟随；窄屏 <760px 降级横滑 tabs）；右栏新增**已选摘要条**（常驻：已选 N 项 + 最近勾选 6 个可点删 chips + 溢出 +M + 清空，勾选顺序经 watch diff 维护）——修复「67 码勾选后无处总览」最大交互缺口；码项**卡片化**（边框圆角卡、选中黑边浅底、禁选弱化）；组头加左竖条+计数徽标；预览区改**新增/撤销对比双卡**（语义色仅绿/红，token `--color-success/-error`）；底部操作条 **sticky 固定**。关闭弹窗重置全部展示状态。
+- **权限目录页（`PermissionCatalog.vue`）：** 顶部新增**域总览统计卡带**（账本式编号 00–06 + 22px tabular 大数 + 活动数小字，7 列 grid → 1100px 4 列 → 700px 2 列），点击卡片即筛选（active 黑边+inset 竖条）；表格 **8→6 列**重构（权限编码双行=中文主行+mono 码副行；权限域/命名空间列=色点+域名全行归属；资源·Scope 合并 mono 列；砍独立说明列），去横向滚动；hint 补卡片筛选说明。
+- **静态自查：** props/emits 契约未变（RoleManagement/RolesTab 两调用方零改动）；保存链路字段未变；新样式全部走 token（语义色 fallback 兜底但 `--color-success/-error` token 实际存在）；修复摘要 chip 裸文本节点导致 `:first-child` 误中删除符的选择器缺陷；删除被取代的 domainChips 死代码。
+- **验证：** vue-tsc + Vite 生产构建 exit 0（8.33s，修正后复跑）。未运行：浏览器走查（双栏/导航切换/摘要点删/卡片选中态/统计卡筛选/深浅主题待用户复看）。
+
+## 2026-10-28 IAM P388 — 权限编码按作用域分组（PRD P0 三项实施，纯前端展示层）
+
+用户反馈「权限编码都在一个页面，平台/租户/应用的混在一起」（授权弹窗截图），经 prd-authoring 产出 PRD（`docs/prototypes/permission-grouping/PRD.html`）后按 P0 三项实施。分组纯展示层：选中集合、预览影响、保存报文、判权与可选性零改动。
+
+- **FR-03 共享口径（新 `utils/permissionGroups.ts`）：** 六组码域映射单一常量（平台专属 / 租户治理 / 成员协作 / 应用域 / 模型主题审计 / 业务码 + 「其他」兜底），前缀精确匹配优先（`iam.role.manage`→平台、`iam.role.read`→协作、`iam.model.manage`→租户治理、`iam.model.read`→模型组等）；两界面共用一处，未来新前缀只改一处。
+- **FR-01 授权弹窗（`RolePermissionGrantModal.vue`）：** 67 码按六组分区渲染，组头（名称+计数+语义 hint）可折叠；顶部域筛选 chips（仅显示存在的组，附数量）；业务码组内按命名空间（编码首段）二级分组；关闭弹窗重置筛选/折叠。保存链路（checkbox-group v-model → preview → PUT）零改动。
+- **FR-02 权限目录页（`PermissionCatalog.vue`）：** 工具栏新增「权限域」下拉（与命名空间/搜索叠加）；命名空间列对 iam 码行加域标签（业务码行不打标避免重复）；列宽 100→130 / scroll.x 1050；空态文案纳入筛选条件。
+- **验证：** vue-tsc + Vite 生产构建 exit 0（11.43s）。未运行：浏览器走查（分组渲染/chips/折叠交互待用户复看；深浅主题 chip 自适应待复验）。P1「按角色作用域收敛可选集」与 Q2（租户侧隐藏平台专属组）维持待裁决。
+
+## 2026-10-28 IAM P387 — 角色作用域隔离实测脚本（7/7 通过，零残留可复跑）
+
+用户要求「模拟应用角色访问其他应用路由，验证前后端拦截」。交付 `scripts/verify_role_isolation.py`（可复跑的验收脚本）并实测全绿。
+
+- **脚本机制：** admin（容器 env 凭据）临时把 crud-demo@example.com 绑上 CRUD Demo 的 `app.admin`（真 L2 提权）→ 跑攻击矩阵 → try/finally 解绑恢复（零残留，重复执行幂等）；密码经 `docker exec -e DEMO_USER_PASSWORD` 注入，脚本零明文凭据。
+- **实测 7/7：** ①capabilities 含本人应用不含 DeerFlow（前端守卫数据源）②跨应用读角色 404 ③跨应用建角色 404 ④跨应用读成员 404（三者防枚举：无权应用按不存在处理，强于 403）⑤`/admin/roles` L2 可读且零租户外角色（设计口径 `iam.role.read` + 非 L1 强制范围过滤）⑥本应用读角色 200（隔离不误伤）⑦换绑 `app.member` 后 `/admin/roles` → 403（零管理码角色确实被拒）。测后核对绑定完全还原。
+- **口径修正过程：** 首版期望 L2 访问 `/admin/roles` 得 403 实测 200——实查 `list_roles` 门禁为 `[L3, L2]` + `list_actor_management_tenant_ids` 租户范围过滤，属设计放行（租户内角色目录可见），判定已修正；403 归属零管理码角色（L4 检查补上）。
+- **验证：** 容器内两轮执行，第二轮 7/7 PASS；SQL 核对 crud-demo 用户仅剩原 `crud-demo` 角色。
+
+## 2026-10-28 IAM P386 — 角色作用域可视化与文档固化（基于 role-scope-design 原型三项优化）
+
+用户确认原型 `docs/prototypes/role-scope-design/` 结论（三级作用域有必要区分、现状已区分、建议轻量强化）后，按 07 区三张落地卡实施。零后端改动（`/admin/roles` 本就返回 `kind`）。
+
+- **① 角色目录 kind 可视化（RoleManagement.vue）：** `RoleRecord` 补 `kind` 类型；角色名称列改为「名称 + 作用域小标签」竖排（`平台角色` 实边框加重 / `租户角色` 实边框 / `应用角色` 虚线边框——原生 span + token 变量，中性灰阶随深浅主题自适应，规避 a-tag cssinjs 注入顺序坑）；工具栏新增「全部类型」筛选器（platform/tenant/application）；名称列宽 140→168、scroll.x 1048→1076；空态文案纳入 kind 筛选条件。
+- **② 创建入口作用域提示：** 新建角色弹窗顶部动态 alert（随「应用范围」选择切换「将创建应用角色：仅在该应用生效 / 将创建租户通用角色：全域生效」）；「应用范围」字段加常显 extra 说明。应用工作台 RolesTab 工具条 hint 追加「本页角色均为应用角色，仅当前应用生效」。
+- **③ 文档边界固化：** PRD 新增 §3.1「三级角色作用域」（三级对照表 + 边界规则 + capabilities 对应关系）；对接手册 §8 后新增「三级角色作用域（对接必读）」（业务侧选层指南）。
+- **验证：** vue-tsc -b + Vite 生产构建 exit 0（34.02s）。未运行：浏览器走查（纯展示层 + 筛选逻辑，待用户复看 tag 样式与筛选交互；深色主题变量自适应待复验）。
+
+## 2026-10-28 IAM P385 — 测试数据清理（测试账号 4 + 演示租户 2 + 演示应用 1，单事务删除）
+
+用户要求「把测试数据全部删除」。先只读盘点 8 用户/3 租户/3 应用实体，AskUserQuestion 确认边界为「测试账号+演示租户全套 + 审计按 actor 过滤删除」后执行。
+
+- **删除清单（单事务，逐步输出行数，失败全回滚）：** 用户 4（l2-admin/l3-admin/l4-member `@demo.example.com` + e2e-register-51e18f61@example.com）、租户 2（demo/testdemo1）、应用 1（演示应用 demo-app，公开注册载体随之下线）；连带角色 4、邀请 1、审计事件 14（仅测试账号 actor，admin 操作记录 SET NULL 保留）。
+- **删除顺序（按外键图定制）：** ①用量表 RESTRICT 断言（实查 0 行）→ ②审计按 actor 删 → ③邀请（→roles RESTRICT 先删）→ ④用户组/组织（自引用 RESTRICT 先删，实为 0 行均挂 platform）→ ⑤租户域角色 → ⑥demo-app → ⑦租户 → ⑧用户；其余全链 CASCADE（refresh_sessions/oauth_*/consents/成员/绑定/挂码/数据范围/主题/注册挑战）。
+- **删后余量核对：** 用户 4（admin、shaohua_code@163.com、crud-demo、deerflow-demo 联调用户保留）、租户 1（platform）、应用 2（crud-demo + deerflow）、角色 8、审计 321、refresh 会话 111；孤儿数据范围/挂码 0/0。
+- **验证：** health 200、`/auth/public-capabilities` 200 且 `console_registration: null`（注册入口随 demo-app 下线，符合预期）；DeerFlow/active 与 CRUD Demo 3 角色完好；platform 租户 L3 挂码仍 21（P383 修正未受影响）。未运行：浏览器控制台登录走查（数据删除不改代码，待用户复登）。
+- **注意：** `manage.py seed-walkthrough` 可随时重建走查账号；公开注册如需再次演示须重新配置四层（全局开关仍在、demo-app 载体已删）。
+
+## 2026-10-28 IAM P384 — 权限目录盘点：零孤儿、无可删项（纯只读，零改动）
+
+用户要求「整理当前项目，删掉没有的权限编码」。三轮只读盘点后结论为无可删项，用户确认收尾。
+
+- **① 引用计数（容器内 SQL）：** `role_permissions`/`role_data_scopes` 反查目录 67 码（management 27 + business 40，全部 active）——每个码至少被 1 个角色授权或数据范围策略引用，**零孤儿码**。
+- **② 仓库代码扫描（node 七区扫描）：** 27 个 `iam.*` 管理码在 backend/app（判权）、seed_greenfield+manage（种子）、frontend/src（菜单守卫）三处全部有字面量引用，无「目录有、代码无」的码。
+- **③ 疑点深挖：** 唯一后端/前端零引用的是 `crud.document.create/delete/read` 三码，但归属**活跃应用 CRUD Demo**（namespace=crud），被应用级角色 `crud-demo` 持有 + self 数据范围策略，`examples/iam-crud-fastapi` 示例工程（P322 SDK 联调资产）引用中——不删。
+- **结论：无可删项**（用户已确认）。后续如需清理业务码，须先停用/删除对应应用，再处理其命名空间下的码。
+- **验证：** 全程只读（SQL SELECT + 文件扫描），零代码/零数据/零迁移改动，无需测试与构建。
+
+## 2026-10-28 IAM P383 — 角色分层方案落地（L3 扩权 21 码 / L2 收敛 15 码 / 授权权禁选三防线）
+
+用户确认角色分层原型（`docs/prototypes/role-hierarchy-plan/`）后按序实施，落地四级角色职责边界：超级管理员管所有 → 租户管理员管当前租户下一切 → 应用管理员管当前应用一切 → 管理员（自定义角色）与应用管理员同域但**不能管理管理员** → 成员为业务用户。
+
+- **模板码集重定义（`services/role_provisioning.py`）：** L3 租户管理员 9→21 码（补 application.read/manage/secret.rotate、app_role.manage、role.read、permission.read/manage、model.read/manage、theme.manage、audit.read、authorization.simulate）；L2 应用管理员收敛为显式 15 码（剥 organization.* 2 码，组织域归 L3）；模板描述改全域化文案。新增 `TEMPLATE_ROLE_KEYS`（4 模板 key）、`AUTHORITY_MANAGE_CODES`（app_role.manage / member.manage / invitation.manage / group.manage）、`is_custom_role()`。
+- **「管理员不能管理管理员」三防线：** ① 平台侧 `access_control.replace_role_permissions` 与 ② 租户应用侧 `tenant_admin.replace_application_role_permissions` 对自定义角色含授权权码一律 422（模板角色不受限——L2/L3 本就是授权者来源）；③ `clone_role` 克隆产物为自定义 key 时自动剥离授权权码（业务码与资源实例授权保留，复制回模板 key 原样保留）。
+- **存量修正：** 临时脚本（执行后已删）把 3 个租户的 L3 角色补齐 21 码、3 个应用的 L2 角色收敛 15 码。
+- **前端禁选（与后端 422 同口径）：** `RolePermissionGrantModal` 新增 `lockAuthorityCodes` prop——授权权码禁选、历史已持有的从初始选中剔除、弹窗顶部警告 alert；`RoleManagement.vue` 与应用工作台 `RolesTab.vue` 按 `TEMPLATE_ROLE_KEYS` 判定传参。
+- **验证：** 新增 `tests/test_role_hierarchy_guards.py` 6 项（双入口自定义 422 / 模板角色放行 / 克隆剥离且源角色不变 / 预置码数 21/15/0+幂等 / is_custom_role 语义）容器内 `python -B -m unittest` 全绿；回归 `test_g16_g24` 13 项 + `test_platform_tenant_guards` 7 项零回归；宿主机 vue-tsc + Vite 生产构建 exit 0（8.00s）；走查实测 `l3-admin@demo.example.com` 租户域 capabilities 恰 21 码、`l2-admin@demo.example.com` 应用域恰 15 码（零缺失零多余）。未运行：浏览器授权弹窗禁选交互走查（待用户复测）。
+
+## 2026-10-28 IAM P382 — 平台租户防呆保护后端收口（五处写入口拦 platform）
+
+P381 只挡了「切类型」与「删除」两个入口；本轮把平台引导租户（`PLATFORM_TENANT_SLUG`，L1 宿主 + deerflow/crud-demo 载体）的其余业务写入口一并防呆，统一 422 拒绝。
+
+- **五处保护（复用 `seed_greenfield.PLATFORM_TENANT_SLUG` 常量，零手写 'platform' 字面量）：** ① `tenants.py set_tenant_status`——仅 disabled 分支拦截，active 幂等放行；② `organizations.py create_organization`；③ `invitations.py` 单发+批量邀请——经共享 `_validate_invitation_target` 在邮箱循环外一次性拦截，重发/撤销/兑换入口不动；④ `groups.py create_user_group`。
+- **隔离测试：** 新增 `tests/test_platform_tenant_guards.py` 7 项（5 负路径断言 422 且含「平台引导租户」文案 + 业务租户建组织正路径 + 平台租户 active 幂等放行），照 test_g16_g24 夹具模式（内存 SQLite 直调 handler；L1 照 greenfield_fixture 三步造但直接挂 slug=platform 真实引导租户）。
+- **验证：** 容器内 `python -B -m unittest`：新套件 7/7 OK；基线 `test_g16_g24 + test_login_throttle` 19 项 OK；追加 `test_entity_deletion + test_organization_workspace` 19 项 OK（覆盖被改模块的删除守卫与组织工作台），零回归。未运行：真实 HTTP 层验证（--reload 已热载，隔离测试直调 handler）。
+
+## 2026-10-28 IAM P381 — 平台租户与业务租户区分（kind 归位 + 禁切保护 + 显式标注）
+
+用户反馈「平台租户和其他租户混在一起」。审计实锤：2026-10-27 三次 `tenant.kind.change` 把 platform/demo/testdemo1 三个租户全改成 consumer，平台引导租户（L1 角色与引导超管的宿主）由此混入 ToC 消费目录。
+
+- **数据归位：** platform 租户经 `PATCH /admin/tenants/{id}/kind` 改回 `organization`（绿场种子设计值，API 走审计）；demo/testdemo1 保持 consumer（真 ToC 语义）。影响面评估：capabilities 不依赖租户 kind（L2/L4 入口零影响）；应用挂载不看 kind（deerflow/crud-demo 无感）；公开注册校验只认 consumer（语义更准）。
+- **后端保护：** `set_tenant_kind` 对 `slug=platform` 直接 422——「平台引导租户的类型由系统种子定义，不允许切换」，杜绝再次混入（实测生效）。
+- **前端区分：** 租户管理页平台租户显「平台自有」品牌色描边 tag（tooltip 说明 L1 宿主身份），操作列隐藏「切换类型」与「删除」；应用编辑租户下拉的类型后缀自动随之变为「组织/企业」。
+- **验证：** vue-tsc -b exit 0 + Vite 生产构建 exit 0（8.09s）；实测平台租户切类型 422、租户列表 kind 归位（platform=organization，demo/testdemo1=consumer）。
+
+## 2026-10-28 IAM P380 — 授权界面权限项中文化（中文描述主显 + 编码副行）
+
+用户截图反馈角色授权弹窗里全是裸权限码（`deerflow.agent.admin` 等），要求「都显示中文」。权限目录本就有中文 `description`，问题在端点未下发 + 前端只渲染 code。
+
+- **后端 3 端点补 `description`：** 应用目录 `GET /tenant-admin/applications/{id}/permissions`（此前缺）、应用 grants `GET /tenant-admin/.../roles/{id}/permissions`、平台 grants `GET /admin/roles/{id}/permissions`（平台目录 `/admin/permissions` 本就带）。
+- **RolePermissionGrantModal：** 选项改自定义 slot——中文描述主行 + 等宽 code 副行 + 停用项「（停用，仅可撤销）」标注；「预览影响」的新增/撤销/逐项影响/数据范围清理清单全部经 `codeLabel` 映射为「描述（code）」。
+- **角色页资源授权清单：** 同步中文主显（描述存在时 strong 显示中文，code 与 resource_id 降为辅助行）。
+- **顺带修脏数据：** 全库排查权限描述，仅 `crud.document.read` 描述='t' 异常，已修为「CRUD 示例：读取文档」；其余 18 条短描述（读频道/写项目等）为合法中文。
+- **验证：** vue-tsc -b exit 0 + Vite 生产构建 exit 0（10.75s）；端点实测应用目录已下发中文 description；浏览器授权弹窗走查未运行（待用户复看两列布局下中文+code 双行效果）。
+
+## 2026-10-28 IAM P379 — 修复登录主题手机端预览登录卡穿出手机壳（grid 轨道自引用）
+
+用户截图反馈登录主题页「手机端预览丑陋」：手机壳（320px）中登录卡横向穿出两侧。
+
+- **根因**（浏览器实测：壳 clientWidth 319px、登录卡 420px、溢出 101px，且桌面预览同样溢出 98px）：登录卡内联 `width: 420px; max-width: 100%`，但预览容器 `.theme-preview-frame` 是 grid——显式 width 会把隐式轨道**自撑大**到卡片宽度，`max-width: 100%` 相对被撑大的轨道解析形成自引用，约束彻底失效（flex/普通流中百分比基准是容器确定尺寸，不受影响）。
+- **修复**（双管齐下）：
+  ① `LoginThemeManagement.vue` 的 `themePreviewCardStyle`：手机预览模式下卡片宽度直接 `'100%'`（真机登录页卡片本就受视口约束，语义一致；桌面预览仍按 `card_width` 配置渲染）；
+  ② `style.css` 新增 `.theme-preview-card-slot` 包装层（模板中卡片外包一层）：`width: 0; min-width: 100%` 打断轨道自引用——本层尺寸贡献归零、占满由容器决定的轨道，卡片「配置宽度放不下即收缩」在手机/桌面/分栏布局通用；配套三条 margin 规则还原水平对齐（默认居中=原 `place-items:center`，`position-left/right` 靠边）。
+- **验证：** 浏览器实机复测：手机壳 320px 中卡片 295px 完全居中框内（左右偏移对称 13px）；桌面预览框 323px 中卡片收缩 266px 居中（原溢出 98px 归零）；`position-left` margin 规则命中（满宽时靠边无视觉差异符合真机语义）；vue-tsc 全量与 Vite 构建 exit 0。未运行：后端隔离测试（纯前端预览层改动）、真机访问（预览为桌面沙盒）。
+
+## 2026-10-28 IAM P378 — C 端自助注册开启 + 端到端验收（D02 主链路）
+
+用户授权开启公开注册并要求端到端验证。
+
+- **开关确认：** `.env` 的 `IAM_ALLOW_PUBLIC_REGISTRATION=true` 已存在且 api 容器 env 已生效（无需重建）；SMTP（163）已配。
+- **配置凑齐（demo-app，演示租户）：** ①租户 consumer+active 本就满足；②主题 `PUT /admin/themes/{app}?publish=true` 发布 v1（`show_register=true`、`terms_url=/terms`、`privacy_url=/privacy`——协议链接仅支持 HTTPS 或站内路径，`http://localhost` 422 被拒）；③应用 PATCH `registration_policy=open` + 注册角色 `3cf6d506`（app.member，`eligible_registration_role` 合规：纯业务角色、data_scope=self）+ 协议版本 v1.0×2。
+- **端到端验收全通：** 匿名 `POST /auth/register` 202（防枚举统一文案）→ challenge 落库 `public_registration_challenges` → OTP 容器内按 `_derived_code` 密钥派生（DB 仅存 HMAC 摘要，不存明文）→ `POST /auth/register/verify` 201 建会话 → `/auth/me` 200 身份正确 → 落库四件套（演示租户成员 active + app.member 角色绑定 + 同意记录 v1.0×2）→ 邮件发件箱 pending（163 SMTP 真实投递）→ 同邮箱重复注册仍 202 同文案（防枚举）。
+- **证据保留：** 测试账号 `e2e-register-51e18f61@example.com`（演示租户成员，app.member 角色）。
+- **未运行：** 浏览器注册页 UI 走查、人工收信验证 OTP 邮件（待用户用可收信邮箱走登录页两屏流程）；D02 剩余项见进度文档 D02 行。
+
+## 2026-10-28 IAM P377 — 修复「表格操作时页面抖动」
+
+用户报障：表格操作（点按钮、删除、刷新）时页面会抖动一下。
+
+- **根因：** `fitTableBodies` 高度自适应链路——MutationObserver 监听内容区全子树（childList），表格操作时的按钮 loading spinner 挂载/数据重渲染/分页瞬时状态都会触发重算（80ms 防抖后执行）；而每次重算测得的 fit 值受瞬时 DOM 状态与取整影响存在数像素级波动，每次都落笔 `minHeight/maxHeight` 导致表格区域高度反复跳变（loading 出现→消失可连续抖两三下）。
+- **修复（`App.vue` fitTableBodies）：** 写入前记录上一轮 fit（`previousFit` 从 `maxHeight` 内联样式读取），本轮测量值与上轮差值 **≤4px 视为测量噪声，沿用旧高度不重写**；真实布局变化（分页器显隐、筛选区增删等数十像素级）仍正常跟随；收敛轮均摊扣除逻辑不变（真实溢出修正）。改动 1 处 +2 条注释，正常布局下 fit 值不变，零行为面变化。
+- **验证：** vue-tsc -b exit 0 + Vite 生产构建 exit 0（8.37s）。未运行：浏览器实机复测（待用户点操作列按钮/翻页/删除感受抖动是否消失；若仍有残余抖动，升级方案为「跳过 loading 态测量 + 连续两轮一致才落笔」）。
+
+## 2026-10-28 IAM P375 — 「高级管理」独立组取消（三项放回「应用与权限」组）
+
+用户复核 P374 后裁定：不用新增「高级管理」组，三个列表页入口直接放在「应用与权限」组下。
+
+- **navigation.ts：** 删除 `advanced` NavGroupKey 与 NAV_GROUPS 条目；applications/roles/permissions 三项 group 改回 `access`（紧随 application_workspace 之后，恢复 P346 之前的组内排列）。
+- **AppSidebar.vue：** `DEFAULT_COLLAPSED_GROUPS` 去掉 `advanced`——「应用与权限」恢复日常展开组。
+- **保持不变：** App.vue 的 `PLATFORM_SIDEBAR_EXCLUDED` 过滤删除状态（P374 交付，三项侧栏可见+能力守卫不变）；应用工作台页头下拉维持移除；空态「前往应用管理创建」直跳保留。
+- **验证：** vue-tsc -b exit 0 + Vite 生产构建 exit 0（9.14s）；grep 全站无导航 `advanced` 残留（仅余登录主题编辑器无关类名 `theme-advanced`）。未运行：浏览器实机走查（待用户刷新侧栏复看）。
+
+## 2026-10-28 IAM P376 — 全站图标统一为 antd 官方 @ant-design/icons-vue
+
+用户裁定「项目中的图标都改成 antdv 里的图标」。此前 icons.ts 按 createIcon 模式手绘 29 个与官方同名的 24×24 线性 SVG（P348 记录为既有架构偏离），且与 ResourceIcon/OverviewPage/OverviewStatCard 直连官方包形成混用。
+
+- **`plugins/icons.ts` 全量重写：** 29 个图标（AppstoreOutlined、ApartmentOutlined、BankOutlined、ClusterOutlined、UserOutlined、MailOutlined、TeamOutlined、HomeOutlined、SafetyCertificateOutlined、SafetyOutlined、ExperimentOutlined、DashboardOutlined、AuditOutlined、SkinOutlined、FileSearchOutlined、SearchOutlined、UserSwitchOutlined、IdcardOutlined、MenuOutlined、MenuFoldOutlined、MenuUnfoldOutlined、CheckOutlined、FilterOutlined、DownOutlined、UpOutlined、LockOutlined、ExclamationCircleOutlined、SettingOutlined、CheckCircleFilled）改为从 `@ant-design/icons-vue@^7`（已在依赖）**具名 re-export**——自绘本就照官方名手绘，名字完全一致。
+- **消费方零改动：** 12 个文件（App.vue、AppSidebar、navigation、AdminPageHeader、AdminSearchField、AdminTableToolbar、audit、applications、groups、integration、roles、users 页）仍从 `@/plugins/icons` 导入，写法不变。
+- **边界说明：** 仅具名 re-export、不做模块别名/重定向，不影响 antd 内部对该包的 /es/icons 子路径导入（原注释顾虑不适用于 re-export 方案）。
+- **验证：** vue-tsc -b exit 0（29 名字官方包全部存在）+ Vite 生产构建 exit 0（8.23s）；grep 全站无 `<svg`/`createIcon` 残留。未运行：浏览器实机走查（官方图标与自绘 stroke 风格有细微视觉差异，待用户刷新复看；图标容器均为 1em anticon，布局不受影响）。
+
+## 2026-10-28 IAM P373 — 全站提示降噪（页头副标题/工具条 hint 改「!」图标 + tooltip）
+
+用户截图反馈应用工作台页头「日常配权三步」整行长文案太显眼，要求所有页面此类提示不要太明显、用「!」图标 + a-tooltip 展示。
+
+- **`AdminPageHeader.vue`：** 副标题不再整行平铺，改为标题旁「!」图标 + a-tooltip 悬停展示完整说明（overlay maxWidth 360px；图标 muted 灰、cursor-help、hover 加深）。
+- **`AdminTableToolbar.vue`：** hint 同样收敛为「!」图标 + tooltip，右侧操作按钮区布局不受影响。
+- **`icons.ts`：** 按既有 createIcon 模式新增 `ExclamationCircleOutlined`（圆圈感叹号线性图标）。
+- **`style.css`：** 清理唯一消费方消失后的失效样式 `.mgmt-page-subtitle`。
+- **覆盖面：** 所有经共享组件传 subtitle/hint 的页面（应用/组织工作台、用户/角色/应用角色/租户接入/登录主题/模型治理/运营总览/授权模拟/新项目接入、工作台角色 Tab 挂码说明等）一处改全站生效。
+- **验证：** 宿主机 vue-tsc -b + Vite 生产构建 exit 0（8.24s）。未运行：浏览器悬停走查（待用户复测）、深色/375 复跑（纯展示层改动，无断点与 token 变化）。
+
+## 2026-10-28 IAM P374 — 「高级管理」下拉改造成侧栏折叠组
+
+用户截图反馈应用工作台页头「高级管理」下拉（应用管理/角色高级管理/权限编码目录三项），经确认改造成侧栏折叠组形态。**（注：本形态已被 P375 按用户裁定调整为放回「应用与权限」组，本条目保留过程记录）**
+
+- **navigation.ts：** 新增 `NavGroupKey 'advanced'`（「高级管理」，位于「应用与权限」「平台治理」之间）；applications/roles/permissions 三项从 `access` 组迁入。
+- **App.vue：** 删除 P346 的 `PLATFORM_SIDEBAR_EXCLUDED` 平台模式侧栏排除过滤——三项恢复侧栏可见，`hasAnyCode` 能力守卫不变；租户侧 `/roles` 仍为「应用角色与成员」融合页入口（能力零变化）。
+- **AppSidebar.vue：** `DEFAULT_COLLAPSED_GROUPS` 加 `advanced`（低频高级入口默认折叠，同平台治理/审计验证）；「当前路由所在组自动展开」逻辑复用，深链/刷新后菜单可用。
+- **application-workspace/index.vue：** 页头 a-dropdown 连同 `ADVANCED_PAGES`/`goAdvanced`/`onAdvancedMenu` 及专用 import 整链移除；空态「前往应用管理创建」按钮改 `goApplicationManagement` 直跳（侧栏「高级管理」组保留同一路由入口）。
+- **验证：** vue-tsc -b exit 0 + Vite 生产构建 exit 0（8.39s）；grep 全站无 `ADVANCED_PAGES`/`PLATFORM_SIDEBAR_EXCLUDED` 残留、无旧分组硬编码依赖。未运行：浏览器实机走查（待用户刷新侧栏复看）。
+
+## 2026-10-28 IAM P372 — G16–G24 九项缺陷批量开发（后端+前端+迁移全链路）
+
+用户指令「开始 G16–G24 开发」；经确认全部 9 项一口气实施、G16 采用详情抽屉形态、G18 采用本地盘卷存储。
+
+- **G16 用户详情聚合页：** 新端点 `GET /admin/users/{id}/profile`（L1 门禁，聚合基本资料+成员关系+角色绑定+会话（复用 list_user_sessions）+最近 10 条 auth 审计事件）；新共享组件 `UserDetailDrawer.vue` 五分区抽屉，用户页「详情」入口。
+- **G17 主题版本恢复：** `POST /admin/themes/{app_id}/{theme_id}/restore?publish=` 复制目标版本为新递增版本（可同步发布），审计 `theme.restore`；前端版本表「恢复为新草稿/恢复并发布」操作列。顺带修复存量 save_theme 缺 `validate_theme_config` 导入的潜伏 NameError。
+- **G18 素材本地上传（用户裁决本地盘卷）：** `POST /admin/uploads/theme-assets` 原始字节直传（PNG/JPEG/WebP 魔数白名单、2MB 上限、排除 SVG 防注入）+ 公开只读 GET（`^[0-9a-f]{32}\.(png|jpg|webp)$` 白名单、一年不可变缓存）；compose 新增 `iam-theme-uploads` 卷挂 `/app/data/theme-uploads`；前端主题编辑器背景图/Logo 上传按钮。
+- **G19 OIDC Back-Channel Logout：** `applications.backchannel_logout_uri` 列（应用编辑弹窗「单点登出联动」分区+422 URI 校验）；新 `services/backchannel_logout.py` 按 OIDC BCL 1.0 构造 RS256 `logout_token`（typ=logout+jwt、events、无 nonce），后台守护线程 best-effort 投递（3s 超时）；改密/自助重置/管理员重置/强制登出统一接线 `deliver_for_user`。业务侧接收端点联调待安排。
+- **G20 三桶登录节流：** login_throttle.py 新增纯邮箱维度桶（HMAC-SHA256 键，独立阈值 `login_account_max_failures` 默认 15 防恶意锁号），与邮箱×IP 桶、IP 桶并列；sorted 加锁防死锁；改密/重置成功同步清邮箱桶——同账号换 IP 亦被锁定。
+- **G21 邀请批量+重发：** `POST /admin/invitations/batch`（多邮箱去重、冲突跳过逐条明细）+ `POST /admin/invitations/{id}/resend`（换 token_hash 顺延有效期，accepted/revoked 409）；前端批量邀请弹窗+行「重发」按钮；invitations.py 重构出四个可复用助手。
+- **G22 角色持有者反查：** `GET /admin/roles/{id}/holders` 直连+组继承来源合并（tag+tooltip 区分），`ensure_tenant_in_actor_scope` 判权；角色页「查看持有者」弹窗。
+- **G23 登录历史联动：** 抽屉「查看登录记录」深链 `#/audit?actor=<id>`，审计页 `applyDeepLinkPrefill` 预填 actor、切「登录与认证」Tab、replaceState 清参。
+- **G24 组织负责人+用户组嵌套：** `organizations.owner_user_id` 列+设置负责人弹窗（成员选项来自 `/tenant-admin/members`）+`organization.owner.change` 审计；`user_groups.parent_group_id` 同租户复合外键（RESTRICT）+防环校验+`effective_roles` 双列递归 CTE 向上遍历祖先组继承。组长委派保持后续评审。
+- **迁移 `0004_owner_backchannel`：** 三表可空列；user_groups 复合外键走 batch_alter_table；迁移前受保护备份 `backups/pre-0004-owner-backchannel-20261028-105351.sql`+`.sha256`（229KB）；已应用，DB head=`0004_owner_backchannel`。
+- **冲突说明：** 并行会话曾误删用户页 G02 管理员重置密码 UI，本轮已恢复并与 G16 详情入口合并。
+- **验证：** `tests/test_g16_g24.py` 新增 13 项隔离测试+`test_login_throttle.py` 三桶适配，**50 项全绿**（api 容器 python -B）；vue-tsc -b exit 0（修 ThemeHistoryRow unknown 类型）+ Vite 生产构建 exit 0（8.17s）；api 容器 `--force-recreate` 后 `/api/v1/health` 200、六个新路由探测 401、uploads 卷可写实证。**未运行：** 浏览器写操作走查（破坏性动作待用户复测）、G19 业务方端到端联调。
+
+## 2026-10-28 IAM P370 — 修复模型治理页头部空白近百px（grid stretch 拉高页头行）
+
+用户截图反馈 /models「头部空白太多」（面包屑与页头 eyebrow 之间约 97px 空白）。
+
+- **根因**（浏览器实测 gap=121.6px、链上 margin/padding 全零）：P364 骨架 `.mgmt-shell-content > div > section { flex: 1 0 auto }` 把 section 拉伸到填满视口剩余高度，而 `.model-governance-page` 是 `display: grid`——grid 默认 `align-content: stretch` 把多出的高度**均分给所有行**，页头行也被拉高；叠加 AdminPageHeader 根 div 的 `md:items-end`，标题块被推到拉高后的行底部 → 头部出现大片空白。仅此页中招（其余 section 型页面是 Tailwind flex column，子项不纵向拉伸）。
+- **修复**（`ModelGovernancePage.vue` scoped）：section 改 `display: flex; flex-direction: column`（flex 子项默认不拉伸），新增 `.model-governance-page > :last-child { flex: 1 0 auto }` 与 `> :last-child > .data-card { flex: 1 0 auto }`——仅最后一个区块（账目/目录卡）吃剩余高度，保住 P364 页脚贴底与卡片撑满效果。
+- **验证：** 浏览器实机复测：/models 头部 gap 121.6→**24px**（恰为内容区内边距）、scrollH=clientH=799 页脚贴底（footerGap 24px）；/model-usage 三区块头无回归（gap 24px）；vue-tsc 全量与 Vite 构建 exit 0。未运行：后端隔离测试（纯前端 scoped 样式改动）、深色/375 复跑（无断点变化）。
+
+## 2026-10-28 IAM P371 — 产品缺口第二轮梳理（G16–G24 待办入表）
+
+对照 PRD 逐条承诺的第二轮缺口实查（10 项：用户详情页/主题版本恢复/素材上传/账号锁定粒度/OIDC SLO/邀请能力/角色反查/登录历史联动/组织/用户组），新增 G16–G24 九行待办入进度文档 §4。纯文档轮，零代码。
+
+- **G16（P0，PRD 承诺未兑现）：** IAM-USER-006 用户详情聚合页——现状仅列表页 + 五个零散弹窗（角色/会话/组织/租户关系各自独立），后端无 `GET /users/{id}` 聚合端点（数据散落 sessions/role-bindings/memberships 三端点）。
+- **G17/G18（P1，PRD 6.7 相关）：** 主题历史恢复——版本链已建（application_themes 按 version 递增、draft/published/archived）但无 restore 端点、前端版本表只读；素材上传——前后端均只能填图片 URL，后端全库无 upload 端点/对象存储接入（PRD 自认「素材上传待开发」）。
+- **G19（P1 评审）：** OIDC Back-Channel Logout 缺失——仅 RP-Initiated（/oidc/logout + post_logout_redirect_uris），IAM 登出后业务方本地会话不联动。
+- **G20–G24（P2）：** 纯账号维度登录锁定（现为 HMAC(邮箱×IP)+IP 桶，换 IP 绕过账号级限制）、邀请批量+重发（现仅单邮箱，有效期 1–336h 已实现）、角色持有者反查（无 `GET /roles/{id}/bindings`，「改/停/删角色影响谁」无法回答）、用户页→登录历史联动（后端 actor_user_id 可筛但前端需手粘 UUID）、组织负责人/调动记录与用户组嵌套/组长委派（PRD 未承诺，产品评审）。
+- **未运行：** 测试、构建（纯文档轮）。
+
+## 2026-10-28 IAM P369 — /model-usage 模型用量页账本式改造（对齐 P368 概览设计语言）
+
+用户要求「/model-usage 这个页面帮我改造的美观一点」。
+
+- **汇总区账本化**（`frontend/src/views/models/ModelGovernancePage.vue`）：原 9 张 a-statistic 小卡改为「01 用量汇总」编号头 + 5 张 `OverviewStatCard` 巨号指标卡（请求总数/成功率/输入 Token/输出 Token/估算费用，28px tabular 数字 + 千分位）+ 次级审计脚注行（成功/失败绝对数、估算用量请求、未知费用请求以等宽小字收纳，信息零丢失）；`OverviewStatCard` 通用化——新增 `clickable` prop（false=纯展示 div 无悬停箭头/无按钮语义，默认 true 概览行为不变）与 `value: number | string` 放宽（容纳百分比/费用等已格式化字符串）。
+- **三区块编号头**：01 用量汇总 / 02 待核对调用（badge 与「刷新核对队列」按钮上移至头行，卡内保留说明+警示+表格）/ 03 调用账目（目录视图为「01 模型目录」），对齐 P368 概览编辑部式排版；同步清理失效的 `.review-heading`/`.usage-summary` scoped 样式。
+- **数字列右对齐**：账目表输入/输出 Token、估算费用、延迟，待核对表等待核对、预留输入/预留输出共 7 列 `align: 'right'`。
+- **顺手修复**：估算费用显示科学计数法 `0E-8`（后端 Decimal 序列化透传）——新增 `formatCostValue` 将 `0E-8`/`1.5E-7` 类字符串归一为普通小数并去尾零，指标卡与账目列共用。
+- **验证：** vue-tsc 全量（`--noEmit -p tsconfig.json`）与 Vite 生产构建宿主机 exit 0（37.4s）；浏览器实机走查（dev 5180 真实登录 admin）：01/02/03 编号区块渲染、指标卡数值与脚注正确、费用显示 `0`、两表数字列 computed textAlign=right、页脚贴底无悬空、/models 目录视图「01 模型目录」正常；零写操作。
+- **未运行：** 后端隔离测试（零后端改动）；深色主题与 375 窄屏复跑（纯排版层，断点布局未动）。
+
+## 2026-10-27 IAM P368 — /overview 工作台重设计（与登录页视觉区分）+ 深色主题品牌翻转回归修复
+
+用户反馈 /overview 与 /login 视觉同质（旧页头 eyebrow「IDENTITY & ACCESS」、标语卡与登录页品牌块同款）。
+
+- **Overview 重设计**（`src/views/overview/` 三文件）：页头改「CONSOLE OVERVIEW / 运营总览」；标语大卡降为上下细线状态条（服务健康点 + 数据更新时间 + DeerFlow/owner-only 阶段 pill）；指标卡改账本式编号（等宽字 01–05）+ 28px tabular 巨号数字 + 悬停箭头；「使用路径」提示改三步可点击流程链（权限编码→角色挂码→用户绑角色，图标+编号+悬停态，末步后不再渲染悬空箭头）；管理入口四卡加图标与悬停箭头，删「已提供管理 API」重复胶囊；章节编号 01–04 编辑部式排版。组件 props/emits 契约不变（App.vue 零改动接入）。
+- **图表升级**（`OverviewDashboardCharts.vue`）：色板改渲染时读 CSS token（暗色自动翻转墨阶）；条形图降序 + 条尾等宽字直标数值（关键值不经悬停可读）；环形图加 HTML 环心总量覆盖层；**MutationObserver 监听 data-theme 即时重绘**，修复 P350 记录的「切主题后图表配色滞后到下次刷新」已知限制。
+- **顺手修复 2 个实锘认陷**：①前端 `AdminOverview` 类型的 `models` 字段后端 `/admin/overview` 已不返回（旧页「模型目录」恒显「—」）——类型删字段，指标卡与图表行同步收敛为 5 项，`totalRecords` 逐字段 `?? 0` 防字段漂移 NaN；②**全站深色主题品牌翻转回归**：App.vue onMounted 无条件 `applyBrandToDocument` 写内联 `--color-brand`，压过 tokens.css `html[data-theme=dark]` 近白翻转块 → 深色下所有页面主按钮「暗底暗字」不可见、侧栏选中项无字（浏览器实测复现，用户管理页同现）——新增 `syncBrandToDocument`（默认石墨黑与暗色下深色自定义不写内联）+ watch(themeMode) 切主题时移除/重写内联；「历史存值 #121112 + 深色」场景专项复验通过。
+- **验证：** `vue-tsc -b` 与 Vite 生产构建宿主机 exit 0（终验 13.32s）；浏览器实机走查（dev 5174 真实登录）：浅色首屏/图表双栏/步骤链/入口卡、深色全套、图表主题热切换即时重绘、环心总量 320 正确、零横向溢出，全程零写操作；控制台仅停服期 readiness 中断与 HMR 断连两条预期消息，零 Vue 告警。
+- **未运行：** 后端隔离测试（零后端改动）；375 窄屏复跑（未动断点布局，P349 已验）。
+
+## 2026-10-27 IAM P366 — G02 密码救济双通道（自助改密 + 管理员重置）
+
+消除 SMTP 故障时忘记密码用户无救济的必然运营事故（G 系列缺陷待办 G02，裁决与待办见 P361）。轮次号曾短暂占用 P364/P365（与并行会话撞号），现定 P366。
+
+- **后端自助改密 `POST /auth/me/password`**（`app/api/v1/auth.py`）：行锁取当前用户→`verify_password` 校验当前口令（错误记 `auth.password.change` failure 审计后 400）→Argon2 换哈希→bump `auth_version`→撤销 IAM refresh session 与 OIDC refresh token family→消费未兑换 authorization code/consent/旧重置链接→同事务成功审计；改密后旧 access token 因 auth_version 与 session 双失效即时 401。schema 新增 `PasswordChange`（current_password + new_password ≥12）。
+- **后端管理员重置 `POST /admin/users/{id}/password`**（`app/api/v1/admin/users.py`）：L1 判权沿 users.py 惯例；禁自重置 400（本人必须走「验证当前密码」的自助通道）；仅启用状态 400；同一凭证级联；审计 `user.password.reset` 不含口令。schema 新增 `AdminPasswordReset`。
+- **前端**：新共享组件 `src/components/ChangePasswordModal.vue`（defineModel 开关、当前/新/确认三段校验、成功后由 App.vue 走 signOut 强制退出）；顶栏用户区新增「修改密码」入口（移动端 LockOutlined 图标化沿 P349 isMobile 惯例；icons.ts 按既有 createIcon 模式新增锁形图标）；用户管理页「更多」菜单新增「重置密码」（仅非本人且启用状态显示，前端守卫+服务端负路径双兜底）。
+- **验证：** 新增 `backend/tests/test_password_change.py` 隔离测试 **7/7 OK**（api 容器 `python -B`：成功级联+旧令牌 401、错口令不触凭证、短口令 422、管理员重置级联、禁自重置、禁非启用、无绑定 403）；`vue-tsc -b` 与 Vite 生产构建宿主机 exit 0；两新路由探测 401（`--reload` 热重载已注册，三容器 healthy）。
+- **未运行：** 浏览器真实改密走查（破坏性动作，待用户复测）；全量隔离套件（P364 已跑 231 项基线，本机此后增量见各轮记录）。
+
+## 2026-10-27 IAM P367 — 后端全量中文注释补齐（纯注释轮）
+
+用户要求「后端代码都给我补上注释」。`backend/app` 全量 + `manage.py`（约 70 文件：main + api/v1 路由 29 + models 9 + schemas 10 + core 4 + db 4 + services 13）三组并行补齐中文注释——模块/类/函数 docstring + 复杂逻辑行注释（四级角色判定、data_scope 求交、令牌签发轮换、SKIP LOCKED 批清理、发件箱锁租约、级联删除审计等关键步骤）。**铁律：零可执行代码改动**；且刻意不用会改变运行时行为的注释载体（不加 SQLAlchemy `Column(comment=)`——会触发迁移差异、不加 Pydantic `Field(description=)`——会改 OpenAPI 契约、不改路由装饰器参数），存量注释原样保留。`migrations/`（已应用的受保护迁移链）与 `tests/`（方法名自述）未加。
+
+- **验证（全部通过）：** 容器内 walk-import 全部 **58 个模块 ALL-IMPORTS-OK**；隔离随机库全量套件（`run_isolated_postgres_suite.py`）**231 项：225 过 + 6 项失败**，6 项与 P344 已记录的陈旧 mock 遗留逐一对应（`test_admin_authorization`×4 mock 已不存在的 `evaluate_access`、`test_application_updates`×2 轮换 403/404），非本次引入；API 容器 healthy、`/api/v1/ready` 200。
+- **插曲（已复盘并记录）：** 验证中曾把 `test_model_usage_quota`（PG 集成测试，`skipUnless(database_url)`）用容器 env 直连共享开发库跑，7 项无意义失败——与 P307 存量真实账本（3 条 usage_events / 4 条 reservations）碰撞「全局待审队列/精确计数」断言；该模块 `tearDown` 外层事务整体回滚，**开发库零残留**。结论：此类集成测试只准走 `run_isolated_postgres_suite.py` 随机库，已记入项目记忆。
+
+## 2026-10-27 IAM P364 — 页面空白治理：纵向 flex 骨架（卡片拉伸 + 页脚贴底 + 空态居中）
+
+用户两张矮视口截图反馈「大量页面空白太多」「空白页面也要注意美观」——数据少/空态页的卡片下方与页脚之间大片画布裸露（模型治理空态页下半页约 1/3 空白；工作台 P359 固定 calc 高度与页脚间留 ~150px 空隙）。根因：页面高度不随内容自适应贴底。改造（纯前端布局层，零逻辑/零 API）：
+
+- **纵向 flex 骨架（style.css）：** `.mgmt-shell-content` flex column；页面 v-show div 统一弹性列（内联 display:none 优先，隐藏页安全）+ `padding-bottom` 提供页脚间距；直接子 `.data-card` 与 `section` 型页面 `flex:1 0 auto` 吃掉剩余高度；footer `mt-6`→`mt-auto` 恒贴底。
+- **卡片内部高度链（style.css）：** `.data-card/.mgmt-data-card` → `.ant-card-body` → `.ant-table-wrapper` → antd 容器链（spin-nested-loading > spin-container > table > container > header+body）逐层 flex，表格 body 随卡片拉伸——少数据/空态的面板撑满卡片，空白留在面板内而非裸露画布。
+- **fitTableBodies 重构（App.vue）：** 测量基准从「内容区」改为「所在卡片 body」（骨架下页脚不占卡片内空间，老口径 reserve 估算失效）；先清空上一轮 min/max 再测量（否则 minHeight 撑高卡片形成正反馈循环——首版实测卡片越量越高、页脚被推出视口）；minHeight 与 maxHeight 同值让面板恒撑满；空态 placeholder 单元格吃到面板高度垂直居中（td padding 叠加以 body.scrollHeight 实测校正一次）；弹窗内表格（用户页会话表）跳过。
+- **工作台（P359 调整）：** 两个 workspace section 的 `lg:h-[calc(100vh-156px)]` 固定高度删除，由骨架 flex 拉伸自适应（`lg:min-h-[380px]` 保底保留）；组织工作台右栏三张卡片补 `h-full`（此前右卡不参与拉伸、与左树底边差 72.7px）。
+- **验证：** vue-tsc exit 0 + 生产构建 exit 0（12.8s）；浏览器两轮走查（browser 代理，1059 宽视口）——7 页页脚全部贴底（24px 设计留白）、空态垂直居中、models/tenants 行区撑满（分页下仅剩 24px 内边距+16px 分页 margin 的结构性余量）、双工作台双栏底边对齐 778.7、users 多行表格内滚正常无双滚动条、overview 布局无回归（图表无塌陷）；全程零 Vue 错误/警告（仅导航中断的 health 轮询 ERR_ABORTED，良性）。**未运行：** 558px 极矮视口实测（浏览器代理无法锁定矮视口；逻辑上 flex 自适应比固定 calc 更耐受矮视口，minBodyHeight=72 保底沿用）、深色主题复跑（纯布局层改动）。
+
+## 2026-10-27 IAM P363 — 后端结构规范化 + 根目录会话残留清理（用户裁定）
+
+后端审计结论：主干（`app/api/v1` + `core` + `db` + `models` + `schemas` + `services` + `migrations` + `tests`）已是标准 FastAPI 布局，仅清理两处非标准残留；主干层零改动、零业务逻辑/零 API 契约变化。
+
+- **oidc.py 兼容垫片删除：** `app/api/v1/oidc.py`（纯转发垫片，docstring 自述「兼容入口」）整体并入 `oidc_provider/__init__.py`——装配代码不变，追加 `.authorization`/`.logout`/`.metadata`/`.tokens` 的 13 个再导出，`__all__` 扩至 15 项（符号逐一核实存在；包内子模块无反向包导入，无循环风险）。改 3 处导入：`main.py` 1 处、`tests/test_oidc_consent.py` 4 处 `from app.api.v1.oidc import` → `from app.api.v1.oidc_provider import`。
+- **tenant_admin 双散件合并为包：** `tenant_admin.py`（聚合路由）→ `tenant_admin/__init__.py`，`tenant_admin_application_roles.py` → `tenant_admin/application_roles.py`（内容零改动，无反向引用）；`main.py` 经包 `__init__` 导入 router 自动生效，全仓仅 1 处内部 import 需改。
+- **根目录清理（用户确认清单）：** 删除 9 个 `_` 前缀会话草稿文件（_guide.txt、_sync_py/ts.txt、_verify_caps/levels/login.json、_mu_model_id/tenant_id.txt、_role_name.txt，均为 10/24 DeerFlow 联调残留，全仓 grep 零引用）+ `_scratch_export/`（7 文件，旧文档导出副本）+ `_wave1_tmp/`（1 文件）；空目录一并移除。
+- **验证（全部通过）：** 容器内 `python -B -c "import app.main"` 冒烟导入 OK；`--reload` 热重载后容器 healthy、`/api/v1/ready` 200；受影响隔离测试 `test_oidc_consent` + `test_oidc_tenant_claim` 合跑 **16 tests OK**；grep 复查 `app\.api\.v1\.oidc\b` 与 `tenant_admin_application_roles` 在 backend 全部 .py 零命中。backend/README 目录结构与「当前 API」节同步新路径（带日期历史条目未动）。
+
+## 2026-10-27 IAM P362 — 全站深度走查美化（基于 P360 新目录结构）
+
+用户要求「深度检查整个项目所有页面，让页面更加好看」。16 页浏览器走查（生产 5175 登录 + 浅色主题）+ 静态扫描 + 宽视口（1333px 内容区）表格溢出实测后，按黑白灰轻奢设计系统收敛 4 类缺陷，全部落在 P360 重构后的新路径上：
+
+- **侧栏蓝黑底修复（走查实锤最大观感缺陷）：** antd dark menu 根/子菜单容器默认 `#001529`/`#000c17` 蓝黑底压过纯黑侧栏 `#09090B`（Tailwind `bg-transparent` 与特异性规则均被 cssinjs 注入顺序压制——同 P349 层叠坑）。修复：`styles/antd-bridge.ts` Menu tokens 补 `darkSubMenuItemBg: 'transparent'`；[style.css](frontend/src/style.css) 兜底——根菜单高特异性、子菜单沿桥接层 `!important` 先例强制透明（drawer 移动端同覆盖）。复验 computed style：aside `#09090B`、子菜单透明，蓝黑色块全消。
+- **违规彩色 tag 中性化（P351 语言的遗漏点）：** 租户类型紫/蓝 → 中性灰；应用「受信 · 静默授权」紫 → 琥珀 warning（静默授权风险语义）、「开放注册」蓝 → 灰；模型「凭证已配置」蓝 → 灰、「管理员核对/网关上报」紫/蓝 → 灰。语义色仅留绿（启用/成功）、红（删除/失败）、琥珀（估算/受信）。
+- **表格横向溢出收敛（宽视口实测驱动）：** applications 1660→1320（溢出 447→0，11 列一屏）、invitations 1520→1330（187→0）、roles 1200→1048（1280 视口滚动 208→56）、organizations 1040→820（1280 视口归零）、groups 操作列 300→240（2px→0）；models 15 列宽表定位允许滚动，2120→1784 减量。角色操作列 160→170 修按钮折行。全部压缩列补 `ellipsis`。
+- **减红降噪：** 权限目录操作列 danger 描边实体按钮（整列红框噪音）→ 红字链接（danger 语义保留在字色+确认弹窗）；租户/模型「停用」去掉 danger 红改墨色（停用非删除级危险），「删除」保留红——每行至多一个红动作。
+- **交互细节：** 角色页/邀请页租户筛选 `ref('')` → `ref<string | undefined>(undefined)`（空串被 antd Select 当已选值，placeholder「全部租户」从不显示）；审计页「符合条件 N 条」蓝字与 5 处 slate 硬编码 → `--color-text-*` token（AdminFilterField/AdminSearchField/App.vue 外观面板/页脚/AdminFilterPanel 同族）；4 处 `text-[10px]` 下拉箭头归整 11px（设计系统 Overline 刻度）。
+- **发现并保留：** 无新增裸 hex、无重阴影、无 emoji 滥用；改动全部落在 P360 重构后的 `src/views`、`src/styles`、`src/layout`、`src/components` 新路径上。
+- **验证：** `vue-tsc --noEmit` exit 0（全量非增量）；`vite build` exit 0（9.5s）；宿主机 dev 5180（proxy 指向容器 8002）浏览器六页复验——侧栏纯黑、租户灰 tag、应用琥珀 tag+11 列一屏、邀请「全部租户」占位、角色操作列单行、权限红字链接，全部 PASS；控制台零 Vue 告警。**未运行：** 深色主题复验（改动均为 token/结构层，P350 已验暗色链路）、375 窄屏复跑（未动布局与壳层）。
+- **收尾补漏（旧目录清理后的全站复查）：** P360 重构使 `views/**` 成为唯一本体，上轮基于「views 为零引用旧副本」的豁免判断失效，实锤 4 处漏网违规色并全部中性化——应用角色页（租户模式）成员角色名 `blue`+「用户组」`purple`→灰、用户页会话类型 `purple/blue`→灰（动态绑定三元，上轮字面量扫描模式未覆盖）、OIDC consent 页 scope `blue`→灰、集成页（死路由保留源码）方案 A/B `purple`→灰+选中图标 `text-violet-600`→`var(--color-brand)`。复查 grep（`purple|violet|geekblue|blue` 字面量+动态绑定）全站零命中；App.vue 历史紫 `#5B5BD6` 判断逻辑属豁免。vue-tsc + 构建复跑通过（12.2s）。
+
+## 2026-10-27 IAM P361 — 产品缺陷全量审查（G01–G15 待办入表）
+
+资深产品视角对 IAM 全量审查：前端 18 路由 + 后端端点盘点、认证能力有无清单（MFA/CAPTCHA/SAML·LDAP·SCIM/注销/短信/自助改密/个人中心/通知/Webhook 全无实查）、会话/审计/模型/i18n/帮助专项，与 PRD 交叉验证。零代码/零 API/零迁移，仅更新 `docs/项目总览与进度.md`（新增 G01–G15 任务行 + P361 轮次行 + 速览「下一步」同步 + 校正叙述层目录重构轮次标注为 P360，原叙述误标 P359、速览表行原已正确）。
+
+- **实锤 2 处 PRD↔实现定义矛盾（G01，待用户裁决）：** ①PRD §3「审计人员」只读角色在绿场四级写死（L1–L4）后无处授予——审计端点实挂 L2 管理角色（`backend/app/api/v1/admin/audit.py` ensure_roles([L2_ROLE_KEY])，`iam.audit.read` 仅存目录码）；②IAM-USER-003（P0）承诺「邮箱或手机号重置」，实现仅邮箱（`backend/app/models/identity.py` phone_number 有字段无短信设施）。
+- **同日裁决（G01②）：** 用户确认不接手机号短信，密码重置仅走邮箱——PRD IAM-USER-003、§4.2「邮箱或短信验证」与账号规则行已改为邮箱口径（手机号字段保留为后续能力；纯文档修订，无代码改动）；G01①（「审计人员」只读角色）仍待裁决。
+- **运营必然事故链（G02，最高性价比修复）：** 登录态无自助改密 + 管理员侧无重置密码端点（`admin/users.py` 仅列表/创建/状态）——SMTP 故障时忘记密码用户无任何救济。
+- **其余缺口（详见进度文档第 4 节 G 行）：** 会话盲退（RefreshSession 无设备/IP/最后活动，G06）、批量操作未实现（IAM-USER-007 P1，G07）、审计无导出无告警（G08）、模型费用无币种/失败无原因/账本无归档（G09）、PRD §12 指标未落地（G10）、无 Webhook 事件订阅（G11）、注册无 approval 审批态（G12）、L1 无 MFA（G03）、账号注销/数据导出缺失（G04）、绿场后 A04 未重验（G05）、存量短密码无升级路径（G13）、i18n 全无（G14）、无帮助/错误码入口（G15）。
+- **不重复建行：** DeerFlow E2E 未闭环由 B01–B05/C01–C03 跟踪；SDK 框架插件化与接入向导由 F02 跟踪；MFA 全量/ABAC/资源实例授权/SAML·LDAP·SCIM 由 F01 与 PRD §2.2 跟踪。
+- **未运行：** 后端测试、vue-tsc、Vite 构建（纯审查+文档轮，无代码改动）。
+
+## 2026-10-27 IAM P360 — 前端目录标准化重构（用户裁定按项目级目录规划）
+
+纯目录重构，零逻辑/零 UI/零 API 变化，**后端零改动**（核查结论：backend/app 已符合 FastAPI 项目级标准布局 app/api/v1 + core + db + models + schemas + services + migrations + tests，无需调整）。迁移映射：`frontend/src/features/**` → `views/**`（全部页面模块，含两个 workspace 的 components/tabs 子结构）；`app/auth/AuthEntry.vue` → `views/auth/`；`app/router.ts` → `router/index.ts`；`app/navigation.ts` → `router/navigation.ts`；`app/featureLoaders.ts` → `router/loaders.ts`；`app/App.vue` → `src/App.vue`（根组件提到 src 根）；`app/components/AppSidebar.vue、AppBreadcrumb.vue` → `src/layout/`；`shared/services/` → `src/api/`（api.ts 改名 index.ts，import 写 `@/api`）；`shared/utils/` → `src/utils/`；`shared/theme.ts` → `styles/theme.ts`；`shared/ui/index.ts` → `components/index.ts`（barrel 改指 ./）；`app/ui/antd.ts、registerManagementUi.ts、app/icons.ts` → `src/plugins/`；删除空目录 app、shared、services。`vite.config.ts` + `tsconfig.json` 配置 `@` → `src` 路径别名，约 50 个文件导入改写为 `@/`（views 模块内部相对引用保留）。
+
+- **验证（全部通过）：** 宿主机 `node node_modules\vue-tsc\bin\vue-tsc.js -b` exit 0；宿主机 `node node_modules\vite\bin\vite.js build` exit 0（约 9.3s；ant-design-vue / vue-vendor chunk 拆包不变，仅存量 antd chunk 体积警告）。
+- **残留复查：** grep 旧路径模式（`shared/services|shared/utils|shared/theme|shared/ui|app/icons|app/navigation|app/ui|app/auth|app/App|app/router|features/` 等）frontend/src 下全部零命中。
+- **浏览器冒烟：** dev 容器 5175 真实登录 admin——登录页渲染 → 登录进 /overview → 用户/角色/应用工作台三页 → 深链刷新守卫，全 PASS；全程无 Vue warning（仅刷新时 1 条健康轮询 ERR_ABORTED，可忽略）；零写操作。
+- **未运行：** 后端隔离测试套件（零后端改动，未跑）。
+
+## 2026-10-27 IAM P359 — 两个工作台双栏各自滚动、贴底对齐（用户截图反馈）
+
+用户要求应用/组织工作台「左右两边各自滚动，内容都到底部」。改动：两工作台 section 桌面档（lg+）固定高度 `calc(100vh-156px)` + `min-h-[380px]` 保底；页头 shrink-0；分栏区 `flex-1 min-h-0`；左树与右内容栏 `lg:h-full lg:overflow-y-auto` 各自内滚（窄屏保持流式堆叠不变）。高度经两轮浏览器实测校准（初值 252px 底部留白 95px，按 section/footer 实测差调整为 156px）。终验：content 溢出 0（仅 dpr 1.5 亚像素 1px 舍入）、footer 距内容区底 23.3px≈24、左右栏底边完全对齐（779px）、零 Vue 告警。
+
+## 2026-10-27 IAM P358 — 资源感知增强（图标 / 编码前缀自动化 / 描述字段）
+
+用户要求：按钮/菜单数据都要有图标方便感知；新增资源时编码自动带上上级 code（如 DeerFlow 应用新建第一个节点即 `deerflow.` 前缀，后面自己输入）；父级菜单要显示出来；多加描述字段；注意审美。
+
+- **受保护备份：** `backups/pre-0003-resource-description-20261027-173938.sql`（216KB）+ `.sha256`（SHA256 11C9E656…45954）。
+- **后端：** 迁移 `0003_resource_description`（application_resources 加 `description` String(500) 可空列）；模型/schemas（Create/Update 带 trim+空转 None）/CRUD 序列化与 `my-resources` 下发节点均补 description。**新坑：alembic revision id 全长必须 ≤32**（`alembic_version.version_num` 为 varchar(32)，超长事务回滚；首版 `0003_application_resource_description` 38 字符已中招，事务性 DDL 保证无残留后缩短重跑）。
+- **前端：** 新共享组件 [ResourceIcon.vue](frontend/src/features/application-workspace/components/ResourceIcon.vue)——按钮固定方框、数据规则固定漏斗、菜单按 icon 名解析（24 个黑白灰语义线性图标映射，未命中回落应用图标），资源树与授权弹窗节点行首统一展示；资源节点弹窗：图标字段升级为选择器网格（选中石墨黑底白图标、再点取消）、「描述」textarea（≤500）、编码输入框前置只读前缀块（`#addonBefore`）——新增节点前缀自动跟随父级完整 code，顶级用应用命名空间（如 `deerflow.`），用户只输入尾段，编辑按「父级 code.尾段」拆分回显；树节点 hover 提示描述与路由。
+- **修复 2 缺陷（走查实锤）：** ①`#addon-before` kebab-case 槽名不渲染 addon（antd-vue 槽名 camelCase，DOM 无 .ant-input-group-addon）→ 改 `#addonBefore`；②选中格 `text-white` 未生效致黑底黑图标 → 选中态补内联 `style color:#fff` 兜底 currentColor 链路。
+- **搜索模糊化（用户追加）：** 资源树与授权弹窗搜索升级为模糊匹配——空格分隔多词 AND，命中字段扩展至名称/编码/描述；共用 [resourceSearch.ts](frontend/src/features/application-workspace/components/resourceSearch.ts) `matchResource`，命中节点仍保留祖先链。
+- **弹窗形态按用户参考图返工：** ①图标字段弃用系统图标选择器网格，改回普通输入框自由配置（icon 存任意标识，antd 名命中映射则树节点渲染对应线性图标，未命中回落默认；ResourceIcon 删 OPTIONS 导出仅留解析映射）；②父级菜单字段仅在应用已有菜单节点时显示（创建第一个节点必为菜单，字段隐藏）；③编码前缀从外挂 addon 块改框内置灰（`#prefix` + muted mono），贴合「父菜单编码置灰显示、后面才可编辑」。走查三点全过（TreeSelect 显示、框内灰字前缀 `deerflow.`、图标输入框），零 Vue 告警。
+- **按钮图标与路径化编码（用户截图追加）：** 按钮节点图标由空心方框 BorderOutlined（用户裁定丑）换 ControlOutlined 调节滑块；树节点（资源 Tab + 授权弹窗）灰色编码改**路径化显示**——`buildResourcePathCodes` 从根逐级拼接（自身 code 已含父路径则原样，否则父路径+`.`+自身，兼容历史散码；带防环访问标记），如 `deel` → `deel.123` → `deel.123.12311`，上级/上上级编码始终可见；编码区 `max-w-[100px]` 截断 + 完整路径 tooltip。走查三项全过（滑块图标 DOM 确认、三级路径逐级显示、84px 未触发截断），零告警。
+- **父级菜单可选框修复（用户截图实锤）：** 新建/编辑弹窗「父级菜单」label 与 help 之间空白——**TreeSelect 组件从未注册**（P347 a-transfer、P343 Tree 同款问题；此前走查误把未知元素 DOM 当已渲染），补注册后为带边框可选框，下拉含「顶级菜单」+已有菜单树可展开；「第一个菜单无父级字段」逻辑沿用（应用无菜单节点时隐藏）。走查键盘展开下拉确认可选，零未知组件告警。**教训：未知组件渲染为 HTMLUnknownElement 视觉空白但 DOM 可查，走查勿以标签存在判渲染成功。**
+- **验证：** `test_application_resources` 10 项（含 description 持久化与下发断言）+ P356 合跑 14 OK；vue-tsc + 构建通过；浏览器三轮走查——前两轮实锤上述 2 缺陷（另：合成点击坐标漂移误存相邻图标为已知现象），修复后终验全绿：前缀块 `deerflow.` 显示、选中格黑底白图标、建删链路还原、零 Vue 告警。**待真实鼠标复核：** 图标点选精确性（合成点击漂移一格属测试环境现象）。
+
+## 2026-10-27 IAM P357 — 应用资源树（菜单/按钮/数据规则 + 角色授权 + 消费端下发）
+
+用户裁定菜单权限应为「面向应用的树形结构：一级/二级菜单配路由、图标、菜单编码、额外参数（JSON 存储），应用可拉取；菜单下挂按钮权限与数据权限；角色可分配菜单/按钮/数据权限」。经 AskUserQuestion 批准「授权迁移 + data_rule 占位实现」。P356 的权限码推导视图由显式资源树替代。
+
+- **受保护备份：** `backups/pre-0002-application-resources-20261027-170804.sql`（202KB）+ `.sha256`（SHA256 6C83C4A6…C821E）；`D:\backup` 被沙箱拒绝后落工作区 `backups/`。
+- **迁移：** `0002_application_resources`（down_revision=0001）——`application_resources`（application_id/parent_id 自引用 CASCADE、resource_type CheckConstraint menu|button|data_rule、code 应用内 Unique、path/icon/sort/extra JSON/status）+ `role_application_resources`（role_id+resource_id 复合主键双 CASCADE）；容器内 `alembic upgrade head` 成功，PG 隔离临时库全新建链至 0002 复验通过。extra 默认值用方言无关 `'{}'`（`'{}'::json` 会破坏 SQLite 隔离测试）。
+- **后端 7 端点：** 资源 CRUD×4（`has_application_admin_access` manage 门禁、按钮/数据规则必须挂菜单、编辑环形检测 409、删除有子 409 且显式清理授权行 + bump 持有者凭证、审计 `application_resource.*`）；角色资源 `GET/PUT /applications/{id}/roles/{role_id}/resources`（全量替换、自动补祖先、跨应用资源静默过滤、PUT 后 bump）；消费端 `GET /authorization/my-resources?client_id=`（有效角色并集复用 `list_effective_roles`，仅 active 节点，父停用子树上提，嵌套树下发）。
+- **前端：** 工作台第三 Tab 改名「资源权限」——MenuTab 重构为资源树管理（平铺组装树、搜索保祖先链、默认全展、hover 行内「加子级/编辑/删除」、节点弹窗：类型/父级 TreeSelect(仅菜单+排除自身后代)/编码/名称/路由/图标/排序/额外参数 JSON 校验/状态）；新增 `RoleResourceGrantModal`（checkable 树 + 搜索 + 已勾选计数，保存全量替换）；角色 Tab 操作列增「配置资源」（仅平台控制台挂载）。
+- **顺带修复：** 平台管理员全局应用列表（无 tenant_id 过滤）此前不返回 `can_manage`，致资源 Tab 管理按钮不渲染——L1 在 `has_application_admin_access` 恒过，`list_applications` 平台视图补 `can_manage/can_rotate_secret: true`。
+- **验证：** 新增 `tests/test_application_resources.py` 10 项隔离（层级校验/唯一码/环形/删除级联/补祖先/替换语义/跨应用过滤/直连树/组继承下发/停用上提/404），与 P356/P353 合跑 28 项全绿；vue-tsc + Vite 构建（宿主机 node 直跑）通过；API 两轮重启探活；浏览器两轮走查——第一轮发现 can_manage 契约缺陷（已修），第二轮全链路通过（建菜单→加子级按钮→编辑→配置资源勾选保存→回显→逐个删除还原，控制台零 Vue 告警）。**存量问题（与本次无关，P344 已记录同因）：** PG 全量套件 6 项失败（`test_admin_authorization`×4 mock 已不存在的 `evaluate_access`、`test_application_updates`×2 轮换 403）。**待人工复核：** 授权弹窗勾选计数在合成事件下显示不符（真实鼠标待复）；文档对接手册新增 §11 下发契约。
+
+## 2026-10-27 IAM P356 — 应用菜单权限（对齐蓝图 user-center-sys 资源视图）
+
+用户要求参考蓝图项目 `user-center-sys` 补「应用 → 菜单权限」。蓝图核心：资源四分类（menu/button/api/data_rule）+ 角色经 permissionIds 关联资源 + 树形勾选 + 后端下发资源供业务端过滤菜单。**落地取零迁移路径**：菜单码 = 业务权限码 + `resource_type=menu` + `requires_data_scope=false`（evaluate_access L138-141 对该组合直接放行，不触发数据范围强制），复用权限目录/角色挂码/审计全链路，不动 surface 枚举与迁移链。
+
+- **后端（1 处增量）：** 应用登记权限端点 `create_application_permission` 的 `requires_data_scope` 由硬编码 True 改为按资源类型推导——`menu`/`button` 类资源自动关闭数据范围强制；其余业务码（如 document）仍强制。目录/列表端点已返回 resource_type 等字段，零改动。
+- **前端：** 应用工作台新增第三个 Tab「菜单权限」（新组件 `application-workspace/tabs/MenuTab.vue`）——按 code 点分段推导层级树（`deerflow.menu.project.list` 挂在父级下，中间段为路径占位），节点显示菜单名称 + 停用 tag + hover 完整码；搜索按码/说明过滤并自动展开命中路径；「登记菜单权限」弹窗（L1 `iam.permission.manage` 同权限目录口径）校验命名空间前缀，resource_type/scope 固定 menu；空态引导登记。角色勾选菜单码走既有「角色」Tab 配置权限弹窗（RolePermission 通用授权），消费端业务系统按码判权过滤菜单（蓝图同构）。
+- **测试：** 新增 `tests/test_menu_permissions.py` 4 项隔离（menu/button 关闭数据范围强制、document 仍强制、命名空间校验 422），与 `test_entity_deletion` 合跑 **18 tests OK**；vue-tsc + Vite 构建（8.1s）通过；API 容器重启；浏览器走查 4/4（三 Tab 齐全、菜单 Tab 提示/登记按钮/空态/弹窗校验、权限编码 Tab 回归正常）。
+
+## 2026-10-27 IAM P355 — 用户组弹窗穿梭框化 + 高级管理菜单排版 + 工作台窄屏树限高（用户 5 图反馈）
+
+用户发 5 张截图裁定「样式丑陋」。逐一定位：①管理成员弹窗只有单个多选下拉、弹窗空荡；②分配角色弹窗选项平铺难读；③应用工作台「高级管理」下拉纯一行长文字无结构；④⑤窄屏工作台第一屏只见树卡、右侧内容在下方滚动区（白卡低对比观感「空白」；核对布局代码无缺陷，右卡实际渲染于树卡下方）。
+
+- **用户组关系弹窗穿梭框化（`GroupRelationModal.vue`）：** 单个 `a-select multiple` 升级为 `a-transfer`（对齐 P345 用户页「配置租户角色」交互）——左右双栏（318×352）+ 双向穿梭 + 独立搜索（标题/描述均匹配）+ 底部「已选 N 项；保存为全量替换」摘要；成员行「显示名（邮箱 · 状态）」、角色行「名称（key · 停用标记）」；沿用停用未分配角色禁勾入规则；弹窗 720→760px。复用已注册的 Transfer 运行时组件，PUT 契约零变化。
+- **高级管理菜单排版（`application-workspace/index.vue`）：** 三个菜单项从一行长文字（应用管理（回调 / 密钥轮换 / 信任））改为「图标 + 标题 + 灰色小字说明」两行结构（AppstoreOutlined/SafetyOutlined/FileSearchOutlined）。
+- **工作台窄屏树限高（应用/组织两处调用）：** 树卡窄屏 `max-h-80` 内部滚动（lg 及以上不限），树过长时不再把右侧内容顶出首屏。核对布局代码确认窄屏堆叠与右卡渲染本身无缺陷（P349 已实测），本次为观感优化。
+- **验证：** vue-tsc + Vite 构建（10.3s）通过；浏览器走查——管理成员/分配角色穿梭框双栏+搜索+摘要全过（取消无写入）、高级管理菜单三项图标+两行排版全过、桌面两工作台分栏正常。**未运行：** 窄屏实机复验（子代理视口固定 1059 无法调窄；限高为低风险样式改动，请用户窄屏复看）。
+
+## 2026-10-27 IAM P354 — 组织管理表格改树形（用户反馈）
+
+用户指出组织管理应为树形表格（原为平面列表 + 「上级组织」文字列，层级关系不直观）。改造：`OrganizationManagement.vue` 按 `parent_id` 将平面数据组装为 `children` 树（父行缺失的孤儿按顶层兜底），antd Table 原生树形渲染（子行缩进 + 展开箭头）；受控 `expandedRowKeys` 默认全展开、数据刷新后自动重展、用户可手动折叠；移除冗余「上级组织」列（层级由缩进表达），组织名称列 240→280。复用 AdminListPage 透传（`expanded-row-keys` / `expanded-rows-change` 走 `$attrs`）。验证：vue-tsc + 构建（11s）通过；浏览器走查——层级缩进正确（sss→刘少华）、折叠/展开正常、顶层无重复行、操作列（停用/删除）正常。
+
+## 2026-10-27 IAM P353 — 全站删除功能补齐（6 实体可删，4 类刻意不删）
+
+用户要求补齐删除功能；按数据模型约束与 IAM 惯例定删除矩阵。后端 6 个 DELETE 端点 + 前端 6 页入口 + 14 项隔离测试全绿。
+
+- **后端端点（复用各实体 `*.manage` 判权，均写审计 `*.delete`、行锁、与审计同事务）：** `DELETE /admin/tenants/{id}`（禁删 platform 引导租户 422；有模型用量账目 409；成员/角色/应用/邀请/组/组织/模型目录级联，审计 SET NULL 脱钩保留）、`DELETE /admin/applications/{id}`（应用管理门禁双查；用量 409；主题/OIDC 令牌级联，应用角色 SET NULL 退化为租户角色）、`DELETE /admin/roles/{id}`（禁删 platform.super_admin；被未兑换邀请引用 409；级联授权/绑定/组分配/数据范围，删前解除 `registration_role_id` 悬挂引用并 bump 持有者凭证）、`DELETE /admin/groups/{id}`（L2/L3 判权；级联成员/角色挂接，删前 bump 组内成员）、`DELETE /admin/organizations/{id}`（有子组织 409；成员挂接级联摘除，成员账号保留）、`DELETE /admin/models/{id}`（用量账目 409 提示改用停用）。
+- **刻意不删（用户原则「特定不能删除的就不要」）：** 用户（用量 RESTRICT + 审计链完整性，已有停用/锁定）、权限编码（目录设计即只读，停用保留授权）、邀请（已有撤销）、登录主题（属应用配置随应用级联）。
+- **前端入口（6 页，全部 danger 红字 + Modal 强确认列明级联范围 + 后端 409/422 文案透传）：** 租户/组织/模型操作列并排「删除」；角色页删除进「更多」菜单；用户组页顺带收敛操作列（直达 管理成员/分配角色 + 更多[编辑/停用/删除]）；应用页顺带收敛（直达 权限项/编辑 + 更多[轮换密钥/信任/停用/删除]）——两页原操作列 5-6 个动作超规范，借本次一并收敛。
+- **验证：** 新增 `tests/test_entity_deletion.py` 14 项隔离测试全绿（种子保护 422 ×2、用量/邀请/子组织 409 ×4、正常删除 ×5、404 ×1、悬挂引用清理 ×1、应用保留断言）；vue-tsc + Vite 生产构建（10.4s）通过；API 容器重启加载新路由（ready 200）；浏览器走查 6 页入口与确认弹窗全部符合预期、取消无写入，用户管理页确认无删除入口（符合矩阵）。已知现象：「更多」菜单在子代理合成事件下不收起（P349/P351 同，真实鼠标正常）。
+
+## 2026-10-27 IAM P352 — 修复表格 hover 时 fixed 操作列透明
+
+用户报告（附截图：审计页 hover 行「查看详情」列透出来源 IP 文字）。**根因：** 行悬浮背景用了半透明的 `--color-brand-subtle`（rgba），fixed 列是 sticky 定位无实体底色，hover 时横向滚动内容透出。**修复：** tokens.css 新增不透明行悬浮色 `--color-row-hover`（`color-mix(in srgb, var(--color-brand) 6%, var(--color-bg-elevated))`，暗色 8%；随 ColorPicker 覆盖联动），style.css 两处 hover 兜底规则与 antd-bridge `Table.rowHoverBg` 三处统一换用。验证：vue-tsc + 构建（8.4s）通过；浏览器复验（审计页滚动后 hover + 用户页 hover + 深色抽查）浅/深主题 fixed 列均为不透明悬浮色，无文字透叠。
+
+## 2026-10-27 IAM P351 — 全站列表页对齐工作台观感（用户基准图精修）
+
+用户发来组织/应用工作台截图为基准要求全站同质感。对比走查 9 页后定位 4 类差距，全部修复并复验通过。
+
+- **角色管理页操作列收敛（`RoleManagement.vue`）：** 6 个平铺动作（编辑/配置权限/资源授权/数据范围/复制/停用）收敛为「编辑 + 配置权限 + 更多」下拉（低频 4 项收纳，停用为 danger 项），照抄 P349 用户页模式（`onRowMenuClick` 分发）；无 `iam.role.manage` 权限时保留单独「停用/启用」链接。操作列 width 470→170——**fixed 列越窄，对中间列的滚动遮挡越小**，角色标识列不再被盖住。
+- **宽表列宽全面压缩（users/tenants/permissions/roles）：** 985→830 / 1025→860 / 1360→1020 / **1790→1200**（scroll.x 同步）——1059 半屏视口的裁切/遮挡观感大幅减轻，**1280+ 视口除角色表外全部不滚**；权限页超长 hint 精简为一句（「只读目录；编码不可编辑或删除，菜单显示不构成服务端授权。」）。
+- **彩色残留清理（黑白灰一致性）：** 审计操作 tag 蓝→**中性灰 mono tag**（结果列成功绿/拒绝红语义保留）；权限码 tag 蓝→灰 mono（RolesTab / ApplicationRoleManagement / RoleManagement「N 项」）；组织工作台「主组织」tag 蓝→灰。语义色（启用绿/停用红）为唯一点缀的原则下，**蓝色块只允许出现在 info 语义场景**。
+- **工具条 token 化（`AdminTableToolbar.vue`）：** slate 硬编码类（border-slate-200/70、bg-white/90、text-slate-500）→ `var(--color-border)` / `var(--color-bg-elevated)` / `var(--color-text-secondary)`，去 backdrop-blur；暗色覆盖样式保留。
+- **验证：** vue-tsc + Vite 生产构建（10.2s）通过；浏览器复验（1059 视口，零写操作）5 页全过——角色操作列 3 元素+菜单 4 项、用户/租户/权限关键列完整可见、审计 tag 中性灰 mono、无页面级横向滚动。**已知限制（记录不阻塞）：** 1059 视口下 8 列角色表（1200px）仍需表格内横滚（内容区 722px 物理极限，1280+ 不滚）；「更多」菜单在子代理合成事件下不因点击空白收起，为测试环境已知现象（P349 同），真实鼠标交互正常。
+
+## 2026-10-27 IAM P350 — 全站视觉改造：轻奢极简黑白灰（用户点名「页面丑陋」重造）
+
+用户裁定极光紫体系观感不佳，选定「轻奢极简黑白灰」方向（全站 + 重点页精修）。新语言：**zinc 纯中性灰阶 + 石墨黑品牌 + 纯黑侧栏 + 语义色作唯一点缀**；轻奢感来自大而柔的阴影、字阶与留白，不再依赖彩色渐变。
+
+- **Token 层换血（`tokens.css`）：** 中性 slate（蓝调）→ zinc 纯灰（canvas #FAFAFA / subtle #F4F4F5 / border #E4E4E7 / 文字 #18181B·#52525B·#A1A1AA）；侧栏 #0B1220（深蓝调）→ **纯黑 #09090B**，选中指示条从品牌色改**白色**；品牌 #5B5BD6 → **石墨黑 #18181B**；暗色块画布改 #0E0E10、**暗色下品牌翻转为近白 #FAFAFA**（黑上黑不可见）、brand-subtle 翻白 8%；阴影重调为「贴地 1px + 大而极柔环境影」双层结构；登录画布 #09090B。
+- **antd-bridge（`antd-bridge.ts`）：** fallback 全量同步 zinc；新增三个实测修正——① `colorLink: primary`（**antd 链接色默认跟 colorInfo 蓝而非主色**，不设则表格操作列/退出按钮全是蓝，实测踩坑）；② `colorLinkHover` 跟 brand-hover；③ `colorTextLightSolid` 暗色反转深色（**暗色主按钮翻浅底后白字白上白**，实测踩坑）；`Button.primaryShadow` 去掉 antd 默认 `0 2px 0` 硬投影；`readCssVar` 导出供 App.vue 复用。
+- **主色运行时（`App.vue`）：** 默认主色 #5B5BD6 → #18181B，**历史默认紫在 localStorage 读取时视为未设置**（防老存值拉回紫）；新增 `displayPrimary` computed——暗色内容区对**深色主色按 WCAG luma 亮度判断**（<80）统一回落暗色品牌近白（兼容用户浏览器实测存着的 #121112 历史自定义），亮色自定义尊重用户；antd 与图表共用此值。顶栏头像文字色 #ffffff → `var(--color-bg-elevated)`（暗色白底黑字）。
+- **壳层与页面：** AppSidebar「ID」logo 方块改白底黑字（侧栏恒黑，品牌色在黑底/暗色翻转下都会消失，改用 sider token 组合恒定反差）；style.css 登录光斑紫/蓝 → 极微白光、工具条 focus 紫硬编码 → token；图表（OverviewDashboardCharts）色板紫品红 → **墨色三级 + 蓝绿琥珀语义点缀**，画布文字/网格线/描边全部改读 CSS token（暗色下不再写死浅色值），模板 slate 类 → token 类。
+- **文案与布局精修：** 概览「怎么用这套权限体系」整卡降为 🧭 提示条；页头副标题去教程腔——用户/角色/权限/概览 4 页「第一步/第二步/第三步/主路径」波次文案改为职责陈述（教程感是「廉价感」来源之一）。
+- **默认值一致性：** AdminColorField、AuthEntry OIDC 兜底色、LoginThemeManagement 新主题默认（primary #18181B / 背景 #fafafa）全部对齐黑白灰。
+- **验证：** vue-tsc 通过；Vite 生产构建通过（11.1s）。浏览器走查两轮 + 终验一轮（5175 容器 dev，零写操作）：浅色概览/用户页——侧栏纯黑、logo 白底黑字、主按钮纯黑白字、操作列/退出墨色（全页无蓝色残留）、提示条/统计卡符合预期；深色主题——主按钮浅底深字可辨、操作列近白、卡片表格文字可读、切回浅色正常。**未运行：** 375 窄屏本轮未复跑（改动集中在 token/文案层，布局框架 P349 已验证）；主题热切换时 echarts 画布色不随 data-theme 即时重绘（下次数据刷新生效，记录为已知限制）；登录页（黑画布白卡）因走查会话已登录未截图验证，样式改动为纯 token 层。
+- **遗留：** 子代理报告「不刷新直接切主题有样式残留」疑为 HMR 环境特有，生产构建 ConfigProvider theme 为响应式 computed，P348 走查中主题切换正常，标注观察不阻塞。
+
+## 2026-10-27 IAM P349 — UI 检查待修清单 4 项全修复 + 375 顶栏溢出追加修复
+
+按优先级落实 P348 待修清单；复验中发现并追加修复第 5 项（顶栏 375 换行溢出）。全部通过浏览器复验。
+
+- **①用户表操作列收敛（`UserManagement.vue`）：** 6 个动作按钮（配置角色/分配组织/租户关系/会话/锁定/停用）收敛为「配置角色 + 会话」两直达按钮 +「更多」下拉（分配组织、租户关系、锁定|解锁、分隔线、停用|启用，按用户状态切显）；`onRowMenuClick` 统一分发到原有处理函数，业务逻辑零变化；操作列 width 490→170、表格 `scroll.x` 1320→1010（横向滚动压力消除）；`canManageUsers` 为 false 时整列显示「—」。复验：每行仅 3 元素，「更多」菜单 4 项与预期一致。
+- **②工作台窄屏堆叠（`application-workspace/index.vue` + `organization-workspace/index.vue`）：** 外层布局 `flex-col lg:flex-row`，左树 `w-full lg:w-64`——375 下树与内容上下堆叠（树 343px 全宽），桌面保持左右分栏。复验：两个工作台 375 下 `flexDirection=column` 正确。
+- **③极矮视口 fit 保底（`App.vue` fitTableBodies）：** 表格体保底高度 120→72 两处——高 <600 视口下原保底使内容区出现 ~31px 外层纵向滚动（P338 边界回归）。本轮未在极矮视口单独复测（沿用 P348 实测口径，机制不变仅降保底）。
+- **④半档间距归 4 倍数（8 处）：** AppBreadcrumb `py-1.5→py-1`；AdminPathGuide `gap-2.5→gap-2`、`mt-0.5→mt-1`；AppSidebar `gap-2.5→gap-2`；FeatureLoading `gap-1.5→gap-2`；application-workspace 高级管理按钮 `gap-1.5→gap-2`；OverviewPage `gap-1.5 px-2.5→gap-2 px-3`；OverviewStatCard `mt-0.5→mt-1`（integration 已下线源码跳过）。
+- **追加修复：顶栏 375 换行溢出（`App.vue` + `icons.ts`）。** 375 复验发现右侧 `a-space :size="10" wrap` 换行叠加到固定高 header（P311「顶栏偏挤」加重版）：去 `wrap`、size 10→8、加 `shrink-0`；「外观」按钮移动端只留齿轮图标（icons.ts 新增 `SettingOutlined` 自绘图标）、桌面保留文字。**层叠坑实测记录：** 首版用 Tailwind `hidden sm:inline` 隐藏文字，被 antd 未分层规则 `.ant-btn > span { display:inline-block }` 压过（未分层样式优先于任何 `@layer`，含 utilities）——改用已有 `isMobile`（≤650px）条件渲染，绕开层叠。
+- **过程插曲（自愈，非产品缺陷）：** 首轮浏览器复验时 5175 出现「Tailwind 全缺失」假象——根因是 icons.ts 一次错误的插入把 `CheckCircleFilled` 的 `defineComponent(` 头挤断，容器 dev server 模块图整体挂掉（入口链 icons.ts → App.vue → style.css 全断，只剩 antd cssinjs），修复语法后 page reload 自动恢复。
+- **验证：** vue-tsc 通过 + Vite 生产构建通过（宿主机 node 直跑，pnpm corepack 损坏绕开）；浏览器复验（5175 容器 dev，超管会话，零写操作，菜单只开不点）：375 下顶栏单行 `scrollWidth=375=innerWidth`、外观按钮纯齿轮图标且浮层正常弹出、用户表操作列 3 元素+菜单 4 项、两个工作台堆叠正确。**未运行：** 桌面视口回归走查（子代理不支持调窗；外观按钮桌面分支与原实现等价、工作台 `lg:` 断点为既有形态，风险低）；极矮视口（③）单独复测。
+
+## 2026-10-27 IAM P348 — 全项目 UI 检查（静态扫描 + 16 页浏览器走查 + 深浅主题 + 375 窄屏）+ 暗色主题修复
+
+对照 `docs/ui-design-system.md` 与 checklist 全量检查。**发现并修复 1 个高价值缺陷，4 项待修列入清单**。
+
+- **缺陷（已修复）：暗色主题 CSS 变量层从未生效。** `tokens.css` 暗色块选择器为 `html[data-theme="dark"]`，但应用把 `data-theme` 只写在 `<a-layout>`（App.vue 模板）上——选择器永不匹配。后果链：`antd-bridge.readCssVar` 从 documentElement 读变量 → 暗色时读到**浅色值** → 显式 token（colorBgLayout/Container/Border/Text）覆盖 `darkAlgorithm` 派生色 → 暗色模式实际靠 `style.css` 的 `.ant-layout[data-theme=dark]` 局部覆盖 + darkAlgorithm 残余撑起（「伪暗色」，实测 localStorage=dark 时 body 仍 #f7f8fa）。**修复：App.vue `watch(themeMode, immediate)` 同步 `data-theme` 到 `document.documentElement`**——tokens 暗色变量、antd-bridge 读值、style.css 选择器三层全通。复验：暗色 body #0e1118 / 表格 #151a24 / 文字 #e2e8f0，截图对比度良好、无浅色残留块；浅色回切正常；vue-tsc 通过。
+- **16 页动态走查（桌面 1059 视口）合规项：** 页面级横向溢出 16/16 为零（P338 成果保持）；每页可见 Primary 按钮 ≤1；feature 层无内联 hex 样式；表格空态/loading 齐全；控制台零 Vue 告警（仅健康探测 ERR_ABORTED 网络噪音）；危险操作有确认；`prefers-reduced-motion` 已处理。
+- **375 窄屏走查（用户配合调整窗口）：** 汉堡菜单按钮出现、抽屉导航菜单齐全可用；页面级无横向溢出（滚动收进表格）；760px 弹窗自适应 359px 无溢出；组织工作台/应用工作台可用但**布局未堆叠**（见待修 3）。
+- **待修清单（未动代码，按优先级）：** ①用户表操作列 6 个动作（规范 ≤3+「更多」收纳），连带 490px 操作列造成表格横向滚动压力与深色截图中的 fixed 列视觉错位观感；②应用/组织工作台左右布局在窄屏（<lg）未上下堆叠，375 下右侧内容区仅剩 87px；③极矮视口（高 <600px）下内容区出现 ~31px 外层纵向滚动（fit 公式保底 120px 与矮视口冲突，P338 边界回归）；④少量非 4 倍数间距刻度（AppBreadcrumb `py-1.5`、OverviewPage `px-2.5` 等 Tailwind 半档类）。
+- **静态扫描备注（记录不阻塞）：** App.vue 内 `primaryColor` 默认 `#5B5BD6` 应收敛进 tokens/bridge；style.css 登录/主题预览域残留少量裸 hex（登录域规范允许稍强表现，预览域 #151a22/#a0a8b5/#fafbff/#e6eaf0 待收敛）；侧栏图标为自绘 `createIcon`（icons.ts）而非规范写的 `@ant-design/icons-vue`——打包优化的既有架构决策（P339），标注偏离即可。
+- **验证：** 修复后容器内 `vue-tsc -b` 通过（本轮仅前端 2 文件：App.vue、此前的 registerManagementUi 归 P347）；浏览器走查即验证载体；全程零写操作（弹窗只开不存）。375 视口由用户手动调整配合。
+
+## 2026-10-27 IAM P347 — Wave 1–4 联合浏览器走查（零写操作）+ 2 缺陷修复
+
+浏览器代理走查 console 5175（vite dev 挂载本地源码，超管登录，全程只打开/查看/取消，未保存任何业务数据），覆盖四波全部验收点。**发现并修复 2 个缺陷，复验通过。**
+
+- **缺陷 1（P345 遗留）：`a-transfer` 未注册导致穿梭框不渲染。** 「配置租户角色」弹窗打开后仅渲染表单骨架，控制台 `Failed to resolve component: a-transfer`；`registerManagementUi.ts` 补注册 `Transfer`（与 P343 补注册 `Tree` 同类模式：vue-tsc 不检查运行时组件解析，必须浏览器走查兜底）。复验：双栏「可选角色/已配置角色」渲染、右栏按服务端 `in_group` 口径回填已绑定角色、左右栏搜索框齐备。
+- **缺陷 2（P346 遗留）：深链刷新被弹回工作台。** 平台模式刷新 `/applications` 被重定向 `/overview`——`initializeConsole` 平台分支用 `visibleNavigation`（侧栏口径）判定入口页，Wave 4 侧栏降级后三列表页不在其中。改用 `isPageReachable()`（可达性口径）。复验：`/applications`、`/roles`、`/permissions` 三个深链刷新后全部直达对应页面（应用管理 3 应用列表 / 角色管理 / 权限编码），侧栏保持降级。
+- **走查通过项（修复后全绿）：** ①侧栏终态——身份与组织 5 项（组织工作台置顶）、应用与权限仅应用工作台、新项目接入不可见、平台治理/审计验证默认折叠且点击展开正常（租户/主题/模型×2；模拟/审计）；②应用工作台——左树按租户分组（平台管理租户 DeerFlow/CRUD Demo、演示租户演示应用）、默认选中、三步主路径副标题、「高级管理」下拉三项、角色 Tab 挂码弹窗（67 码 36 勾选与 P343 一致）取消无写入、权限编码 Tab deerflow.* 目录 3 页、`/project-integration` 重定向工作台；③组织工作台——左树层级（sss→刘少华）、成员 Tab 新接口真实数据（主组织/成员状态/账号状态列）、用户组 Tab 空态引导「到用户组管理页创建」；④用户管理——配置角色 Transfer 弹窗（缺陷 1 修复后）取消无写入；⑤审计——「管理操作 240 条 / 登录与认证 110 条」两 Tab 切换，登录 Tab 首屏全部 `auth.login/logout/refresh`（服务端 `action_prefix` 过滤真实生效）；⑥Wave 4——深链三列表页直达、概览「管理接入应用」按钮、折叠组交互；⑦退出登录回落登录页。
+- **验证：** 修复后容器内 `vue-tsc -b` + Vite 生产构建通过；浏览器走查本身即本轮验证载体。375/768 窄屏沿用惯例留给用户。
+- **已知小瑕疵（不阻塞）：** Transfer 右栏多个同 key 不同应用的角色显示相同英文标识（如 app.member×2 属不同应用角色），保存按 role id 不受影响；后续可在 render 中附应用名区分。
+
+## 2026-10-27 IAM P346 — Wave 4 收口：散落列表页降级 + 工作台空态强化三步主路径
+
+按 `docs/glm-align-user-centent-prompt.md` §6 Wave 4 完成；仍不做 DeerFlow、不做接入、不做 Resource 新表。
+
+- **散落列表页降级（`App.vue`，选「降为高级入口」而非并入）：** **仅平台模式**把「应用管理 / 角色管理 / 权限编码」三项从侧栏下线（`PLATFORM_SIDEBAR_EXCLUDED`）；**租户模式刻意不动**——`/roles` 在租户侧渲染「应用角色与成员」融合页（`ApplicationRoleManagement`），是 L2/L3 的核心入口，降级会砍掉其工作流。可达性与侧栏可见性分离：新增 `isPageReachable()`（按 NAV_ITEMS 能力 any-of 判定），`setPage`/`syncRoutePage`/能力撤销 watch 三处门卫改用它——平台模式深链 `/applications`、概览页「管理接入应用」按钮仍可达，页面能力（回调/密钥轮换/克隆/全局启停）零损失；路由表与 `router.beforeEach` 守卫不变。
+- **工作台高级入口（`application-workspace/index.vue`）：** 页头新增「高级管理」下拉（应用管理=回调/密钥轮换/信任；角色高级管理=编辑/启停/克隆；权限编码目录=全局登记与启停），与空态「前往应用管理创建」按钮共用 `goAdvanced()`；SPA 内 `router.push`，能力守卫兜底。
+- **空态强化三步主路径（新共享组件 `components/AdminPathGuide.vue`）：** 编号步骤引导组件（`steps: readonly string[]` + title），应用工作台无应用空态（三步配权主路径 + 前往应用管理创建按钮）、未选应用空态，组织工作台无组织空态（三步组织管理主路径 + 前往组织管理创建按钮）、未选组织空态全部接入；文案与页头副标题同口径。
+- **验证：** `vue-tsc -b` 通过（首轮 4 个 TS4104 readonly 报错修复后 exit 0）；Vite 生产构建通过。本轮零后端改动，后端测试未运行。浏览器点验未运行；375/768 窄屏沿用惯例留给用户。
+- **刻意不做（Wave 4 边界）：** 把角色/权限列表整体并进工作台 Tab（工作台 Tab 保持日常最小面，高级能力走入口跳转）；组织管理列表页侧栏降级（提示词仅点名应用/角色/权限三类，组织列表是 Wave 2 工作台的建tree入口，保留）；members 邀请/用户/用户组入口不动。
+
+## 2026-10-27 IAM P345 — Wave 3：用户配角色 Transfer + 审计拆 Tab + 平台治理默认折叠
+
+按 `docs/glm-align-user-centent-prompt.md` §6 Wave 3 完成（蓝图只读参照 `user-center-sys` 的 distributionRole Transfer 交互与审计拆分）。
+
+- **用户配角色 Transfer 打磨（`UserManagement.vue`）：** 「配置租户角色」弹窗的多选下拉升级为 `a-transfer`（对齐蓝图 distributionRole）：左「可选角色」/右「已配置角色」双栏 + 名称/英文标识搜索 + 列表项展示 `roleKey`（英文标识 + 停用标记）；停用且未绑定的角色禁止新勾入（`item.disabled`），已绑定的停用角色保留可移除，避免保存时无意清掉历史绑定；弹窗加宽 760px。后端 `PUT /admin/users/{id}/role-bindings` 契约不变（整表替换直接绑定）。
+- **审计拆 Tab（`AuditLogPage.vue` + 后端最小增量）：** 页面顶部新增「管理操作 / 登录与认证」两 Tab；登录 Tab 走 `action_prefix=auth.` 服务端前缀过滤（分页与总数真实，而非前端截断），操作 Tab 全量。后端 `GET /admin/audit/search` 新增 `action_prefix` 参数（`_query_audit_events` 共用；LIKE 通配符 `%`/`_` 按字面转义防误扩大结果集；旧 `/audit` 端点不变）；空态/副标题文案按类别区分。
+- **平台治理默认折叠（`AppSidebar.vue`）：** `platform`（租户/主题/模型治理/用量）与 `ops`（鉴权模拟/审计）两组默认折叠——即「租户 + 登录主题弱化聚合」的落地方式：**刻意不建蓝图式 IAM 设置聚合页**（不做聚合页，仅降低导航存在感），租户管理与登录主题保持独立页面；当前路由所在组自动展开（深链/刷新菜单可用），点开折叠组后行为不变。
+- **测试：** `tests/test_audit_query.py` 夹具补 `auth.login`/`auth.logout` 事件，新增 `action_prefix` 聚合与通配符字面化用例；测试 helper 显式传 `action_prefix=None`（直调 handler 时 FastAPI `Query` 默认值非 `None`，与 P344 同类教训）。
+- **验证：** `vue-tsc -b` 通过（exit 0）；Vite 生产构建通过；`python -m unittest tests.test_audit_query tests.test_organization_workspace` 10 项 OK（api 容器）。浏览器点验未运行；375/768 窄屏沿用惯例留给用户。
+- **刻意不做（Wave 3 边界）：** IAM 设置聚合页；蓝图 B/C/G 三端与 portal；组角色只读透传 UI（组继承来源已在应用角色页可见）；审计登录 Tab 不做独立登录流水表（`auth.*` 事件即登录/登出/刷新/重置链路）。
+
+## 2026-10-27 IAM P344 — Wave 2：组织工作台（左组织树 + 成员/用户组 Tab）
+
+按 `docs/glm-align-user-centent-prompt.md` §6 Wave 2 完成（蓝图只读参照 `user-center-sys/src/views/department` 的「左树 + 成员/组 Tab」信息架构）；组织仍挂租户，不做组织改挂应用。
+
+- **后端最小增量（`backend/app/api/v1/admin/organizations.py`，同挂 `/admin` 与 `/tenant-admin`）：** ① `GET /organizations` 平铺列表响应补 `parent_id` 字段（组织工作台前端拼层级树必需，旧字段 `parent_name` 保留向后兼容）；② 新增 `GET /organizations/{id}/members`——列出直接挂接该组织的成员（`require_organization_admin_access` 逐租户判权，不递归子组织），支持 `q` 关键词搜索（姓名/邮箱），响应含 `is_primary`、成员状态与账号状态，上限 1000 行。
+- **新增组织工作台 `features/organization-workspace/`（文件夹 + index 组织）：** `index.vue`（页头副标题写明组织上下文三步：左树选组织 →「成员」看挂接成员 →「用户组」管组关系；按可读租户并发拉取组织目录合并，默认选中首个组织，未选组织时 AdminEmpty 中文空态「请先选择左侧组织」，选中卡片标题带停用/租户标记 + a-tabs 两 Tab）、`components/OrgTree.vue`（租户分组节点不可选 + `parent_id` 层级拼树，父节点被搜索过滤时子节点上浮防丢节点，全部默认展开，名称/标识搜索 + 停用标记）、`tabs/MembersTab.vue`（只读成员表：主组织/成员状态/账号状态标签 + `q` 搜索 + 刷新；空态引导到「用户管理」调整归属）、`tabs/GroupsTab.vue`（用户组挂租户不挂组织，按所选组织所属租户整租展示；「管理成员/分配角色」复用共享弹窗；新建/编辑/启停仍留在用户组管理页并在 hint 说明）。
+- **共享组件抽取（禁止重复造轮子）：** 新增 `components/GroupRelationModal.vue` 统一组员/组角色批量编辑（打开时拉取目录、服务端 `in_group`/`assigned` 标记回填已选项、PUT 全量替换保存、`canSave=false` 只读）；`GroupManagement.vue` 改为复用（删除内置 relation 弹窗实现与死 CSS，行为保持一致），组织工作台用户组 Tab 同样复用。
+- **导航与接线：** `navigation.ts` 新增 `organization_workspace`（`/organization-workspace`，「身份与组织」组内最前，requiredPermissions=any-of `iam.organization.read`/`iam.group.read`，不新增未入库码）；原「应用组织」列表入口更名为「组织管理」（label 与 PAGE_INFO 标题）；`featureLoaders.ts`/`App.vue` 挂载工作台（平台模式所有租户 `can_read_organizations=true`，租户模式按能力位过滤，apiPrefix 双端）。路由经 `PAGE_PATHS` 自动注册，无新深链重定向需求。
+- **测试：** 新增 `backend/tests/test_organization_workspace.py`（隔离 SQLite 直调 handler 5 项：列表 `parent_id`、按组织列成员含 `is_primary`、`q` 搜索过滤、组织不存在 404、越权租户 403；夹具教训——`TenantMembership` 须显式 id 避免 flush 顺序耦合、直调 handler 时 FastAPI `Query` 默认值非 `None` 须显式传 `q=None`）。
+- **验证：** 容器内 `vue-tsc -b` 通过（exit 0）；Vite 生产构建通过（`organization-workspace` 独立 chunk 11.41kB）；`python -m unittest tests.test_organization_workspace` 5 项 OK（api 容器）。全量隔离套件 `run_isolated_postgres_suite.py` 195 项中 6 项 ERROR（`test_admin_authorization` 4 项 + `test_application_updates` 2 项）——**均为 P340 绿场重构后的过期 mock 遗留**（mock `admin_authorization.evaluate_access` 已不存在 / applications 判权入口已改 `require_application_admin_access`），失败发生在 mock 装配阶段，与本次 organizations 改动无关；**遗留修复待用户指令**。
+- **刻意不做（Wave 2 边界）：** 组织改挂应用；子组织成员递归聚合；用户组新建/编辑/启停搬入工作台；成员组织归属编辑（留在「用户管理」/「成员与数据范围」）；蓝图字段配置类能力。
+- **未运行/未做：** 真实登录浏览器走查（本轮以 vue-tsc + 生产构建 + 后端隔离测试为证据，dev 5175/5180 点验待用户或下轮执行）；Wave 3–4 等待指令。
+
+## 2026-10-27 IAM P343 — Wave 1：应用工作台对齐 user-centent（下线新项目接入）
+
+按 `docs/glm-align-user-centent-prompt.md`（蓝图只读参照 `user-centent/apps/user-center-sys` 的 appAndRoleManagement 信息架构）完成 Wave 1，主路径写死为「权限编码 → 角色挂码 → 用户多角色」。
+
+- **新增应用工作台 `features/application-workspace/`（文件夹 + index 组织）：** `index.vue`（页头三步主路径副标题 + 左树 + 右侧应用卡片内「角色 / 权限编码」两 Tab，未选应用时 AdminEmpty 中文空态「请先选择左侧应用」，默认自动选中首个应用）、`components/AppTree.vue`（按租户分组的两级应用树 + 名称/Client ID 搜索 + 停用标记）、`tabs/RolesTab.vue`（平台模式 `/admin/roles` 按应用 scope 过滤 + `iam.role.manage` 判权；应用模式走 `/tenant-admin/applications/{id}/roles`，`can_manage` 判权；两者都可新建角色）、`tabs/PermissionsTab.vue`（复用权限面板）。
+- **共享组件抽取（禁止重复造轮子）：** `features/applications/ApplicationPermissionPanel.vue` 从抽屉抽出面板主体（列表/搜索/登记/启停），`ApplicationPermissionDrawer` 瘦身为壳；新增 `components/RolePermissionGrantModal.vue` 统一平台与应用角色的挂码编辑（目录+通用授权加载、影响预览、确认原子保存），`RoleManagement.vue` 已改为复用（删除其内置 grant 编辑实现，行为保持一致）。
+- **导航改造：** `navigation.ts` PageKey/PAGE_PATHS/NAV_ITEMS/PAGE_INFO 下线 `project_integration`，新增 `application_workspace`（`/application-workspace`，「应用与权限」组内最前，requiredPermissions=any-of `iam.application.read`/`iam.app_role.read`/`iam.role.read`，不新增未入库码）；`router.ts` 旧深链 `/project-integration` 重定向到应用工作台；`featureLoaders.ts` 移除接入页 loader（`features/integration/` 源码保留）；`App.vue` 挂载工作台（平台模式复用壳层应用字典）；`OverviewPage.vue` 能力卡与快捷按钮改指工作台；`icons.ts` 新增 `ApartmentOutlined`、删除不再使用的 `ApiOutlined`。
+- **全局 antd 注册：** `registerManagementUi.ts` 补注册 `Tree`（管理台首个 a-tree 用法，否则模板解析失败）。
+- **缺陷修复（首轮浏览器验收发现）：** `ApplicationPermissionPanel` 与 `RolePermissionGrantModal` 的 watch 补 `immediate: true`——抽屉 destroy-on-close / 工作台 Tab / `v-if` 弹窗在挂载时 `active/open` 已为 true，缺失 immediate 导致首次数据不加载（表现：权限编码表、挂码复选列表全空且不发请求）。
+- **后端阻塞修复（非功能改动）：** `backend/app/api/v1/tenant_admin.py` 首部误带 UTF-8 BOM（U+FEFF），compose bind-mount 下 uvicorn 导入报 SyntaxError、API 容器 unhealthy（`/api/v1/ready` 超时）；已剥离 BOM 并重启容器恢复 200。仅此一个文件受影响。
+- **验证：** `vue-tsc -b` 通过、Vite 生产构建通过（3820 modules，工作台独立 chunk 11.86kB）；浏览器两轮走查（本地 dev 5180，超管登录，全程零写操作）：第一轮 8 步 6 PASS/2 FAIL（上述两缺陷），修复后复测 5/5 PASS——应用树渲染+默认选中、工作台挂码弹窗 67 码加载 36 项勾选+预览出结果后取消、「权限编码」Tab 12 行 deerflow.* 码、应用管理「权限项」抽屉回归正常、角色管理同款弹窗回归正常、`/project-integration` 重定向生效。
+- **未运行/未做：** 后端 185 项隔离套件（本轮零后端代码改动，仅 BOM 修复）；Wave 2–4（组织工作台/审计拆 Tab/收口）等待指令；`features/integration/` 源码按约定保留未删；375/768 窄屏复测沿用惯例留给用户。
+
+## 2026-10-23 IAM P341 — 四级角色走查账号造数 + 浏览器四级走查 + capabilities 两处修复
+
+- **造数（`manage.py seed-walkthrough` + `seed_greenfield.seed_walkthrough_accounts`，幂等）：** demo 租户下补建演示应用 demo-app 与 L2/L4 模板角色、业务码 `demo.document.read`（surface=business + requires_data_scope=true）、L4 的 self 数据范围，创建三个走查账号并绑定：`l2-admin@demo.example.com`→app.admin、`l3-admin@demo.example.com`→tenant.org_admin、`l4-member@demo.example.com`→app.member（统一密码 `Walkthrough#2026`，仅本地开发验收用）。注：邮箱不可用 `.test` TLD（pydantic email-validator 拒绝保留域）。
+- **修复 1（L2 误判 no_access）：** `list_management_capabilities` 原用 `list_effective_roles(application_id=None)`——该语义只取租户/平台角色，L2 钉住应用的角色被整体排除，capabilities 空导致前端判 no_access。改为 `authorized_role_ids_statement` 取全量有效角色（直连 ∪ 活跃组，含应用角色）再按租户域/应用域分组。
+- **修复 2（L4 误入租户控制台）：** 纯业务角色的 membership 会产生 codes 全空的租户条目，前端 `tenants.length>0` 即判 tenant 模式。改为只在租户码或任一应用码非空时收录条目（并过滤空 applications）——L4 正确落 no_access（规格 §4.4）。
+- **浏览器四级走查（console 5175，全部通过）：** **L1** `admin@example.com` 平台模式 15 项菜单全可见（租户/应用/用户/邀请/组/组织/角色/权限目录/模拟/模型×2/主题/审计等）；**L3** 租户模式仅 5 项（组织/成员与数据范围/用户组/应用管理/应用角色与成员），无任何平台级菜单，应用角色页正确显示「当前只有读取权限」降级提示并能读到 L2/L4 模板（含业务码列）；**L2** 租户模式仅 2 项（应用管理/应用角色与成员），应用表有权限项/编辑/**轮换密钥**/停用全操作，无组织/成员/组菜单（L2/L3 互斥前端体现）；**L4** no_access——侧栏空菜单、顶栏「访问受限」+ 明确提示文案，深链 `/permissions` 被 App 壳纠正回受限页，未泄露任何管理内容。
+- **API 判权证据（真实环境）：** L4 `GET /admin/permissions` 403；L3 `GET /admin/tenants` 403（无 iam.tenant.read）、`GET /admin/applications?tenant_id=` 200（有 application.read）；L3 `POST /applications/{id}/rotate-secret` **403** vs L2 **200**（互斥判权）；L4 `check(demo.document.read, include_data_scope=false)`（带 application_id）→ **allowed=true 且服务端强制返回 data_scope**（owner 约束绑 L4 sub + 租户匹配，绿场 breaking 核心行为）；不带 application_id 时 `no_matching_grant`（应用角色必须钉上下文，符合钉死语义）。
+- **验证：** 隔离 PostgreSQL 随机库全量套件 **185 tests OK（18.2s，EXITCODE 0）**——两处 capabilities 修复后无回归。注：在 seed 一次性容器内跑套件须补齐 `-e JWT_SECRET -e OIDC_ISSUER` 并挂 `iam-oidc-signing-data` 卷，否则 14/6 个 ERROR 均为环境缺失（签名密钥/密钥配置），非代码回归。`vue-tsc` 无前端改动无需重跑（本轮仅改后端 services 与 manage/seed）。
+
+## 2026-10-23 IAM P340 — 绿场重建：增强型分层 RBAC + 四级角色（方案 A 规格全量落地）
+
+依据 `role-plan-a-tech-pack/role-iam-plan-a-greenfield.md`（方案 A 绿场重建终稿）全栈深度改造。
+
+- **模型层：** `roles.kind`（platform/tenant/application，CheckConstraint + 按应用推导默认值）、`permissions.surface`（management/business）、`permissions.requires_data_scope`（默认 true，server_default）；config 新增 `ALLOW_BOOTSTRAP_EMAIL_BYPASS`（默认 **false**，仅灾备破窗且审计带 `break_glass=true`）。
+- **全站唯一有效角色：** 新增 `services/effective_roles.py`——直连绑定 ∪ 活跃用户组角色，`list_effective_roles`/`user_is_platform_admin`；evaluate_access、OIDC 入场、`/auth/me/capabilities`、管理面判权共用同一实现。L1 `platform.super_admin` 覆盖 27 个 `iam.*` 管理码但默认无业务码；L2 `app.admin` 与 L3 `tenant.org_admin` 互不自动包含。
+- **逐路由按码判权：** 新增 `services/rbac_guards.py`（`PLATFORM_MANAGEMENT_CODES`/`user_has_management_code`/`ensure_management_permission`/`list_management_capabilities`/`bump_membership_versions`）；admin 路由全部移除路由级 `platform_admin` 一刀切，逐路由挂 `iam.*` 码（tenant/overview/users/groups/invitations/audit/models/themes/model_usage/applications/access_control/organizations）；`admin/__init__.py` 只保留 `Depends(current_user)`。
+- **解绑与版本失效：** 新增 `DELETE /admin/role-bindings`（404 若无绑定）；bind/unbind、组成员/组角色替换、角色停用（`platform.super_admin` 禁停用 422）、权限集替换、数据范围替换、权限停用均 bump 受影响 `membership.auth_version`。
+- **L3 任命 L2 独立码：** `iam.app_role.assign` 仅可绑 key=`app.admin`；`tenant_admin_application_roles.py` 双层判权（manage→任意应用角色，assign→仅 app.admin）；用户组管理双端挂载（`/admin/groups` + `/tenant-admin/groups`）。
+- **evaluate_access 强制 data_scope：** `requires_data_scope=true` 的业务码忽略 `include_data_scope=false`，缺数据范围策略拒绝（`data_scope_policy_missing`）；管理码不带 scope 直接放行。
+- **能力接口：** 新增 `GET /auth/me/capabilities`（platform_admin/platform_codes/tenants[].codes/applications[].codes）；OIDC 入场改用有效角色（含组继承）。
+- **前端：** `shared/services/capabilities.ts`（缓存/any-of 判定）；`navigation.ts` 全部菜单项标 `requiredPermissions`；`App.vue` consoleMode 判定改为单次 capabilities 拉取（platform/tenant/no_access），替换旧 overview 探测 + check-batch N+1；`router.ts` 深链守卫（无权限重定向首个可见页）；`GroupManagement.vue` 支持 `apiPrefix` 双端挂载。
+- **绿场迁移与种子：** 旧 32 个迁移（0001~0032）归档至 `migrations/archive_pre_greenfield/`；单头迁移 `0001_greenfield_iam.py`（31 表全 schema，空库升级验证通过）；新增 `app/db/seed_greenfield.py`（27 管理码 + platform 租户 + L1 + 引导超管 + 可选 demo 租户/L2-L4 模板，全幂等）、`manage.py seed-greenfield`、compose `seed-greenfield` 服务（profile [seed]）、一键重置脚本 `scripts/greenfield-reset.ps1/.sh`（down -v → migrate → seed → up，UTF-8 BOM + LF）。
+- **SDK 2.0.0（breaking）：** 双语言同步——业务码强制 data_scope 时 SDK 接受并校验（不再 502），subject 校验可选化（未传时跳过 owner 等值断言，租户/字段白名单仍强制）；`pyproject.toml`/`package.json` 版本 2.0.0；两份 README 补绿场 breaking 说明；TS 测试旧契约用例改写为绿场语义（新增 denied 决策带 scope 仍拒绝）。
+- **测试：** 新增 `tests/greenfield_fixture.py`（分步 flush 规避无 relationship 裸 FK 的 UoW 字母序陷阱）与 `tests/test_greenfield_rbac.py`（G1 破窗默认关、L1 全码、L2/L3 互斥、unbind/bind bump、业务码强制 scope、组继承）；修复 12 个旧夹具适配与 2 个环境变量污染用例；删除 5 个旧迁移链专属测试。
+- **验证：** 隔离 PostgreSQL 随机库全量套件 **185 tests OK（14.6s）**；Python SDK 核心套件 51 tests OK（authorization 15 + permission_sync 9 + deerflow 等；fastapi/oidc/token_vault 11 例因宿主机可选依赖未装跳过，与本次无关）；TS SDK `tsc --noEmit` 通过 + 15 tests pass；修复 `test_iam_permission_sync` 存量断言（catalog_namespace 自动推导）。**容器绿场重置（`scripts/greenfield-reset.ps1`）端到端通过：** down -v 删旧卷与 OIDC 密钥卷 → 单头迁移 0001_greenfield_iam → 种子（27 管理码 + 引导超管 `admin@example.com` 绑 L1 + demo 租户）→ api/console 启动三容器 healthy、`/api/v1/ready` 200（API 端口 8002/console 5175）；console 镜像内 `vue-tsc -b` + Vite 生产 build 顺带通过（3813 modules）；登录 + `GET /auth/me/capabilities` 返回 `platform_admin=true` + 27 码；逐路由挂码后 `GET /admin/permissions`（27 条，surface=management）与 `GET /admin/tenants`（platform+demo）L1 真实 200。首次跑曾因 `docker compose run` 附加参数**整体替换**服务 command 失败（entrypoint 收到裸 `--demo-tenant`），脚本已改为显式写全 `python manage.py seed-greenfield` 再追加开关。
+
+## 2026-10-23 IAM P339 — 组件目录统一 + AdminListPage 整页封装
+
+- **组件迁移：** `shared/components` 7 个通用组件（AdminPageHeader/AdminTableToolbar/AdminSearchField/AdminEmpty/AdminColorField/FeatureLoading/FeatureLoadError）整体迁至 `src/components`，20 个文件 53 处 import 路径批量更新；`AdminSearchField` 的 icons 相对路径修正为 `../app/icons`；空目录已删。
+- **新增 AdminListPage（整页组件）：** 页头（eyebrow/title/subtitle + header-extra 插槽）+ 数据卡片（可选工具条 hint/控件/按钮插槽、errorText 错误提示、a-table、emoji 空态）一体；`card-top`/`card-bottom` 插槽承载页面特有内容（audit 筛选区与只读说明）；未声明的 a-table 属性经 `$attrs` 透传（如 `scroll-actions-on-mobile` class）；`@table-change` 转发分页事件。
+- **新增筛选面板组件（用户反馈筛选丑）：** `AdminFilterPanel`（浅灰圆角容器 + 最小列宽自适应网格 + 底部右侧操作按钮区带分隔线）+ `AdminFilterField`（标签固定控件上方）；面板内 select/date-picker 统一占满单元格，深色主题半透明叠加与标签提亮；audit 展开筛选区接入（placeholder 同步精简，删除旧 grid 样式与两个断点 media query）。
+- **图标与按钮细节（用户反馈对齐/图标丑）：** `SearchOutlined` path 重画为标准 lucide 形状（圆心 11,11 r=8 正圆 + 柄端精确落在圆边，原 path 圆偏左上且与柄断开）；audit 筛选开关按钮加 `flex items-center gap-2`——裸文本节点不触发 antd 的 `.anticon + span` 间距规则且 svg 基线对齐偏上，改 flex 后图标与文字垂直居中、间距均匀。
+- **9 个单表页接入：** users/roles/permissions/tenants/applications/organizations/groups/invitations/audit 模板收敛为 `AdminListPage` 声明式用法，页面只保留数据逻辑与弹窗；同步清理死 CSS（`.permission-error`/`.role-error`/`.invitation-error`/`.audit-error`/`.audit-toolbar-summary`/`.permission-toolbar`）。多表格工作台（ModelGovernance/LoginTheme/ApplicationRole/TenantAccess）与 Overview 保持原结构，仅迁移 import。
+- **验证：** 容器内 `vue-tsc -b` exit 0；浏览器走查 9 页全部渲染正常（页头/header-extra/工具条/bodyCell/空态）、内容区全部零滚动（双滚动条保持消除）；audit 展开筛选截图确认面板层次/标签对齐/操作按钮区成型，展开后 fit 收敛表格 body 至 219px 内建滚动、内容区零溢出；控制台仅剩 P335 已知 Menu inlineCollapsed 警告。
+- **未运行：** Vite 生产构建、后端测试、375/768 窄屏复测（沿用 P311 约定由用户复测）。
+
+## 2026-10-23 IAM P338 — 消除内容区与表格并存的双纵向滚动条
+
+- **方案：** 全部 16 个页面级表格保留 `scroll.y` 内建纵向滚动；`App.vue` 新增 `fitTableBodies()` 动态高度拟合——以内容区底边为基准反推每个 `.ant-table-body` 的 `maxHeight`（预留分页 + 页脚安全间距 112px，保底 120px），滚动位置无关；`MutationObserver(childList+subtree)` + 80ms 防抖捕捉内容变化（`.ant-layout-content` 为固定高度 flex 容器，ResizeObserver 不触发），窗口 resize 与路由切换（`syncRoutePage` → `refreshTableFit`）触发重算；估算偏差用收敛轮兜底（仍溢出则均摊扣除）。
+- **压缩固定高度（用户复测仍见双滚动条后二轮修正）：** audit 筛选表单默认折叠（开关行替代）；permissions 页删除与副标题重复的 info alert、副标题精简一行、namespace 绑定说明并入工具条 hint 并精简；roles 页长说明并入工具条 `:hint`；`AdminTableToolbar` 与表格间距 `mb-4`→`mb-3`（全局）；删除无引用死 CSS（style.css `.scope-note`、PermissionCatalog.vue `.permission-note`/`.permission-hint`）。
+- **验证：** 容器内 `vue-tsc -b` exit 0（三轮）；834×738 自动化视口实测 permissions/audit/roles/users/tenants 内容区全部零滚动（contentSH=contentCH=674）、滚动只发生在表格 body 内（permissions/roles 保底 120px，users/tenants 表格自适应收缩）；/permissions 截图确认右侧内容区滚动条消失、布局无破版。
+- **未运行：** Vite 生产构建、后端测试、375/768 窄屏复测（沿用 P311 约定由用户复测）。
+
+## 2026-10-23 IAM P337 — 全站表格统一使用 antd 内建滚动条
+
+- **盘点：** 19 个 `a-table` 实例逐一核对，18 个已配置 `scroll.x` 内建横向滚动（滚动条位于表格行区与分页之间、页面级零溢出）；唯一缺失为登录主题页「主题版本历史」表。
+- **补齐：** `LoginThemeManagement` 主题版本表补 `:scroll="{ x: 480 }"`；`style.css` 的 `.data-card .ant-table-wrapper` 外层 `overflow-x: auto` 保留作为未配置 scroll.x 时的安全网（配置后自动失效）。
+- **验证：** 浏览器实测 users/audit/roles/tenants/models 表格滚动区均为 `.ant-table-content` 且 `overflow-x: auto`，页面级无横滚；容器内 `vue-tsc -b` exit 0。
+- **未运行：** Vite 生产构建、后端测试。
+
+## 2026-10-23 IAM P336 — 顶栏溢出修复 + 全局细节拉齐（表头/页脚/加载屏/滚动条）
+
+- **顶栏溢出修复（用户截图实锤）：** antdv Layout header 默认 `line-height:64px` 经 css-in-js 后注入、压过外层 `leading-none`，`AppBreadcrumb` 徽章被 flex 块状化后撑到 72px 高溢出顶栏。修复：组件根自带 `leading-none`、徽章/标题显式 `leading-[1.2]/[1.4]`，徽章高度恢复 25px。
+- **antdv 4.2.6 token 缺口兜底（style.css 高特异性覆盖）：** ① `Layout.headerPadding` 不生效，顶栏默认 50px 内边距收敛为 16px（≤575px 12px）；② `Table.headerBg/rowHoverBg` 不生效，表头改 `#f8f9fc`（深色 `rgba(255,255,255,.04)`）、行悬浮带极光紫 `rgba(124,92,255,.045/.1)`。
+- **新增全局细节：** 页脚边框/文字色改由根 `data-theme` 驱动（去掉跟随 OS 的 `dark:` 类）；全局细滚动条 slate 色系 + 深色暗轨；`FeatureLoading` 极光三圆点错相跳动加载屏（替代纯 `a-spin`）。
+- **验证：** 容器内 `vue-tsc -b` exit 0；浏览器实测 chip 25px、header 内边距 16px、表头 `#f8f9fc`；6 页抽查无溢出无错误，控制台 Vue 告警 0。
+- **未运行：** Vite 生产构建、后端测试、375/768 窄屏复测（P311 约定由用户复测）。
+
+## 2026-10-23 IAM P335 — 管理台「暗黑轻奢·极光渐变」深度改造 + UI 走查问题修复
+
+- **设计体系：** 主色 `#756df2`→`#7c5cff`（极光紫，全站 8 处默认值统一）；侧栏近黑三段渐变 `#0b0a16→#1c1240` + 紫/品红光斑；顶栏玻璃拟态（浅色 `rgba(255,255,255,.78)`/深色 `rgba(15,16,32,.96)` + blur）；登录页暗夜极光三光晕 + 白玻璃卡 + 渐变主按钮；圆角 10→12；图表色板换极光系。
+- **新增组件（按用户要求封装）：** `AppBreadcrumb`（顶栏渐变模式徽章+页面标题，替代 antd 面包屑）、`AuroraGlow`（侧栏/Hero 光斑装饰）、`AdminEmpty`（emoji+文案空状态，替换全部 24 处 `a-empty`，按业务域配 🏢🎭🔐✉️🤖 等 18 种图形）、`OverviewStatCard`（渐变数字指标卡）。
+- **壳层：** 侧栏改 antd Menu `theme="dark"` + ConfigProvider `dark*` token（高饱和选中态、折叠弹层深色）；工作台 Hero 换深空→紫品红对角渐变+细网格；能力卡/工具条/页头 eyebrow 渐变竖条统一；深色模式通过根 `data-theme` 适配工具条与输入控件。
+- **UI 走查问题修复：** ① P329 遗留架构 bug——App 根组件 `renderCache` 首帧缓存组件解析 miss，导致后注册的 `a-breadcrumb`/`a-space`/`a-avatar` 永久解析失败（控制台 Vue warn 实锤）；`Avatar`/`Space` 提前到 `installPublicUi` 公开注册。② `NullShell` template 字符串触发运行时编译告警，改 `render: () => null`。③ 顶栏面包屑组件化后告警清零。
+- **验证：** 容器内 `vue-tsc -b` 两轮 exit 0；浏览器 15 路由全部无页级横滚、无错误弹窗；控制台 Vue 告警清零（仅剩登出/刷新时 ERR_ABORTED 请求中断，属正常）；浅/深主题、登录页、新建用户弹窗截图走查通过；HMR 实时生效，镜像未重建。
+- **未运行：** Vite 生产构建、后端测试、375/768 窄屏手动复测（工具无视口 resize，沿用 P311 约定由用户复测）。
+
+## 2026-10-23 IAM P334 — Docker 重装后开发环境重建
+
+- **事件：** Docker Desktop 重装（engine 29.6.2）导致镜像、容器与卷全部丢失，含数据库卷 `iam-postgres-data` 与 OIDC 密钥卷 `iam-oidc-signing-data`；`D:\backup\iam-postgres\` 两份 0031/0021 备份与 `.sha256` 完好，经确认未采用（走全新空库方案）。
+- **重建：** `docker compose build api console`（镜像内 `vue-tsc -b` + Vite build 通过）+ `postgres:16-alpine` 拉取；`--profile migrate run` 全新库一次性迁至 `0032`；`--profile bootstrap run` 重建管理员 `admin@example.com`（密码取 `.env` `IAM_ADMIN_PASSWORD`，首次 bootstrap 生效）。
+- **环境注意：** 用全路径调用 docker 会报 `docker-credential-desktop not found`，需先把 `C:\Users\刘少华\AppData\Local\Programs\DockerDesktop\resources\bin` 加入 PATH。
+- **数据损失：** 2026-10-14 备份之后的业务数据（P322 crud-demo 联调资产、A04 夹具证据等）不可恢复；OIDC 签名密钥为新生成，历史 token/会话全部失效。
+- **验证：** 三容器 healthy、`/api/v1/ready` 200；`alembic` head=0032（重复迁移无新升级）。浏览器登录走查由 P335 完成；存在一个手动 `docker run` 的游离 console 容器（`vigorous_lamarr`）未处理，不影响 compose 三件套。
+
 ## 2026-10-22 IAM P333 — 应用与权限命名空间层级
 
 - **数据模型：** 迁移 `0032_application_permission_namespace`；`applications.permission_namespace`、`permissions.catalog_namespace`；归属规则 `code == namespace` 或 `code` 以 `namespace.` 开头。

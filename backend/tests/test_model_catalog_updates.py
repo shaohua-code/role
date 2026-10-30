@@ -48,7 +48,9 @@ class ModelCatalogUpdateContractTests(unittest.TestCase):
         db.scalar.return_value = row
         request, actor = Mock(), Mock()
 
-        with patch("app.api.v1.admin.models.audit") as write_audit, patch(
+        # 绿场规则：平台权限只认角色绑定；Mock 契约测试直接假定 actor 持 L1。
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True), \
+             patch("app.api.v1.admin.models.audit") as write_audit, patch(
             "app.api.v1.admin.models.commit_or_conflict"
         ) as commit:
             result = set_model_status(
@@ -98,6 +100,10 @@ class ModelCatalogUpdateIntegrationTests(unittest.TestCase):
         )
         self.db.add_all([self.tenant, self.actor])
         self.db.flush()
+        # 绿场规则：actor 需显式绑定 L1 才能通过按码判权。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.actor)
         self.db.add(self.model)
         self.db.flush()
 

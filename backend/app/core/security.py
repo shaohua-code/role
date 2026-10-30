@@ -18,7 +18,6 @@ from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.models.identity import RefreshSession, RevokedAccessToken, Tenant, TenantMembership, User
 from app.models.application import Application
-from app.models.authorization import Role, RoleBinding
 from app.models.oidc import OAuthRefreshToken
 from app.core.oidc_keys import decode_oidc_jwt
 
@@ -43,6 +42,11 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_access_token(user: User, session_id: UUID | None = None) -> str:
+    """签发管理台短期 HS256 访问令牌。
+
+    claims 固定携带 jti（撤销索引）与 auth_version（改密后旧令牌立即失效）；
+    传入 session_id 时绑定刷新会话（sid），管理员远程退出可即时生效。
+    """
     settings = get_settings()
     if len(settings.jwt_secret) < 32:
         raise HTTPException(status_code=503, detail="认证服务密钥未配置")
@@ -220,12 +224,15 @@ def current_user(
         TenantMembership.status == "active",
     ))
     token_membership_version = claims.get("membership_version", 1)
-    role = db.scalar(select(RoleBinding.id).join(Role, Role.id == RoleBinding.role_id).where(
-        RoleBinding.membership_id == membership.id if membership else False,
-        Role.tenant_id == tenant_id, Role.status == "active",
-        (Role.application_id.is_(None) | (Role.application_id == app.id)) if app else False,
-    ).limit(1))
-    if (not (app and tenant and user and membership and role)
+    # OIDC 入场与 evaluate_access 共用同一有效角色实现（直连绑定 ∪ 活跃用户组继承）。
+    has_effective_role = False
+    if app and tenant and user and membership:
+        from app.services.effective_roles import list_effective_roles
+
+        has_effective_role = bool(list_effective_roles(
+            db, membership_id=membership.id, tenant_id=tenant_id, application_id=app.id,
+        ))
+    if (not has_effective_role
             or token_auth_version != user.auth_version
             or isinstance(token_membership_version, bool)
             or not isinstance(token_membership_version, int)
@@ -239,19 +246,23 @@ def current_user(
     return user
 
 
-def is_platform_admin_user(user: User) -> bool:
-    """判断引导管理员身份；OIDC 业务用户不能仅凭同邮箱取得平台级权限。"""
-    configured_email = get_settings().bootstrap_admin_email
-    return not (
-        getattr(user, "_auth_protocol", None) == "oidc"
-        or not configured_email
-        or not user.email
-        or user.email.casefold() != configured_email.casefold()
-    )
+def is_platform_admin_user(user: User, db: Session | None = None) -> bool:
+    """L1 判定：持 platform 层级有效角色，或灾备破窗开启时匹配引导邮箱。
+
+    破窗默认关闭（ALLOW_BOOTSTRAP_EMAIL_BYPASS=false）；开启时调用方应
+    在写审计中携带 break_glass 标记（见 rbac_guards.user_is_break_glass）。
+    为兼容旧调用方，db 参数缺省时允许传入 Session 的调用方走角色判定；
+    未提供 db 的旧签名调用只走破窗分支并返回 False（不可作为授权依据）。
+    """
+    from app.services.rbac_guards import user_is_break_glass, user_is_platform_admin
+
+    if db is not None and user_is_platform_admin(user, db):
+        return True
+    return user_is_break_glass(user)
 
 
-def platform_admin(user: User = Depends(current_user)) -> User:
-    """管理权限由服务端配置的引导账号确定，客户端无法通过提交角色提升权限。"""
-    if not is_platform_admin_user(user):
+def platform_admin(user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> User:
+    """已弱化为「持任一平台层级角色」的依赖别名；新路由一律用 rbac_guards.ensure_roles / require_roles。"""
+    if not is_platform_admin_user(user, db):
         raise HTTPException(status_code=403, detail="需要平台管理员权限")
     return user

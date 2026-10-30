@@ -2,6 +2,7 @@
 
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import Mock, patch
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -68,6 +69,28 @@ class AuditQueryTests(unittest.TestCase):
                 details={},
                 created_at=self.end_at,
             ),
+            AuditEvent(
+                id=UUID("20000000-0000-0000-0000-000000000005"),
+                actor_user_id=self.actor_id,
+                tenant_id=self.tenant_id,
+                action="auth.login",
+                target_type="user",
+                target_id="user-1",
+                outcome="success",
+                details={},
+                created_at=datetime(2026, 10, 5, 11, 50, tzinfo=timezone.utc),
+            ),
+            AuditEvent(
+                id=UUID("20000000-0000-0000-0000-000000000006"),
+                actor_user_id=self.actor_id,
+                tenant_id=self.tenant_id,
+                action="auth.logout",
+                target_type="user",
+                target_id="user-1",
+                outcome="success",
+                details={},
+                created_at=datetime(2026, 10, 5, 11, 55, tzinfo=timezone.utc),
+            ),
         ])
         self.db.commit()
 
@@ -88,10 +111,15 @@ class AuditQueryTests(unittest.TestCase):
             "tenant_id": None,
             "start_at": None,
             "end_at": None,
+            # 直调 handler 时 FastAPI 的 Query 默认值不是 None，须显式传 action_prefix=None。
+            "action_prefix": None,
+            # 绿场规则：平台权限只认角色绑定；单元测试直接假定 actor 持 L1。
+            "actor": Mock(),
             "db": self.db,
         }
         arguments.update(overrides)
-        return search_audit(**arguments)
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+            return search_audit(**arguments)
 
     def test_combined_filters_and_end_time_are_applied(self) -> None:
         result = self.query(
@@ -119,11 +147,23 @@ class AuditQueryTests(unittest.TestCase):
         self.assertFalse(second_page.has_more)
 
     def test_legacy_endpoint_keeps_array_response(self) -> None:
-        result = list_audit(limit=2, action="role.update", db=self.db)
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+            result = list_audit(limit=2, action="role.update", actor=Mock(), db=self.db)
 
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 2)
         self.assertTrue(all(item.action == "role.update" for item in result))
+
+    def test_action_prefix_aggregates_category_and_literals_wildcards(self) -> None:
+        # Wave 3 审计拆 Tab：auth. 前缀命中全部登录/认证事件。
+        auth_result = self.query(action_prefix="auth.")
+        self.assertEqual(auth_result.total, 2)
+        self.assertEqual({item.action for item in auth_result.items}, {"auth.login", "auth.logout"})
+
+        # 前缀里的通配符按字面匹配，不扩大结果集。
+        self.assertEqual(self.query(action_prefix="role.%").total, 0)
+        self.assertEqual(self.query(action_prefix="role_").total, 0)
+
     def test_date_filter_requires_timezone_and_valid_range(self) -> None:
         with self.assertRaises(HTTPException) as missing_timezone:
             self.query(start_at=datetime(2026, 10, 5, 11, 0))

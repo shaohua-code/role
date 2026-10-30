@@ -24,6 +24,9 @@ owner 行级过滤校验和统一错误映射；它不验签 token、不连接�
     def read_documents(user: IAMUserContext = Depends(iam.require_permission("document.read", owner_only=True))):
         # user.local_user_id 可直接用于 owner 过滤查询。
         ...
+
+    # 管理台 / 粗粒度入口主推角色门禁（会话需带 role_keys）：
+    # Depends(iam.require_roles("app.member", "app.admin"))
 """
 from dataclasses import dataclass
 from typing import Annotated, Callable, Mapping
@@ -41,6 +44,8 @@ class IAMUserContext:
     tenant_id: str
     subject_id: str
     local_user_id: str | None = None
+    # 有效角色 key（来自 /auth/me.roles 或本地映射）；管理台/粗粒度业务门禁用 require_roles。
+    role_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -116,6 +121,24 @@ class IAMFastAPI:
             except AuthorizationServiceError as exc:
                 raise _http_error(exc) from None
             return PermissionDecision(decision, user)
+
+        return dependency
+
+    def require_roles(self, *role_keys: str) -> Callable[..., IAMUserContext]:
+        """主推：按角色 key 门禁（管理台/粗粒度业务入口）。
+
+        会话依赖须填充 IAMUserContext.role_keys（例如登录后拉 /auth/me.roles）。
+        细粒度资源授权仍用 require_permission + data_scope。
+        """
+        if not role_keys:
+            raise ValueError("require_roles requires at least one role key")
+        wanted = set(role_keys)
+
+        def dependency(user: Annotated[IAMUserContext, Depends(self._session_dependency)]) -> IAMUserContext:
+            held = set(user.role_keys or ())
+            if held.isdisjoint(wanted):
+                raise HTTPException(status_code=403, detail=f"Missing required role: {', '.join(role_keys)}")
+            return user
 
         return dependency
 

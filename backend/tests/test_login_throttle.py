@@ -23,6 +23,8 @@ class LoginThrottleTests(unittest.TestCase):
             jwt_secret="test-login-throttle-key-that-is-long-enough",
             login_attempt_window_seconds=300,
             login_identifier_max_failures=2,
+            # G20 纯邮箱维度桶：阈值刻意高于“邮箱×IP”组合桶。
+            login_account_max_failures=4,
             login_ip_max_failures=3,
             login_block_seconds=60,
             trust_proxy_client_ip=False,
@@ -58,10 +60,24 @@ class LoginThrottleTests(unittest.TestCase):
                                       now=self.now + timedelta(seconds=2))
         self.assertEqual(blocked.blocked_until, self.now + timedelta(seconds=61))
         stored_keys = self.db.scalars(select(LoginAttemptBucket.key_hash)).all()
-        self.assertEqual(len(stored_keys), 2)
+        # G20：三桶（纯邮箱 + 邮箱×IP + IP），仍然只存 HMAC 摘要。
+        self.assertEqual(len(stored_keys), 3)
         self.assertTrue(all(len(key) == 64 for key in stored_keys))
         self.assertNotIn("person@example.test", "".join(stored_keys))
         self.assertNotIn("192.0.2.15", "".join(stored_keys))
+
+    def test_account_bucket_blocks_the_same_email_from_a_different_ip(self) -> None:
+        """G20：同一账号换 IP 绕过“邮箱×IP”桶，但纯邮箱桶仍在累计并最终锁定。"""
+        for index, address in enumerate(("192.0.2.15", "192.0.2.16", "192.0.2.17", "192.0.2.18")):
+            ticket = begin_login_attempt(self.db, "person@example.test", address, self.settings,
+                                         now=self.now + timedelta(seconds=index))
+            self.assertIsNone(ticket.blocked_until)
+            record_login_failure(self.db, ticket, self.settings, now=self.now + timedelta(seconds=index))
+            self.db.commit()
+        blocked = begin_login_attempt(self.db, "person@example.test", "192.0.2.19", self.settings,
+                                      now=self.now + timedelta(seconds=5))
+        # 阈值在最后一次失败（t=+3s）跨过，锁定至 +3s+60s。
+        self.assertEqual(blocked.blocked_until, self.now + timedelta(seconds=63))
 
     def test_success_resets_only_the_current_identifier_pair(self) -> None:
         first = begin_login_attempt(self.db, "person@example.test", "192.0.2.15", self.settings, now=self.now)
@@ -74,6 +90,8 @@ class LoginThrottleTests(unittest.TestCase):
         self.assertIsNone(next_attempt.blocked_until)
         self.assertEqual(self.db.get(LoginAttemptBucket, first.identifier_key).failed_attempts, 0)
         self.assertEqual(self.db.get(LoginAttemptBucket, first.address_key).failed_attempts, 1)
+        # G20：成功登录同时清零纯邮箱桶。
+        self.assertEqual(self.db.get(LoginAttemptBucket, first.account_key).failed_attempts, 0)
 
     def test_expired_failure_window_resets_before_password_check(self) -> None:
         first = begin_login_attempt(self.db, "person@example.test", "192.0.2.15", self.settings, now=self.now)

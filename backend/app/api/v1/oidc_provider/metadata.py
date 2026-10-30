@@ -30,4 +30,5 @@ def discovery_document() -> dict:
 
 
 def discovery() -> dict:
+    """兼容旧导入路径的发现文档别名，新代码直接调用 discovery_document。"""
     return discovery_document()

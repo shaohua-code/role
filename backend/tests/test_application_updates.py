@@ -152,12 +152,14 @@ class ApplicationUpdateIntegrationTests(unittest.TestCase):
         self.db.flush()
         self.db.add(RoleBinding(membership_id=self.membership.id, role_id=self.role.id))
         for code, resource_type, scope in (
-            ("iam.application.manage", "iam.application", "manage"),
-            ("iam.application.secret.rotate", "iam.application", "secret.rotate"),
+            ("app.manage", "iam.application", "manage"),
+            ("app.secret.rotate", "iam.application", "secret.rotate"),
         ):
             permission = self.db.scalar(select(Permission).where(Permission.code == code))
             if permission is None:
-                permission = Permission(code=code, resource_type=resource_type, scope=scope)
+                # 绿场规则：iam.* 为管理面码，不强制数据范围。
+                permission = Permission(code=code, resource_type=resource_type, scope=scope,
+                                        surface="management", requires_data_scope=False)
                 self.db.add(permission)
                 self.db.flush()
             self.db.add(RolePermission(role_id=self.role.id, permission_id=permission.id))

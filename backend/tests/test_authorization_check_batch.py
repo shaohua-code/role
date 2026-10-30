@@ -28,25 +28,25 @@ class AuthorizationCheckBatchSchemaTests(unittest.TestCase):
 
     def test_duplicate_permission_codes_rejected(self) -> None:
         with self.assertRaises(ValidationError):
-            _batch(["iam.organization.read", "iam.organization.read"])
+            _batch(["org.read", "org.read"])
 
 
 class AuthorizationCheckBatchEndpointTests(unittest.TestCase):
     def test_each_code_evaluated_once_and_mapped_by_code(self) -> None:
-        codes = ["iam.organization.read", "iam.application.manage"]
+        codes = ["org.read", "app.manage"]
         decisions = iter([{"allowed": True}, {"allowed": False, "reason": "no_matching_grant"}])
         with patch("app.api.v1.authorization.evaluate_access", side_effect=lambda _c, _u, _db: {"decision": next(decisions)}):
             result = check_access_batch(_batch(codes), user=SimpleNamespace(), db=Mock())
         self.assertEqual(set(result["results"].keys()), set(codes))
-        self.assertTrue(result["results"]["iam.organization.read"]["allowed"])
-        self.assertFalse(result["results"]["iam.application.manage"]["allowed"])
-        self.assertNotIn("application_id", result["results"]["iam.organization.read"])
+        self.assertTrue(result["results"]["org.read"]["allowed"])
+        self.assertFalse(result["results"]["app.manage"]["allowed"])
+        self.assertNotIn("application_id", result["results"]["org.read"])
 
     def test_password_user_allowed_result_has_no_oidc_application_id(self) -> None:
         user = SimpleNamespace(_auth_protocol="password")
         with patch("app.api.v1.authorization.evaluate_access", return_value={"decision": {"allowed": True}}):
-            result = check_access_batch(_batch(["iam.application.read"]), user=user, db=Mock())
-        self.assertNotIn("application_id", result["results"]["iam.application.read"])
+            result = check_access_batch(_batch(["app.read"]), user=user, db=Mock())
+        self.assertNotIn("application_id", result["results"]["app.read"])
 
     def test_oidc_allowed_result_carries_verified_application_id(self) -> None:
         app_id = str(uuid4())

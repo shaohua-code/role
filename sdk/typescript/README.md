@@ -1,4 +1,17 @@
+> ⚠️ **非本阶段产品路径**：SDK 供集成方参考，管理台日常配权不依赖此目录；示例已归档 `docs/_archive/examples`。
+
+
+ > **门禁：** 管理台/粗粒度入口主推角色（后端 
+equire_roles / 会话 
+ole_keys）；细粒度资源仍用 
+equirePermission + data_scope。详见仓库 docs/plan-frontend-codes-backend-roles.md。
+
 # TypeScript IAM server-side SDK
+
+**业务 vs 管理（2.0）**：非 `iam.*` 业务码默认自动请求 `data_scope`；有权无范围 / `data_scope_policy_missing` → 失败。`iam.*` 管理码可不要求 scope。
+**升级**：`@iam/...` 升到 2.0.0 → 业务路由必须消费 `data_scope` → 管理面集成继续用无 scope 判定。
+
+**2.0.0 绿场 breaking 变更（增强型分层 RBAC）：** 绿场后业务权限码带 `requires_data_scope=true` 时，IAM 会忽略 `includeDataScope=false` 并**强制返回行级 data_scope**（缺数据范围策略时直接拒绝，`data_scope_policy_missing`）。SDK 因此同步调整：`check()` 不再把「未请求 scope 却返回 scope」视为契约错误，而是接受并完成完整校验后放进 `AuthorizationDecision.data_scope`；`userSubject` 仅在显式 `includeDataScope: true` 时强制要求，强制范围场景下可省略（此时跳过 owner 分支与本地 sub 的等值断言，但租户边界与字段白名单校验仍然强制）。owner-only 数据操作仍必须传 `userSubject` 以保留等值断言。管理面权限码（`iam.*`，`requires_data_scope=false`）不受影响，不带 scope 直接放行。
 
 `IamAuthorizationClient` is a dependency-free server-side helper for business API routes. It calls the online IAM authorization endpoint with the end-user **OIDC access token** and fails closed for network, HTTP, timeout, or malformed-response errors. The request and response-body read share a 3,000 ms default deadline; pass a positive 32-bit millisecond value as the third constructor argument to tune it for the business service. Timeout/network errors raise `AuthorizationServiceError(503)`, an IAM HTTP denial preserves its status code, and malformed responses return 502. This authorization helper does not store or refresh credentials; the separate `IamOIDCClient` below handles the OIDC relying-party flow. `compilePostgresDataScope` compiles a validated scope into a parameterized PostgreSQL `WHERE` fragment, but the business service still owns the trusted column/key mappings and must execute that fragment in the protected resource query.
 
@@ -116,3 +129,4 @@ node --experimental-strip-types --test test/authorization.test.mjs test/oidc.tes
 ```
 
 For production builds run the package TypeScript compiler with the provided `tsconfig.json`.
+

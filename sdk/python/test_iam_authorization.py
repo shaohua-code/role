@@ -28,15 +28,23 @@ class IamAuthorizationClientTests(unittest.TestCase):
 
     @patch("iam_authorization.urlopen")
     def test_check_sends_access_token_and_application_context(self, open_url) -> None:
-        open_url.return_value = _Response({"allowed": True, "reason": "matching_role_grant"})
+        open_url.return_value = _Response({
+            "allowed": True,
+            "reason": "matching_role_grant",
+            "data_scope": {
+                "mode": "any_of",
+                "constraints": [{"kind": "tenant", "tenant_id": "tenant-uuid"}],
+            },
+        })
         decision = self.client.check("access-token", "tenant-uuid", "resume.read")
         request = open_url.call_args.args[0]
         self.assertTrue(decision.allowed)
+        self.assertIsNotNone(decision.data_scope)
         self.assertEqual(request.full_url, "https://iam.example/api/v1/authorization/check")
         self.assertEqual(request.get_header("Authorization"), "Bearer access-token")
         self.assertEqual(json.loads(request.data), {
             "tenant_id": "tenant-uuid", "application_id": "app-uuid",
-            "permission_code": "resume.read", "include_data_scope": False,
+            "permission_code": "resume.read", "include_data_scope": True,
         })
 
     @patch("iam_authorization.urlopen")
@@ -174,6 +182,51 @@ class IamAuthorizationClientTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 502)
 
     # 编译回归覆盖每个 OR 分支的 tenant AND、本地主键映射与参数化条件。
+
+    @patch("iam_authorization.urlopen")
+    def test_business_allow_without_scope_fails_even_when_scope_not_requested(self, open_url) -> None:
+        open_url.return_value = _Response({"allowed": True, "reason": "matching_role_grant"})
+        with self.assertRaises(AuthorizationServiceError) as error:
+            self.client.check(
+                "access-token", "tenant-uuid", "resume.read", include_data_scope=False,
+            )
+        self.assertEqual(error.exception.status_code, 502)
+        self.assertIn("omitted the required data scope", str(error.exception))
+
+    @patch("iam_authorization.urlopen")
+    def test_management_allow_without_scope_is_ok(self, open_url) -> None:
+        open_url.return_value = _Response({"allowed": True, "reason": "matching_role_grant"})
+        decision = self.client.check("access-token", "tenant-uuid", "iam.role.read")
+        request = open_url.call_args.args[0]
+        self.assertTrue(decision.allowed)
+        self.assertIsNone(decision.data_scope)
+        self.assertEqual(json.loads(request.data)["include_data_scope"], False)
+
+    @patch("iam_authorization.urlopen")
+    def test_require_data_scope_policy_missing_raises_403(self, open_url) -> None:
+        open_url.return_value = _Response({"allowed": False, "reason": "data_scope_policy_missing"})
+        with self.assertRaises(AuthorizationServiceError) as error:
+            self.client.require("access-token", "tenant-uuid", "resume.read")
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertIn("data_scope_policy_missing", str(error.exception))
+
+    @patch("iam_authorization.urlopen")
+    def test_business_auto_accepts_forced_scope_without_subject(self, open_url) -> None:
+        open_url.return_value = _Response({
+            "allowed": True,
+            "reason": "matching_role_grant",
+            "data_scope": {
+                "mode": "any_of",
+                "constraints": [
+                    {"kind": "owner", "field": "owner_user_id", "user_id": "user-1", "tenant_id": "tenant-uuid"},
+                ],
+            },
+        })
+        decision = self.client.check("access-token", "tenant-uuid", "resume.read")
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.data_scope["constraints"][0]["user_id"], "user-1")
+
+
     def test_scope_compiler_maps_business_keys_and_binds_each_tenant_branch(self) -> None:
         result = compile_postgres_data_scope({"mode": "any_of", "constraints": [
             {"kind": "owner", "field": "owner_user_id", "user_id": "user-1", "tenant_id": "tenant-uuid"},

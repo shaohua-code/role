@@ -10,12 +10,19 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.v1.admin.common import audit, commit_or_conflict
-from app.core.security import platform_admin
+from app.core.security import current_user
 from app.db.session import get_db_session
 from app.models.application import Application
 from app.models.identity import User
 from app.models.model_catalog import ModelCatalog, ModelUsageEvent, ModelUsageReservation
 from app.schemas.models import ModelUsageReviewRequest
+from app.services.rbac_guards import (
+    actor_has_tenant_admin,
+    ensure_roles,
+    list_actor_management_tenant_ids,
+    list_actor_pinned_application_ids,
+)
+from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(tags=["模型用量"])
 
@@ -47,14 +54,44 @@ def _usage_event_filters(
     return filters
 
 
+def _actor_usage_scope_filters(
+    actor: User,
+    db: Session,
+    tenant_id: UUID | None,
+    *,
+    tenant_column,
+    application_column,
+) -> list | None:
+    """L3 限本租户；纯 L2 再钉住应用。None 表示无可见数据，调用方应返回空结果。"""
+    extras: list = []
+    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    if tenant_scope is not None:
+        if tenant_id is not None:
+            if tenant_id not in tenant_scope:
+                raise HTTPException(status_code=403, detail="无权访问该租户范围内的数据")
+            extras.append(tenant_column == tenant_id)
+        else:
+            extras.append(tenant_column.in_(tenant_scope))
+        if not actor_has_tenant_admin(actor, db):
+            pinned = list_actor_pinned_application_ids(actor, db)
+            if not pinned:
+                return None
+            extras.append(application_column.in_(pinned))
+    elif tenant_id is not None:
+        extras.append(tenant_column == tenant_id)
+    return extras
+
+
 @router.get("/model-usage/reviews")
 def list_model_usage_reviews(
     tenant_id: UUID | None = None,
     limit: int = 50,
     offset: int = 0,
+    actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
     """分页列出超时未结算预留，避免长期待核对队列被固定条数截断。"""
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
     # API 参数由 FastAPI 转成整数；仍在函数内夹紧范围，保证直接调用或内部复用安全。
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
@@ -63,8 +100,14 @@ def list_model_usage_reviews(
         ModelUsageReservation.status == "reserved",
         ModelUsageReservation.expires_at <= now,
     ]
-    if tenant_id:
-        filters.append(ModelUsageReservation.tenant_id == tenant_id)
+    scope = _actor_usage_scope_filters(
+        actor, db, tenant_id,
+        tenant_column=ModelUsageReservation.tenant_id,
+        application_column=ModelUsageReservation.application_id,
+    )
+    if scope is None:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+    filters.extend(scope)
     total = db.scalar(select(func.count()).select_from(ModelUsageReservation).where(*filters)) or 0
     stmt = (select(ModelUsageReservation, ModelCatalog, Application, User)
             .join(ModelCatalog, ModelCatalog.id == ModelUsageReservation.model_id)
@@ -90,7 +133,7 @@ def list_model_usage_reviews(
 def resolve_model_usage_review(
     body: ModelUsageReviewRequest,
     request: Request,
-    actor: User = Depends(platform_admin),
+    actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
     """核对超时调用：实用量入账，或在确认 Provider 未被调用后释放预留。"""
@@ -98,6 +141,7 @@ def resolve_model_usage_review(
         ModelUsageReservation.request_id == body.request_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="找不到对应的额度预留")
+    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
 
     # 所有结算入口保持相同锁顺序，确保管理员操作与网关重试互斥。
     model = db.scalar(select(ModelCatalog).where(
@@ -163,9 +207,11 @@ def model_usage_summary(
     outcome: Literal["succeeded", "failed"] | None = None,
     created_from: date | None = None,
     created_to: date | None = None,
+    actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
     """返回留存用量汇总；未知目录价格单独计数，不伪装为零成本。"""
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
     stmt = select(
         func.count(ModelUsageEvent.id).label("requests"),
         func.sum(ModelUsageEvent.input_tokens).label("input_tokens"),
@@ -177,6 +223,15 @@ def model_usage_summary(
         func.count().filter(ModelUsageEvent.usage_is_estimated.is_(True)).label("estimated_usage_requests"),
     )
     filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
+    scope = _actor_usage_scope_filters(
+        actor, db, tenant_id,
+        tenant_column=ModelUsageEvent.tenant_id,
+        application_column=ModelUsageEvent.application_id,
+    )
+    if scope is None:
+        return {"requests": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost": None,
+                "unknown_cost_requests": 0, "succeeded": 0, "failed": 0, "estimated_usage_requests": 0}
+    filters.extend(scope)
     if filters:
         stmt = stmt.where(*filters)
     result = db.execute(stmt).one()
@@ -188,6 +243,88 @@ def model_usage_summary(
             "estimated_usage_requests": result.estimated_usage_requests or 0}
 
 
+@router.get("/model-usage/timeline")
+def model_usage_timeline(
+    tenant_id: UUID | None = None,
+    model_id: UUID | None = None,
+    outcome: Literal["succeeded", "failed"] | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> dict:
+    """按 UTC 自然日聚合请求量与 Token 消耗，供管理台趋势图使用；筛选口径与 summary 完全一致。"""
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
+    scope = _actor_usage_scope_filters(
+        actor, db, tenant_id,
+        tenant_column=ModelUsageEvent.tenant_id,
+        application_column=ModelUsageEvent.application_id,
+    )
+    if scope is None:
+        return {"items": []}
+    filters.extend(scope)
+    # timestamptz 先 AT TIME ZONE 'UTC' 再取日期，保证分桶口径与筛选边界（UTC 自然日）一致。
+    day = func.date(ModelUsageEvent.created_at.op("AT TIME ZONE")("UTC"))
+    stmt = (select(
+        day.label("day"),
+        func.count(ModelUsageEvent.id).label("requests"),
+        func.sum(ModelUsageEvent.input_tokens).label("input_tokens"),
+        func.sum(ModelUsageEvent.output_tokens).label("output_tokens"),
+        func.count().filter(ModelUsageEvent.outcome == "failed").label("failed"),
+    ).where(*filters).group_by(day).order_by(day.asc()))
+    items = [{"day": str(row.day), "requests": row.requests,
+              "input_tokens": row.input_tokens or 0, "output_tokens": row.output_tokens or 0,
+              "failed": row.failed or 0}
+             for row in db.execute(stmt).all()]
+    return {"items": items}
+
+
+@router.get("/model-usage/by-model")
+def model_usage_by_model(
+    tenant_id: UUID | None = None,
+    model_id: UUID | None = None,
+    outcome: Literal["succeeded", "failed"] | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
+    limit: int = 8,
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> dict:
+    """按模型聚合 Token 消耗与请求量，供管理台分布图使用；按总 Token 降序取前 N。"""
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
+    filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
+    scope = _actor_usage_scope_filters(
+        actor, db, tenant_id,
+        tenant_column=ModelUsageEvent.tenant_id,
+        application_column=ModelUsageEvent.application_id,
+    )
+    if scope is None:
+        return {"items": []}
+    filters.extend(scope)
+    # 总 Token 排序口径：输入 + 输出求和（空模型聚合恒为 0，不影响排序稳定性）。
+    total_tokens = (func.coalesce(func.sum(ModelUsageEvent.input_tokens), 0)
+                    + func.coalesce(func.sum(ModelUsageEvent.output_tokens), 0))
+    stmt = (select(
+        ModelUsageEvent.model_id.label("model_id"),
+        ModelCatalog.display_name.label("model_name"),
+        func.count(ModelUsageEvent.id).label("requests"),
+        func.sum(ModelUsageEvent.input_tokens).label("input_tokens"),
+        func.sum(ModelUsageEvent.output_tokens).label("output_tokens"),
+        func.sum(ModelUsageEvent.estimated_cost).label("estimated_cost"),
+    ).join(ModelCatalog, ModelCatalog.id == ModelUsageEvent.model_id)
+        .where(*filters)
+        .group_by(ModelUsageEvent.model_id, ModelCatalog.display_name)
+        .order_by(total_tokens.desc(), ModelCatalog.display_name.asc())
+        .limit(min(max(limit, 1), 20)))
+    items = [{"model_id": str(row.model_id), "model_name": row.model_name,
+              "requests": row.requests,
+              "input_tokens": row.input_tokens or 0, "output_tokens": row.output_tokens or 0,
+              "estimated_cost": str(row.estimated_cost) if row.estimated_cost is not None else None}
+             for row in db.execute(stmt).all()]
+    return {"items": items}
+
+
 @router.get("/model-usage/events")
 def list_model_usage_events(
     tenant_id: UUID | None = None,
@@ -197,13 +334,23 @@ def list_model_usage_events(
     created_to: date | None = None,
     limit: int = 100,
     offset: int = 0,
+    actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
     """最近的计量账目只输出身份/计数/费用元数据，不含模型内容或密钥引用。"""
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
     # 账目可能持续增长；总数和 offset 分页让管理台可以完整审阅历史记录。
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
     filters = _usage_event_filters(tenant_id, model_id, outcome, created_from, created_to)
+    scope = _actor_usage_scope_filters(
+        actor, db, tenant_id,
+        tenant_column=ModelUsageEvent.tenant_id,
+        application_column=ModelUsageEvent.application_id,
+    )
+    if scope is None:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+    filters.extend(scope)
     total = db.scalar(
         select(func.count()).select_from(ModelUsageEvent).where(*filters)
     ) or 0

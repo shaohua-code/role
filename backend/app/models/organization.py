@@ -23,7 +23,10 @@ class Organization(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
+    # 父部门自引用（复合外键限同租户）；存在子节点时删除会被 RESTRICT 拒绝。
     parent_id: Mapped[UUID | None] = mapped_column(index=True)
+    # 部门负责人（G24）：指向该租户内某成员的全局用户；归属校验由服务层完成，不设跨表外键。
+    owner_user_id: Mapped[UUID | None] = mapped_column(index=True)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
@@ -46,6 +49,7 @@ class MembershipOrganization(Base):
     membership_id: Mapped[UUID] = mapped_column(primary_key=True)
     organization_id: Mapped[UUID] = mapped_column(primary_key=True, index=True)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
+    # 主组织标记；部分唯一索引保证每名成员至多有一个主组织。
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -66,6 +70,7 @@ class RoleDataScope(Base):
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
     role_id: Mapped[UUID] = mapped_column(index=True, nullable=False)
     permission_id: Mapped[UUID] = mapped_column(ForeignKey("permissions.id", ondelete="CASCADE"), index=True, nullable=False)
+    # tenant=全租户、self=仅本人、organization=本部门、organization_tree=本部门及子树、selected_organizations=指定部门。
     scope_type: Mapped[str] = mapped_column(String(32), nullable=False)
     # JSON 仅存配置的部门 ID 列表，不存业务数据；API 在写入与决策时均校验租户归属。
     organization_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)

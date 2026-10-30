@@ -43,6 +43,12 @@ class PermissionStatusTests(unittest.TestCase):
                                      resource_type="document", scope="read")
         self.db.add_all([self.tenant, self.actor, self.user, self.role, self.permission])
         self.db.flush()
+        # 绿场规则：平台权限只认角色绑定；测试权限为管理面码（不强制数据范围）。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.actor)
+        self.permission.surface = "management"
+        self.permission.requires_data_scope = False
         self.membership = TenantMembership(tenant_id=self.tenant.id, user_id=self.user.id, status="active")
         self.db.add(self.membership)
         self.db.flush()

@@ -1,0 +1,107 @@
+/* Management console design tokens — single source of truth (docs/ui-design-system.md).
+   Business Vue/CSS must not introduce new magic hex; change brand only via --color-brand.
+   P350 轻奢极简黑白灰：zinc 纯中性灰阶 + 石墨黑品牌 + 纯黑侧栏；点缀只留语义色。 */
+
+:root {
+  /* Neutrals (zinc, pure gray) — light content */
+  --color-bg-canvas: #fafafa;
+  --color-bg-elevated: #ffffff;
+  --color-bg-subtle: #f4f4f5;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+  --color-text-primary: #18181b;
+  --color-text-secondary: #52525b;
+  --color-text-muted: #a1a1aa;
+
+  /* Fixed dark sider (pure black luxury) */
+  --color-sider-bg: #09090b;
+  --color-sider-text: #a1a1aa;
+  --color-sider-text-active: #fafafa;
+  --color-sider-item-hover: rgba(255, 255, 255, 0.06);
+  --color-sider-item-active: rgba(255, 255, 255, 0.1);
+  --color-sider-accent: #fafafa;
+
+  /* Brand (graphite black; ColorPicker may override --color-brand) */
+  --color-brand: #18181b;
+  --color-brand-hover: #3f3f46;
+  --color-brand-subtle: rgba(24, 24, 27, 0.06);
+  /* 行悬浮底色：brand-subtle 是半透明色，fixed 列（sticky）会透出滚动内容（P351 实测），
+     这里给等效的不透明混合色，浅色随 ColorPicker 覆盖的 --color-brand 联动 */
+  --color-row-hover: color-mix(in srgb, var(--color-brand) 6%, var(--color-bg-elevated));
+
+  /* Semantic — 唯一的高饱和点缀 */
+  --color-success: #059669;
+  --color-warning: #d97706;
+  --color-error: #dc2626;
+  --color-info: #2563eb;
+
+  /* Typography */
+  --font-sans: Inter, "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Spacing (8px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Shadows — 轻奢核心：贴地 1px + 大而极柔的环境影 */
+  --shadow-none: none;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.05), 0 24px 48px rgba(0, 0, 0, 0.12);
+
+  /* Shell geometry */
+  --sider-width: 240px;
+  --sider-collapsed-width: 72px;
+  --header-height: 56px;
+  --content-max-width: 1440px;
+  --content-padding-x: 24px;
+  --control-height: 36px;
+  /* Login shell (black canvas, restrained white glow) */
+  --color-login-canvas: #09090b;
+  --color-login-card: color-mix(in srgb, #ffffff 94%, transparent);
+}
+
+html[data-theme="dark"] {
+  --color-bg-canvas: #0e0e10;
+  --color-bg-elevated: #18181b;
+  --color-bg-subtle: #1f1f23;
+  --color-border: #2e2e32;
+  --color-border-strong: #3f3f46;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+  /* 暗色内容区里黑品牌不可见：品牌翻转为近白，subtle 用白叠加 */
+  --color-brand: #fafafa;
+  --color-brand-hover: #ffffff;
+  --color-brand-subtle: rgba(255, 255, 255, 0.08);
+  --color-row-hover: color-mix(in srgb, var(--color-brand) 8%, var(--color-bg-elevated));
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.45), 0 24px 48px rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 650px) {
+  :root {
+    --content-padding-x: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,234 @@
+﻿611|<template>
+612|  <a-config-provider :theme="antdTheme" :locale="zhCN" :component-size="componentSize">
+613|      <AuthEntry v-if="!token"
+614|        :login-return-to="loginReturnTo"
+615|        :invitation-token="invitationToken"
+616|        :consent-ticket="consentTicket"
+617|        :password-reset-token="passwordResetToken"
+618|        :readiness-state="healthState"
+619|        :readiness-loading="readinessRefreshing"
+620|        @authenticated="onAuthenticated"
+621|        @refresh-readiness="refreshReadiness"
+622|      />
+623|    <a-layout v-else-if="sessionBootstrapping" class="min-h-screen">
+624|      <a-layout-content class="flex min-h-screen items-center justify-center">
+625|        <FeatureLoading />
+626|      </a-layout-content>
+627|    </a-layout>
+628|    <!-- 视口内滚动：侧栏不随页面上下滚，只有右侧内容区滚。data-theme 供全局 CSS 跟随应用内主题切换。 -->
+629|    <a-layout v-else class="h-screen w-full overflow-hidden" :data-theme="themeMode">
+630|      <AppSidebar
+631|        v-model:mobile-open="mobileNavOpen"
+632|        :health-state="healthState"
+633|        :items="visibleNavigation"
+634|        :mode-label="consoleMode === 'platform' ? '平台管理' : consoleMode === 'tenant' ? '租户管理' : '访问受限'"
+635|        :collapsed="sidebarCollapsed"
+636|        :is-mobile="isMobile"
+637|        @toggle-sidebar="toggleSidebar"
+638|      />
+639|      <!-- 侧栏旁的内容列必须能收缩，否则宽表会把整页撑出横向滚动。 -->
+640|      <a-layout class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" :style="{ minWidth: '0' }">
+641|        <a-layout-header
+642|          class="mgmt-shell-header z-10 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-4 leading-none"
+643|          :style="headerSurfaceStyle"
+644|        >
+645|          <div class="flex min-w-0 items-center gap-3">
+646|            <a-button v-if="isMobile" type="text" aria-label="打开导航" @click="mobileNavOpen = true">
+647|              <MenuOutlined />
+648|            </a-button>
+649|            <!-- 顶栏面包屑组件：渐变模式徽章 + 页面标题 -->
+650|            <AppBreadcrumb
+651|              :mode-label="consoleMode === 'tenant' ? '租户工作台' : consoleMode === 'platform' ? '平台' : '访问受限'"
+652|              :page-title="pageInfo[page].title"
+653|            />
+654|          </div>
+655|          <!-- UI 检查 P349：去掉 wrap——375 视口下换行会叠加溢出固定高 header；外观按钮移动端图标化省宽。 -->
+656|          <a-space :size="8" class="shrink-0">
+657|            <a-popover trigger="click" placement="bottomRight">
+658|              <template #content>
+659|                <div class="grid min-w-48 gap-2">
+660|                  <span class="text-xs text-[var(--color-text-secondary)]">界面主题</span>
+661|                  <a-radio-group v-model:value="themePreference" button-style="solid" @change="onThemePreferenceChange">
+662|                    <a-radio-button value="light">浅色</a-radio-button>
+663|                    <a-radio-button value="dark">深色</a-radio-button>
+664|                    <a-radio-button value="system">跟随系统</a-radio-button>
+665|                  </a-radio-group>
+666|                  <span class="text-xs text-[var(--color-text-secondary)]">界面密度</span>
+667|                  <a-radio-group v-model:value="density" button-style="solid" @change="onThemePreferenceChange">
+668|                    <a-radio-button value="comfortable">舒适</a-radio-button>
+669|                    <a-radio-button value="compact">紧凑</a-radio-button>
+670|                  </a-radio-group>
+671|                  <span class="text-xs text-[var(--color-text-secondary)]">品牌主色</span>
+672|                  <AdminColorField :model-value="primaryColor" @update:model-value="applyPrimaryColor" />
+673|                  <small class="text-xs text-[var(--color-text-muted)]">外观偏好保存在当前会话浏览器</small>
+674|                </div>
+675|              </template>
+676|              <!-- 375 视口收敛宽度：移动端只留齿轮图标，桌面保留「外观」文字。
+677|                   用 isMobile 条件渲染而非 hidden 类——antd 未分层的 .ant-btn > span{display:inline-block}
+678|                   会压过 Tailwind @layer utilities 的 .hidden（P349 浏览器复验实测）。 -->
+679|              <a-button aria-label="外观设置">
+680|                <SettingOutlined v-if="isMobile" />
+681|                <span v-else>外观</span>
+682|              </a-button>
+683|            </a-popover>
+684|            <a-avatar
+685|              v-if="userInitial"
+686|              :size="30"
+687|              class="shrink-0 text-xs font-semibold"
+688|              :style="{ background: 'var(--color-brand)', color: 'var(--color-bg-elevated)' }"
+689|            >{{ userInitial }}</a-avatar>
+690|            <span class="hidden max-w-40 truncate text-sm sm:inline">{{ currentUser?.display_name || currentUser?.email || '平台管理员' }}</span>
+691|            <!-- G02：自助修改密码入口——移动端只留锁形图标（同 P349 isMobile 条件渲染惯例，避免 375 顶栏溢出）。 -->
+692|            <a-button type="link" aria-label="修改密码" @click="changePasswordOpen = true">
+693|              <LockOutlined v-if="isMobile" />
+694|              <span v-else>修改密码</span>
+695|            </a-button>
+696|            <a-button type="link" @click="signOut">退出</a-button>
+697|          </a-space>
+698|        </a-layout-header>
+699|
+700|        <a-layout-content class="mgmt-shell-content mx-auto w-full min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+701|          <router-view aria-hidden="true" class="hidden" />
+702|          <a-card v-if="consoleMode === 'no_access'" :bordered="false">
+703|            <a-alert type="error" show-icon message="当前账号尚未获得管理权限"
+704|              description="请联系管理员为你的角色授予相应的 iam.* 管理权限；应用成员请通过业务应用入口登录。" />
+705|          </a-card>
+706|          <template v-else>
+707|          <div v-if="visitedPages.has('overview')" v-show="page === 'overview'">
+708|            <OverviewPage
+709|              :overview="overview"
+710|              :health-state="healthState"
+711|              :loading="loading"
+712|              :primary-color="displayPrimary"
+713|              @navigate="setPage"
+714|              @refresh="() => loadPage(true)"
+715|            />
+716|          </div>
+717|          <!-- Wave 1 应用工作台：左树选应用 + 角色/权限编码 Tab，替代新项目接入成为主入口。 -->
+718|          <div v-if="visitedPages.has('application_workspace')" v-show="page === 'application_workspace'">
+719|            <ApplicationWorkspace
+720|              :active="page === 'application_workspace'"
+721|              :console-mode="consoleMode === 'tenant' ? 'tenant' : 'platform'"
+722|              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
+723|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true }))"
+724|              :shell-applications="consoleMode === 'platform' ? applications : null"
+725|              :shell-catalog-generation="platformCatalogGeneration"
+726|              @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined"
+727|            />
+728|          </div>
+729|          <div v-if="visitedPages.has('themes')" v-show="page === 'themes'">
+730|            <LoginThemeManagement
+731|              :active="page === 'themes'"
+732|              :applications="applications"
+733|              v-model:selected-application-id="themeAppId"
+734|              @navigate="setPage"
+735|            />
+736|          </div>
+737|          <div v-if="visitedPages.has('models') || visitedPages.has('model_usage')" v-show="page === 'models' || page === 'model_usage'">
+738|            <ModelGovernancePage :active="page === 'models' || page === 'model_usage'" :view="page === 'models' ? 'catalog' : 'usage'"
+739|              :seed-tenants="consoleMode === 'tenant' ? tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) })) : []" />
+740|          </div>
+741|          <div v-if="visitedPages.has('tenants')" v-show="page === 'tenants'">
+742|            <TenantManagement
+743|              :active="page === 'tenants'"
+744|              :shell-catalog-generation="platformCatalogGeneration"
+745|              :shell-tenants="consoleMode === 'platform' ? tenants : null"
+746|              @changed="() => loadDictionaries(true)"
+747|            />
+748|          </div>
+749|          <div v-if="visitedPages.has('applications')" v-show="page === 'applications'">
+750|            <ApplicationManagement :active="page === 'applications'"
+751|              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
+752|              :shell-catalog-generation="platformCatalogGeneration"
+753|              :shell-applications="consoleMode === 'platform' ? applications : null"
+754|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
+755|              @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined" />
+756|          </div>
+757|          <div v-if="visitedPages.has('audit')" v-show="page === 'audit'">
+758|            <AuditLogPage :active="page === 'audit'" />
+759|          </div>
+760|          <div v-if="visitedPages.has('invitations')" v-show="page === 'invitations'">
+761|            <InvitationManagement
+762|              :active="page === 'invitations'"
+763|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined }))"
+764|              :roles="roleOptions.map(role => ({ id: String(role.id), tenant_id: String(role.tenant_id), name: String(role.name), status: String(role.status) }))"
+765|            />
+766|          </div>
+767|          <div v-if="visitedPages.has('roles')" v-show="page === 'roles'">
+768|            <!-- 绿场 §6.6 角色管理拆标签：租户模式挂本应用角色与成员管理；平台模式挂全局角色管理。 -->
+769|            <ApplicationRoleManagement
+770|              v-if="consoleMode === 'tenant'"
+771|              :active="page === 'roles'"
+772|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), can_read_applications: tenant.can_read_applications === true || tenant.can_manage_applications === true }))"
+773|            />
+774|            <RoleManagement
+775|              v-else
+776|              :active="page === 'roles'"
+777|              :shell-catalog-generation="platformCatalogGeneration"
+778|              :shell-roles="roleOptions"
+779|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
+780|              :applications="applications.map(application => ({ id: String(application.id), tenant_id: String(application.tenant_id), name: String(application.name), status: String(application.status), permission_namespace: String(application.permission_namespace ?? '') }))"
+781|              @changed="() => loadDictionaries(true)"
+782|            />
+783|          </div>
+784|          <div v-if="visitedPages.has('permissions')" v-show="page === 'permissions'">
+785|            <PermissionCatalog :active="page === 'permissions'" />
+786|          </div>
+787|          <div v-if="visitedPages.has('users')" v-show="page === 'users'">
+788|            <!-- 绿场 §6.6 用户管理融合：租户模式=租户成员与数据范围；平台模式=全局用户目录。 -->
+789|            <TenantAccessManagement
+790|              v-if="consoleMode === 'tenant'"
+791|              :active="page === 'users'"
+792|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_organizations: tenant.can_read_organizations === true, can_manage_organizations: tenant.can_manage_organizations === true }))"
+793|            />
+794|            <UserManagement
+795|              v-else
+796|              :active="page === 'users'"
+797|              :current-user-id="String(currentUser?.id || '')"
+798|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
+799|              @changed="() => loadDictionaries(true)" />
+800|          </div>
+801|          <div v-if="visitedPages.has('organizations')" v-show="page === 'organizations'">
+802|            <OrganizationManagement :active="page === 'organizations'"
+803|              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
+804|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined, can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true, can_manage_organizations: consoleMode === 'platform' || tenant.can_manage_organizations === true }))" />
+805|          </div>
+806|          <!-- Wave 2 组织工作台：左组织树 + 成员/用户组 Tab；组织仍挂租户，用户组仅在组织上下文展示。 -->
+807|          <div v-if="visitedPages.has('organization_workspace')" v-show="page === 'organization_workspace'">
+808|            <OrganizationWorkspace
+809|              :active="page === 'organization_workspace'"
+810|              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
+811|              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true }))"
+812|            />
+813|          </div>
+814|          <div v-if="visitedPages.has('groups')" v-show="page === 'groups'">
+815|            <GroupManagement
+816|              :active="page === 'groups'"
+817|              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
+818|              :tenants="consoleMode === 'platform' ? platformTenantOptions : tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined }))"
+819|            />
+820|          </div>
+821|          <div v-if="visitedPages.has('authorization_simulation')" v-show="page === 'authorization_simulation'">
+822|            <AdminPageHeader
+823|              eyebrow="ACCESS POLICY PREVIEW"
+824|              title="授权模拟"
+825|              subtitle="用当前生效的成员、角色和数据范围规则预演一次请求，不会修改授权配置。"
+826|            />
+827|            <AuthorizationSimulator
+828|              :active="page === 'authorization_simulation'"
+829|              :seed-tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name) }))"
+830|              :seed-applications="applications"
+831|            />
+832|          </div>
+833|          <footer class="app-footer mt-auto flex min-w-0 max-w-full flex-col justify-between gap-2 border-t pt-3 text-xs sm:flex-row">
+834|            <span class="min-w-0 shrink-0">统一身份与权限管理平台</span>
+835|            <span class="min-w-0 break-words sm:text-right">{{ page === 'authorization_simulation' ? '授权模拟只读，不会修改策略' : '管理变更由服务端鉴权并写入审计' }}</span>
+836|          </footer>
+837|          </template>
+838|        </a-layout-content>
+839|        <!-- G02 自助改密弹窗：挂在登录态布局内；changed 后强制退出（服务端已撤销全部会话）。 -->
+840|        <ChangePasswordModal v-model:open="changePasswordOpen" @changed="signOut" />
+841|      </a-layout>
+842|    </a-layout>
+843|  </a-config-provider>
+844|</template>

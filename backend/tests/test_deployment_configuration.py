@@ -1,10 +1,22 @@
 """生产配置必须显式绑定可信公网地址与强签名密钥。"""
 
+import os
 import unittest
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
 from app.core.config import Settings
+
+
+# 容器/本机可能注入 SMTP 与注册策略环境变量；配置单测必须与运行环境隔离。
+CONTAMINATING_ENV_KEYS = (
+    "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM",
+    "SMTP_STARTTLS", "SMTP_SSL", "SMTP_TIMEOUT_SECONDS",
+    "ALLOW_PUBLIC_REGISTRATION", "PUBLIC_REGISTRATION_SECRET",
+    "BOOTSTRAP_ADMIN_EMAIL", "BOOTSTRAP_ADMIN_PASSWORD",
+    "ALLOW_BOOTSTRAP_EMAIL_BYPASS", "INVITATION_EMAIL_ENABLED",
+)
 
 
 class ProductionSettingsTests(unittest.TestCase):
@@ -18,8 +30,10 @@ class ProductionSettingsTests(unittest.TestCase):
             "bootstrap_admin_email": "admin@example.test",
         }
         values.update(overrides)
-        # 配置单测必须与开发机 .env 隔离，避免隐式读取真实本地部署值。
-        return Settings(**values, _env_file=None)
+        # 配置单测必须与开发机 .env/容器环境隔离，避免隐式读取真实本地部署值。
+        environment = {key: value for key, value in os.environ.items() if key not in CONTAMINATING_ENV_KEYS}
+        with patch.dict(os.environ, environment, clear=True):
+            return Settings(**values, _env_file=None)
 
     def test_accepts_valid_public_https_configuration(self) -> None:
         settings = self.valid_production_settings()

@@ -1,4 +1,4 @@
-"""集中定义服务配置，避免路由和业务层各自读取环境变量。"""
+﻿"""集中定义服务配置，避免路由和业务层各自读取环境变量。"""
 
 from functools import lru_cache
 from urllib.parse import urlsplit
@@ -8,22 +8,35 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """环境变量驱动的全局配置（pydantic-settings）。
+
+    字段均可通过同名大写环境变量或 .env 覆盖；生产密钥与凭证必须由部署
+    平台注入。非开发环境由 validate_non_development_configuration 强制
+    安全底线：PostgreSQL 驱动、强 JWT 密钥、HTTPS issuer/控制台地址、
+    SMTP 必须加密传输等，配置不合规时拒绝启动。
+    """
     # 这些值可由环境变量覆盖。生产密钥与数据库凭证不得写入代码仓库。
     app_name: str = "iam-api"
     app_env: str = "development"
     api_v1_prefix: str = "/api/v1"
     database_url: str | None = None
+    # HS256 管理台短期令牌签名密钥；非开发环境强制至少 32 字符。
     jwt_secret: str = ""
+    # 管理台短期访问令牌（分钟）与刷新会话（天）的有效期。
     access_token_minutes: int = 30
     refresh_token_days: int = 14
     oidc_issuer: str | None = None
     oidc_signing_key_path: str = "/run/iam-secrets/oidc-signing-key.pem"
     # 轮换重叠期额外发布并接受的旧/新公钥；未配置时维持单密钥行为。
     oidc_previous_signing_key_path: str | None = None
+    # 管理台公网地址；密码重置、邀请等邮件链接以此为基底拼接。
     console_public_url: str = "http://localhost:5175"
+    # ToC 自助注册全局总开关；应用仍须 registration_policy=open 且主题开启注册入口。
     allow_public_registration: bool = False
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
+    # 破窗开关默认关闭：平台权限只认角色绑定。仅在灾备时临时开启邮箱旁路，且写审计须标记 break_glass。
+    allow_bootstrap_email_bypass: bool = False
     # 仅供受信任的模型网关上报用量；生产中由 Secret Manager 注入，不提供默认值。
     model_usage_api_key: str = ""
     # 配额预留执行默认关闭，必须在模型网关与故障策略验收后显式开启。
@@ -39,6 +52,7 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     smtp_ssl: bool = False
     smtp_timeout_seconds: int = Field(default=10, ge=1, le=30)
+    # 重置令牌有效期与同一账号再次申请重置的冷却时间。
     password_reset_token_minutes: int = Field(default=30, ge=5, le=120)
     password_reset_cooldown_seconds: int = Field(default=60, ge=30, le=3600)
     # 管理台登录页可选绑定一个 OAuth client，用于在控制台展示 ToC 邮箱注册（仍受全局与应用策略约束）。
@@ -52,14 +66,20 @@ class Settings(BaseSettings):
     # 登录失败计数只保留短期 HMAC 键；组合桶限制单账号/来源，来源桶限制单 IP 的批量猜测。
     login_attempt_window_seconds: int = Field(default=900, ge=60, le=86400)
     login_identifier_max_failures: int = Field(default=8, ge=3, le=100)
+    # 纯邮箱维度锁定阈值（G20）：刻意高于“邮箱×IP”桶，降低恶意第三方故意锁号的代价。
+    login_account_max_failures: int = Field(default=15, ge=5, le=200)
     login_ip_max_failures: int = Field(default=60, ge=10, le=1000)
     login_block_seconds: int = Field(default=900, ge=60, le=86400)
+    # G18 主题素材上传：本地盘卷路径与单文件上限（默认 2MB）。
+    theme_upload_dir: str = "/app/data/theme-uploads"
+    theme_upload_max_bytes: int = Field(default=2 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
     # 只有生产 API 确认只能经 Caddy→Nginx 访问时，才信任代理重写的专用来源地址头。
     trust_proxy_client_ip: bool = False
     # 过期的一次性认证凭证由后台维护任务按周期回收；批次上限避免单次清理占用过久。
     credential_cleanup_interval_seconds: int = Field(default=3600, ge=60, le=86400)
     credential_cleanup_batch_size: int = Field(default=1000, ge=1, le=10000)
-    cors_origins: list[str] = ["http://localhost:5173"]
+    # 允许跨域调用 API 的前端来源白名单。
+    cors_origins: list[str] = ["http://localhost:5175"]
 
     # 开发环境从 .env 读取；部署环境建议由运行平台注入环境变量。
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -117,3 +137,4 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """进程内复用配置对象，避免每个请求重新解析环境变量。"""
     return Settings()
+

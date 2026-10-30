@@ -1,0 +1,10 @@
+/* Re-export shared management UI primitives (folder + index). */
+export { default as AdminPageHeader } from './AdminPageHeader.vue'
+export { default as AdminListPage } from './AdminListPage.vue'
+export { default as AdminEmpty } from './AdminEmpty.vue'
+export { default as AdminFilterPanel } from './AdminFilterPanel.vue'
+export { default as AdminTableToolbar } from './AdminTableToolbar.vue'
+export { default as AdminSearchField } from './AdminSearchField.vue'
+export { default as AdminStatBand } from './AdminStatBand.vue'
+export { default as AdminDetailDrawer } from './AdminDetailDrawer.vue'
+export { default as AdminMonoValue } from './AdminMonoValue.vue'

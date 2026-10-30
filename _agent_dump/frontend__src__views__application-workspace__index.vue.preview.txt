@@ -1,0 +1,124 @@
+<script setup lang="ts">
+// 应用工作台（对齐 user-center-sys appAndRoleManagement 信息架构）：
+// 左树选应用 + 右侧「角色 / 权限编码」两个 Tab；未选应用时展示中文空态与配权三步主路径。
+// 列表页入口在侧栏「高级管理」组（默认折叠）；本页是日常配权主入口。
+import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { message } from 'ant-design-vue'
+import { api } from '@/api'
+import { PAGE_PATHS } from '@/router/navigation'
+import AdminPageHeader from '@/components/AdminPageHeader.vue'
+import AdminEmpty from '@/components/AdminEmpty.vue'
+import AdminPathGuide from '@/components/AdminPathGuide.vue'
+import AppTree, { type AppTreeApplication } from './components/AppTree.vue'
+import RolesTab from './tabs/RolesTab.vue'
+import PermissionsTab from './tabs/PermissionsTab.vue'
+import MenuTab from './tabs/MenuTab.vue'
+
+interface TenantOption {
+  id: string
+  name: string
+  status: string
+  can_read_applications?: boolean
+  can_manage_applications?: boolean
+}
+interface ApplicationRecord {
+  id: string
+  tenant_id: string
+  name: string
+  client_id: string
+  permission_namespace: string
+  status: 'active' | 'disabled'
+  can_manage?: boolean
+}
+
+// 三步配权主路径（对齐蓝图）：页头副标题与空态引导共用同一文案口径。
+const MAIN_PATH_STEPS = [
+  '在「权限编码」Tab 维护本应用 code',
+  '在「角色」Tab 为角色挂权限编码',
+  '到「用户管理」为用户多选角色（生效权限 = 角色并集）',
+] as const
+
+const router = useRouter()
+
+// 空态引导出口：跳应用管理列表（高级管理）。
+function goApplicationManagement(): void {
+  void router.push(PAGE_PATHS.applications)
+}
+
+const props = withDefaults(defineProps<{
+  active: boolean
+  consoleMode: 'platform' | 'tenant'
+  apiPrefix?: string
+  tenants: TenantOption[]
+  // 平台模式复用壳层应用字典避免重复请求；租户模式自行按租户拉取。
+  shellApplications?: Array<Record<string, unknown>> | null
+  shellCatalogGeneration?: number
+}>(), {
+  apiPrefix: '/admin',
+  shellApplications: null,
+  shellCatalogGeneration: -1,
+})
+
+const emit = defineEmits<{ changed: [] }>()
+
+const applications = ref<ApplicationRecord[]>([])
+const selectedId = ref('')
+const loading = ref(false)
+let requestSequence = 0
+let hydratedCatalogGeneration = -1
+
+// ===== P397 应用概览统计条：三个 Tab 加载后各自上报计数，父级聚合展示 =====
+const tabStats = ref<{ roles: number | null, permissions: number | null, resources: number | null }>({
+  roles: null, permissions: null, resources: null,
+})
+
+function onTabStats(key: 'roles' | 'permissions' | 'resources', count: number): void {
+  tabStats.value[key] = count
+}
+
+const overviewItems = computed(() => [
+  { key: 'roles', label: '角色', count: tabStats.value.roles },
+  { key: 'permissions', label: '权限码', count: tabStats.value.permissions },
+  { key: 'resources', label: '资源', count: tabStats.value.resources },
+] as const)
+
+const selectedApplication = computed(() =>
+  applications.value.find(item => item.id === selectedId.value) || null)
+
+// 左树展示用：补齐租户分组名（租户字典可能在应用之后就绪，computed 自动跟随）。
+const treeApplications = computed<AppTreeApplication[]>(() => applications.value.map(item => ({
+  id: item.id,
+  tenant_id: item.tenant_id,
+  name: item.name,
+  client_id: item.client_id,
+  status: item.status,
+  tenant_name: props.tenants.find(tenant => tenant.id === item.tenant_id)?.name || '未知租户',
+})))
+
+// 把壳层字典行换算成工作台需要的字段，避免对 Row 的不确定类型直接断言。
+function toApplicationRecords(rows: Array<Record<string, unknown>>): ApplicationRecord[] {
+  return rows.map(row => ({
+    id: String(row.id),
+    tenant_id: String(row.tenant_id),
+    name: String(row.name),
+    client_id: String(row.client_id ?? ''),
+    permission_namespace: String(row.permission_namespace ?? ''),
+    status: row.status === 'disabled' ? 'disabled' : 'active',
+    can_manage: row.can_manage === true,
+  }))
+}
+
+// 平台壳字典代次变化时复用，避免路由激活重复请求 /admin/applications。
+function hydrateFromShell(): boolean {
+  if (props.apiPrefix !== '/admin' || props.shellApplications == null) return false
+  const generation = props.shellCatalogGeneration ?? -1
+  if (generation < 0 || generation === hydratedCatalogGeneration) return false
+  applications.value = toApplicationRecords(props.shellApplications)
+  hydratedCatalogGeneration = generation
+  ensureSelection()
+  return true
+}
+
+// 默认选中第一个应用（对齐蓝图）；列表为空或原选择被删时回退。
+// P397 支持 

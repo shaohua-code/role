@@ -58,7 +58,9 @@ class ModelUsageQuotaContractTests(unittest.TestCase):
         db.scalar.return_value = 451
         db.execute.return_value.all.return_value = []
 
-        page = list_model_usage_events(limit=500, offset=-3, db=db)
+        # 绿场规则：Mock 契约测试直接假定 actor 持 L1。
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+            page = list_model_usage_events(limit=500, offset=-3, actor=Mock(), db=db)
 
         self.assertEqual(page, {"items": [], "total": 451, "limit": 200, "offset": 0})
         db.scalar.assert_called_once()
@@ -66,16 +68,18 @@ class ModelUsageQuotaContractTests(unittest.TestCase):
 
     def test_usage_filters_reject_inverted_utc_dates_before_query(self) -> None:
         db = Mock()
-        with self.assertRaises(HTTPException) as raised:
-            list_model_usage_events(
-                created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), db=db,
-            )
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+            with self.assertRaises(HTTPException) as raised:
+                list_model_usage_events(
+                    created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), actor=Mock(), db=db,
+                )
         self.assertEqual(raised.exception.status_code, 400)
         db.scalar.assert_not_called()
-        with self.assertRaises(HTTPException) as summary_error:
-            model_usage_summary(
-                created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), db=db,
-            )
+        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+            with self.assertRaises(HTTPException) as summary_error:
+                model_usage_summary(
+                    created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), actor=Mock(), db=db,
+                )
         self.assertEqual(summary_error.exception.status_code, 400)
         db.execute.assert_not_called()
 
@@ -105,6 +109,10 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
         # 显式按外键依赖分层 flush，避免测试夹具依赖 ORM 未配置的对象排序。
         self.db.add_all([self.tenant, self.user])
         self.db.flush()
+        # 绿场规则：actor 需显式绑定 L1 才能通过按码判权。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.user)
         self.db.add_all([self.membership, self.application])
         self.db.flush()
         self.db.add(self.model)
@@ -201,7 +209,7 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
         row = self.db.query(ModelUsageReservation).one()
         row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
         self.db.flush()
-        visible = list_model_usage_reviews(tenant_id=self.tenant_id, db=self.db)
+        visible = list_model_usage_reviews(tenant_id=self.tenant_id, actor=self.user, db=self.db)
         self.assertEqual(visible["total"], 1)
         self.assertEqual([item["request_id"] for item in visible["items"]], [row.request_id])
 
@@ -239,8 +247,8 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
             row.expires_at = expiry + timedelta(minutes=index)
         self.db.flush()
 
-        first_page = list_model_usage_reviews(tenant_id=self.tenant_id, limit=2, offset=0, db=self.db)
-        second_page = list_model_usage_reviews(tenant_id=self.tenant_id, limit=2, offset=2, db=self.db)
+        first_page = list_model_usage_reviews(tenant_id=self.tenant_id, limit=2, offset=0, actor=self.user, db=self.db)
+        second_page = list_model_usage_reviews(tenant_id=self.tenant_id, limit=2, offset=2, actor=self.user, db=self.db)
 
         self.assertEqual(first_page["total"], 3)
         self.assertEqual(first_page["limit"], 2)
@@ -264,8 +272,8 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
         self.db.flush()
         expected_ids = [str(row.id) for row in sorted(rows, key=lambda row: str(row.id), reverse=True)]
 
-        first_page = list_model_usage_events(tenant_id=self.tenant_id, limit=2, offset=0, db=self.db)
-        second_page = list_model_usage_events(tenant_id=self.tenant_id, limit=2, offset=2, db=self.db)
+        first_page = list_model_usage_events(tenant_id=self.tenant_id, limit=2, offset=0, actor=self.user, db=self.db)
+        second_page = list_model_usage_events(tenant_id=self.tenant_id, limit=2, offset=2, actor=self.user, db=self.db)
 
         self.assertEqual(first_page["total"], 3)
         self.assertEqual(first_page["limit"], 2)
@@ -308,11 +316,11 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
 
         day = date(2026, 10, 15)
         failed = list_model_usage_events(
-            tenant_id=self.tenant_id, outcome="failed", created_from=day, created_to=day, db=self.db,
+            tenant_id=self.tenant_id, outcome="failed", created_from=day, created_to=day, actor=self.user, db=self.db,
         )
         scoped = model_usage_summary(
             tenant_id=self.tenant_id, model_id=self.model_id, outcome="succeeded",
-            created_from=day, created_to=day, db=self.db,
+            created_from=day, created_to=day, actor=self.user, db=self.db,
         )
 
         self.assertEqual(failed["total"], 2)

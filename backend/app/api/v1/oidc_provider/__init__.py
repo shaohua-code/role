@@ -12,4 +12,22 @@ router.include_router(authorization_router)
 router.include_router(token_router)
 router.include_router(logout_router)
 
-__all__ = ["discovery_document", "router"]
+# 兼容历史导入路径：原 oidc.py 垫片的再导出已并入包入口，新代码可直接从这里导入。
+from .authorization import authorize, consent_context, consent_decision, login_context
+from .logout import end_session
+from .metadata import discovery
+from .tokens import (
+    _access_token,
+    _id_token,
+    introspect,
+    jwks,
+    revoke,
+    token,
+    userinfo,
+)
+
+__all__ = [
+    "_access_token", "_id_token", "authorize", "consent_context", "consent_decision",
+    "discovery", "discovery_document", "end_session", "introspect", "jwks",
+    "login_context", "revoke", "router", "token", "userinfo",
+]

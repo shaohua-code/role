@@ -17,8 +17,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.api.v1.oidc import (_access_token, authorize, consent_context, consent_decision, discovery_document,
-                             end_session, introspect as oidc_introspect, revoke as oidc_revoke, token, userinfo)
+from app.api.v1.oidc_provider import (_access_token, authorize, consent_context, consent_decision, discovery_document,
+                                      end_session, introspect as oidc_introspect, revoke as oidc_revoke, token, userinfo)
 from app.api.v1.admin.organizations import set_user_membership_status
 from app.core.config import get_settings
 from app.core.oidc_keys import decode_oidc_jwt
@@ -320,7 +320,7 @@ class OIDCConsentIntegrationTests(unittest.TestCase):
         self.db.flush()
         self.app.post_logout_redirect_uris = [self.logout_callback]
         self.db.flush()
-        from app.api.v1.oidc import _id_token
+        from app.api.v1.oidc_provider import _id_token
         hint = _id_token(self.user, self.app, {"openid"}, None, "test-access-token")
         request = self.logout_request(hint, self.logout_callback, "logout-state-123")
 
@@ -342,7 +342,7 @@ class OIDCConsentIntegrationTests(unittest.TestCase):
         self.assertEqual(self.db.scalar(select(AuditEvent.action).where(AuditEvent.action == "oidc.logout")), "oidc.logout")
 
     def test_rp_logout_rejects_unregistered_redirect_and_access_token_hint(self) -> None:
-        from app.api.v1.oidc import _access_token, _id_token
+        from app.api.v1.oidc_provider import _access_token, _id_token
         id_hint = _id_token(self.user, self.app, {"openid"}, None, "test-access-token")
         bad_redirect = asyncio.run(end_session(
             self.logout_request(id_hint, "https://attacker.example.test/steal", "logout-state-123"),
@@ -371,7 +371,7 @@ class OIDCConsentIntegrationTests(unittest.TestCase):
         self.assertEqual(wrong_token_type.status_code, 400)
 
     def test_logout_hint_cannot_clear_another_browser_account_cookie(self) -> None:
-        from app.api.v1.oidc import _id_token
+        from app.api.v1.oidc_provider import _id_token
         other_user = User(
             email=f"other-{uuid4().hex}@example.test", password_hash="test-only",
             display_name="Other Browser User", status="active",

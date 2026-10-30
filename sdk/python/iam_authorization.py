@@ -35,6 +35,11 @@ class PostgresScopeFilter:
     parameters: dict[str, Any]
 
 
+def is_management_permission(permission_code: str) -> bool:
+    """Management-plane codes (iam.*) never require a row-level data_scope."""
+    return isinstance(permission_code, str) and permission_code.startswith("iam.")
+
+
 class IamAuthorizationClient:
     """Call IAM from a protected backend route using its user's access token."""
 
@@ -50,23 +55,35 @@ class IamAuthorizationClient:
         tenant_id: str,
         permission_code: str,
         resource_id: str | None = None,
-        include_data_scope: bool = False,
+        include_data_scope: bool | None = None,
         subject_id: str | None = None,
     ) -> AuthorizationDecision:
-        """Return a decision; any transport or contract error is raised, never allowed."""
+        """Return a decision; any transport or contract error is raised, never allowed.
+
+        include_data_scope=None auto: business codes request scope; management iam.* do not.
+        Business allowed-without-usable-data_scope fails closed; management may omit scope.
+        Explicit include_data_scope=True still requires subject_id for owner equality checks.
+        """
         if not access_token:
             raise ValueError("An end-user OIDC access token is required")
-        if include_data_scope and (not isinstance(subject_id, str) or not subject_id.strip()):
-            # owner_user_id 是行级过滤条件的一部分；必须绑定到本地验签会话中的 sub。
-            # subject_id 必须是已验签 IAM OIDC sub，不能误传业务系统自己的本地用户主键。
-            # 它只用于校验 IAM 响应，不发送给 IAM，也不允许来自浏览器请求参数。
+        management = is_management_permission(permission_code)
+        explicit_include = include_data_scope is True
+        if include_data_scope is None:
+            effective_include = not management
+        else:
+            effective_include = bool(include_data_scope)
+        if explicit_include and (not isinstance(subject_id, str) or not subject_id.strip()):
             raise ValueError("A locally verified IAM subject_id is required when requesting a data scope")
-        # OIDC sub 是不透明且区分大小写的值；只做非空校验，比较时保留原值。
-        verified_subject_id = subject_id if include_data_scope else None
+        if explicit_include:
+            verified_subject_id = subject_id.strip()
+        elif isinstance(subject_id, str) and subject_id.strip():
+            verified_subject_id = subject_id.strip()
+        else:
+            verified_subject_id = None
         payload: dict[str, Any] = {
             "tenant_id": tenant_id,
             "permission_code": permission_code,
-            "include_data_scope": include_data_scope,
+            "include_data_scope": effective_include,
         }
         if self.application_id:
             payload["application_id"] = self.application_id
@@ -89,12 +106,13 @@ class IamAuthorizationClient:
             raise AuthorizationServiceError(502, "IAM returned an invalid authorization response") from None
         if not isinstance(body, dict) or not isinstance(body.get("allowed"), bool) or not isinstance(body.get("reason"), str):
             raise AuthorizationServiceError(502, "IAM returned an invalid authorization decision")
+        if body.get("reason") == "data_scope_policy_missing" and body["allowed"]:
+            raise AuthorizationServiceError(502, "IAM returned data_scope_policy_missing with an allow decision")
         if "data_scope" in body and body["data_scope"] is not None:
-            if not body["allowed"] or not include_data_scope:
+            if not body["allowed"]:
                 raise AuthorizationServiceError(502, "IAM returned an unexpected data scope")
-            data_scope = _validate_data_scope(body["data_scope"], tenant_id, verified_subject_id or "")
-        elif body["allowed"] and include_data_scope:
-            # A positive data-aware permission is unusable unless its row filter is present.
+            data_scope = _validate_data_scope(body["data_scope"], tenant_id, verified_subject_id)
+        elif body["allowed"] and (not management or effective_include):
             raise AuthorizationServiceError(502, "IAM omitted the required data scope")
         else:
             data_scope = None
@@ -161,22 +179,30 @@ class IamAuthorizationClient:
         return decisions
 
     def require(self, *args: Any, **kwargs: Any) -> AuthorizationDecision:
-        """Raise 403-style error for a negative IAM decision; callers should fail closed."""
+        """Raise 403/502 for a negative or unscoped business decision; callers fail closed."""
         decision = self.check(*args, **kwargs)
         if not decision.allowed:
             raise AuthorizationServiceError(403, f"Permission denied: {decision.reason}")
+        permission_code = args[2] if len(args) >= 3 else kwargs.get("permission_code")
+        if (
+            isinstance(permission_code, str)
+            and not is_management_permission(permission_code)
+            and decision.data_scope is None
+        ):
+            raise AuthorizationServiceError(502, "IAM omitted the required data scope")
         return decision
 
 
-def _validate_data_scope(value: Any, expected_tenant_id: str, expected_subject_id: str) -> dict[str, Any]:
+def _validate_data_scope(value: Any, expected_tenant_id: str, expected_subject_id: str | None) -> dict[str, Any]:
     """Validate the complete row-filter contract before handing it to a business query.
 
     Every OR branch must independently carry the verified tenant. Restricting the
     discriminator and business field names here prevents malformed IAM responses from
-    accidentally becoming an unscoped query in an adapter.
+    accidentally becoming an unscoped query in an adapter. 绿场：expected_subject_id
+    允许为 None（未显式请求 data_scope 的业务码强制范围）；此时保留租户校验，
+    仅跳过 owner 分支与本地 sub 的等值断言。
     """
     if (not isinstance(expected_tenant_id, str) or not expected_tenant_id
-            or not isinstance(expected_subject_id, str) or not expected_subject_id
             or not isinstance(value, dict) or value.get("mode") != "any_of"):
         raise AuthorizationServiceError(502, "IAM returned an invalid data scope")
     constraints = value.get("constraints")
@@ -196,7 +222,7 @@ def _validate_data_scope(value: Any, expected_tenant_id: str, expected_subject_i
         elif kind == "owner":
             user_id = constraint.get("user_id")
             if (constraint.get("field") != "owner_user_id" or not isinstance(user_id, str) or not user_id
-                    or user_id != expected_subject_id):
+                    or (expected_subject_id is not None and user_id != expected_subject_id)):
                 raise AuthorizationServiceError(502, "IAM returned an invalid owner constraint")
             normalized.append({"kind": "owner", "field": "owner_user_id", "user_id": user_id,
                                "tenant_id": expected_tenant_id})

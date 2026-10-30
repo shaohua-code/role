@@ -1,3 +1,5 @@
+"""IAM 平台 FastAPI 应用入口：注册版本化路由、生命周期后台任务与 CORS 中间件。"""
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -7,10 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.admin import router as admin_router
+from app.api.v1.admin.uploads import public_router as uploads_public_router
 from app.api.v1.tenant_admin import router as tenant_admin_router
 from app.api.v1.authorization import router as authorization_router
 from app.api.v1.health import readiness_check, router as health_router
-from app.api.v1.oidc import discovery_document, router as oidc_router
+from app.api.v1.oidc_provider import discovery_document, router as oidc_router
 from app.api.v1.model_usage import router as model_usage_router
 from app.core.config import get_settings
 from app.services.maintenance import cleanup_expired_credentials_from_database
@@ -99,10 +102,13 @@ app = FastAPI(title="统一身份与权限管理平台 API", version="0.1.0", li
 app.include_router(health_router, prefix=settings.api_v1_prefix)
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)
+# G18 主题素材公开只读：登录页免登录加载品牌 Logo/背景，必须挂在 /admin 认证之外。
+app.include_router(uploads_public_router, prefix=settings.api_v1_prefix)
 app.include_router(tenant_admin_router, prefix=settings.api_v1_prefix)
 app.include_router(authorization_router, prefix=settings.api_v1_prefix)
 app.include_router(oidc_router, prefix=settings.api_v1_prefix)
 app.include_router(model_usage_router, prefix=settings.api_v1_prefix)
+# CORS 允许来源来自配置，凭证模式开启以支持 Cookie 会话；方法与头部收敛为最小集合。
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True,
                    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
 

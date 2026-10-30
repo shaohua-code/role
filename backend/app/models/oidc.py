@@ -27,6 +27,7 @@ class OAuthAuthorizationCode(Base):
         ForeignKey("applications.id", ondelete="CASCADE"), index=True, nullable=False
     )
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    # 签发时的用户全局 / 租户成员状态版本快照，兑换时版本不符即拒绝。
     auth_version: Mapped[int] = mapped_column(default=1, nullable=False)
     membership_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"), nullable=False)
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -58,6 +59,7 @@ class OAuthConsentRequest(Base):
     membership_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"), nullable=False)
     ticket_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     redirect_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    # 客户端原样回传的 state，签发授权码时随重定向返回。
     client_state: Mapped[str] = mapped_column(String(512), nullable=False)
     scope: Mapped[str] = mapped_column(String(500), nullable=False)
     nonce: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -78,6 +80,7 @@ class OAuthRefreshToken(Base):
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    # 轮换族标识：同一客户端会话的令牌同族，检测到重放时整族撤销。
     family_id: Mapped[UUID] = mapped_column(index=True, nullable=False)
     application_id: Mapped[UUID] = mapped_column(
         ForeignKey("applications.id", ondelete="CASCADE"), index=True, nullable=False
@@ -89,6 +92,7 @@ class OAuthRefreshToken(Base):
     scope: Mapped[str] = mapped_column(String(500), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 轮换产生的后继令牌引用；旧记录据此识别“已轮换令牌被再次使用”的重放。
     replaced_by_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("oauth_refresh_tokens.id", ondelete="SET NULL")
     )

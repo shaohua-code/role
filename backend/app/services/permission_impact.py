@@ -14,9 +14,9 @@ from app.models.organization import RoleDataScope
 
 
 APPLICATION_ADMIN_PERMISSION_CODES = frozenset({
-    "iam.application.read",
-    "iam.application.manage",
-    "iam.application.secret.rotate",
+    "app.read",
+    "app.manage",
+    "app.secret.rotate",
 })
 
 

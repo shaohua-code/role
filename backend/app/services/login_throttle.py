@@ -17,8 +17,13 @@ from app.models.identity import LoginAttemptBucket
 
 @dataclass(frozen=True)
 class LoginThrottleTicket:
-    """一次登录请求持有的两个已锁定桶键；只在当前请求事务中使用。"""
+    """一次登录请求持有的三个已锁定桶键；只在当前请求事务中使用。
 
+    account_key 是纯邮箱维度桶（G20）：同一账号换 IP 仍受账号级锁定约束；
+    阈值刻意高于“邮箱×IP”组合桶，降低恶意第三方故意锁号的代价。
+    """
+
+    account_key: str
     identifier_key: str
     address_key: str
     blocked_until: datetime | None = None
@@ -46,6 +51,7 @@ def client_ip_for_request(request: Request, settings) -> str:
 
 
 def _key_hash(secret: str, purpose: str, value: str) -> str:
+    """HMAC-SHA256 派生桶键摘要；purpose 域分隔避免不同用途的键互相碰撞。"""
     material = f"iam-login-throttle:{purpose}:{value}".encode("utf-8")
     return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
@@ -76,23 +82,24 @@ def _insert_missing_buckets(db: Session, key_hashes: list[str], now: datetime, r
 
 def begin_login_attempt(db: Session, email: str, client_ip: str, settings,
                         *, now: datetime | None = None) -> LoginThrottleTicket:
-    """锁定账号/来源桶后检查封禁状态，令同一来源并发请求串行通过检查。"""
+    """锁定账号/纯邮箱/来源三个桶后检查封禁状态，令同一来源并发请求串行通过检查。"""
     current = _utc(now or datetime.now(timezone.utc))
     address = str(ipaddress.ip_address(client_ip))
+    account_key = _key_hash(settings.jwt_secret, "identity", email.casefold())
     identifier_key = _key_hash(settings.jwt_secret, "identity-address", f"{email.casefold()}|{address}")
     address_key = _key_hash(settings.jwt_secret, "address", address)
-    key_hashes = sorted((identifier_key, address_key))
+    key_hashes = sorted((account_key, identifier_key, address_key))
     retain_seconds = settings.login_attempt_window_seconds + settings.login_block_seconds
     _insert_missing_buckets(db, key_hashes, current, retain_seconds)
 
-    # 按摘要固定排序拿行锁，避免并发登录在两个桶上形成相反锁序。
+    # 按摘要固定排序拿行锁，避免并发登录在多个桶上形成相反锁序。
     buckets = db.scalars(
         select(LoginAttemptBucket)
         .where(LoginAttemptBucket.key_hash.in_(key_hashes))
         .order_by(LoginAttemptBucket.key_hash)
         .with_for_update()
     ).all()
-    if len(buckets) != 2:
+    if len(buckets) != 3:
         raise RuntimeError("登录节流桶创建或读取失败")
 
     blocked_until = None
@@ -111,21 +118,22 @@ def begin_login_attempt(db: Session, email: str, client_ip: str, settings,
             bucket.expires_at = current + timedelta(seconds=retain_seconds)
 
     if blocked_until:
-        return LoginThrottleTicket(identifier_key, address_key, blocked_until)
-    return LoginThrottleTicket(identifier_key, address_key)
+        return LoginThrottleTicket(account_key, identifier_key, address_key, blocked_until)
+    return LoginThrottleTicket(account_key, identifier_key, address_key)
 
 
 def record_login_failure(db: Session, ticket: LoginThrottleTicket, settings,
                          *, now: datetime | None = None) -> None:
-    """只在口令验证失败后递增桶；跨过阈值后阻止该来源继续消耗 Argon2。"""
+    """只在口令验证失败后递增桶；跨过阈值后阻止该账号/来源继续消耗 Argon2。"""
     current = _utc(now or datetime.now(timezone.utc))
     buckets = {
         row.key_hash: row
         for row in db.scalars(select(LoginAttemptBucket).where(
-            LoginAttemptBucket.key_hash.in_((ticket.identifier_key, ticket.address_key))
+            LoginAttemptBucket.key_hash.in_((ticket.account_key, ticket.identifier_key, ticket.address_key))
         )).all()
     }
     thresholds = {
+        ticket.account_key: settings.login_account_max_failures,
         ticket.identifier_key: settings.login_identifier_max_failures,
         ticket.address_key: settings.login_ip_max_failures,
     }
@@ -143,11 +151,12 @@ def record_login_failure(db: Session, ticket: LoginThrottleTicket, settings,
 
 def clear_login_identifier_failures(db: Session, ticket: LoginThrottleTicket, settings,
                                     *, now: datetime | None = None) -> None:
-    """验证成功只清除当前账号/来源组合的失败数，不抹去同地址其他账号的失败轨迹。"""
-    bucket = db.get(LoginAttemptBucket, ticket.identifier_key)
-    if bucket:
-        current = _utc(now or datetime.now(timezone.utc))
-        bucket.failed_attempts = 0
-        bucket.window_started_at = current
-        bucket.blocked_until = None
-        bucket.expires_at = current + timedelta(seconds=settings.login_attempt_window_seconds)
+    """验证成功清除纯邮箱桶与当前账号/来源组合的失败数，不抹去同地址其他账号的失败轨迹。"""
+    current = _utc(now or datetime.now(timezone.utc))
+    for key_hash in (ticket.account_key, ticket.identifier_key):
+        bucket = db.get(LoginAttemptBucket, key_hash)
+        if bucket:
+            bucket.failed_attempts = 0
+            bucket.window_started_at = current
+            bucket.blocked_until = None
+            bucket.expires_at = current + timedelta(seconds=settings.login_attempt_window_seconds)

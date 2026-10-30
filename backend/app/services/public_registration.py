@@ -24,6 +24,7 @@ from app.models.identity import (
 )
 from app.models.organization import RoleDataScope
 from app.services.email import send_public_registration_code
+from app.services.permission_namespace import MANAGEMENT_DOMAIN_PREFIXES
 
 logger = logging.getLogger(__name__)
 _FORBIDDEN_ROLE_SCOPES = {"admin", "manage", "delete", "secret", "*"}
@@ -46,6 +47,7 @@ def _registration_secret(settings: Settings) -> str:
 
 
 def registration_email_hash(settings: Settings, application_id: UUID, email: str) -> str:
+    """注册邮箱以 HMAC 摘要落库，数据库泄露不直接暴露邮箱明文。"""
     return _hmac(_registration_secret(settings), f"iam-registration-email:{application_id}:{email}")
 
 
@@ -57,6 +59,7 @@ def _derived_code(settings: Settings, challenge_id: UUID) -> str:
 
 
 def _code_digest(settings: Settings, challenge_id: UUID, code: str) -> str:
+    """验证码仅存 HMAC 摘要；挑战记录泄露无法还原 OTP 明文。"""
     return _hmac(_registration_secret(settings), f"iam-registration-code:{challenge_id}:{code}")
 
 
@@ -122,7 +125,8 @@ def eligible_registration_role(db: Session, application: Application, role_id: U
         .where(RolePermission.role_id == role.id, Permission.status == "active")
     ).all()
     for code, scope in grants:
-        if code.startswith("iam.") or scope.casefold() in _FORBIDDEN_ROLE_SCOPES:
+        # P392 五域体系：管理面码（五域前缀）一律禁止作为自助注册默认角色。
+        if code.startswith(MANAGEMENT_DOMAIN_PREFIXES) or scope.casefold() in _FORBIDDEN_ROLE_SCOPES:
             return None
     # 自助注册角色不能顺手拿到整租户/组织数据范围。只给“普通角色”命名并不足够，
     # 还要确认它的数据策略不会让新用户读取其他成员的数据；无数据范围策略的权限
@@ -361,6 +365,7 @@ def deliver_registration_emails(*, batch_size: int = 5) -> int:
                 row.locked_until = None
             else:
                 row.status = "pending"
+                # 指数退避重试（15s×2^(n-1)，封顶 5 分钟）后回到待投递队列。
                 row.retry_after = completed_at + timedelta(seconds=min(300, 15 * (2 ** (row.attempts - 1))))
                 row.locked_until = None
             db.commit()

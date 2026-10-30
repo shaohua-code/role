@@ -39,8 +39,10 @@ class AuthorizationSimulationTests(unittest.TestCase):
         self.user = User(id=uuid4(), email=f"simulate-{uuid4().hex}@example.test", password_hash="test-only",
                          display_name="预演用户")
         self.role = Role(id=uuid4(), tenant_id=self.tenant.id, key=f"sim-{uuid4().hex[:10]}", name="只读角色")
+        # 绿场规则：模拟用权限按管理面码构造（不强制数据范围），include_data_scope=False 直接放行。
         self.permission = Permission(id=uuid4(), code=f"simulation.read.{uuid4().hex[:8]}",
-                                     resource_type="document", scope="read")
+                                     resource_type="document", scope="read",
+                                     surface="management", requires_data_scope=False)
         self.db.add_all([self.tenant, self.user, self.role, self.permission])
         self.db.flush()
         self.membership = TenantMembership(tenant_id=self.tenant.id, user_id=self.user.id, status="active")

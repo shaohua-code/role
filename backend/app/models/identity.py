@@ -71,6 +71,7 @@ class RefreshSession(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # 签发时用户全局凭证版本快照；轮换或校验时版本不一致即拒绝。
     auth_version: Mapped[int] = mapped_column(default=1, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -134,6 +135,7 @@ class PublicRegistrationChallenge(Base):
     email_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # 申请邮箱已对应平台用户时记录其 ID，便于服务端按已注册路径合并处理。
     existing_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
@@ -144,11 +146,13 @@ class PublicRegistrationChallenge(Base):
         ForeignKey("roles.id", ondelete="CASCADE"), index=True
     )
     registration_role_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    # 角色指纹与 registration_role_id 配套，验证时两者必须同时匹配快照。
     terms_version: Mapped[str] = mapped_column(String(80), nullable=False)
     privacy_version: Mapped[str] = mapped_column(String(80), nullable=False)
     # 记录申请时实际展示的政策地址；发布新版本/地址后，旧 challenge 不能继续兑换。
     terms_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     privacy_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    # 验证码连续错误次数；超过上限后挑战不再可用，需重新申请。
     failed_attempts: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -170,6 +174,7 @@ class PublicRegistrationEmailOutbox(Base):
     )
     status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending", nullable=False)
     attempts: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    # 下次允许投递时间；locked_until 为发送器抢占锁到期，防止并发重复发送。
     retry_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -207,6 +212,7 @@ class LoginAttemptBucket(Base):
 
     key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     failed_attempts: Mapped[int] = mapped_column(default=0, server_default=text("0"), nullable=False)
+    # 失败计数窗口起点；窗口过期后计数清零重新累计。
     window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
@@ -219,6 +225,7 @@ class RevokedAccessToken(Base):
     __tablename__ = "revoked_access_tokens"
 
     jti_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # 令牌用途标记，避免不同用途的 jti 混淆误判。
     token_use: Mapped[str] = mapped_column(String(24), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
     revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -241,6 +248,7 @@ class TenantMembership(Base):
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    # 取值 active/disabled/departed；departed 表示成员已离开租户，保留历史记录。
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     # 租户成员状态版本仅撤销这一 tenant 的旧 OIDC 凭证，不会注销同一全局身份的其他产品会话。
     auth_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"), nullable=False)
@@ -264,6 +272,7 @@ class UserInvitation(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True, nullable=False)
+    # 邀请接受后授予的角色；复合外键（RESTRICT）保证角色与邀请同租户且角色未删除。
     role_id: Mapped[UUID] = mapped_column(index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(320), index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -288,5 +297,6 @@ class AuditEvent(Base):
     target_id: Mapped[str | None] = mapped_column(String(180))
     outcome: Mapped[str] = mapped_column(String(20), default="success", nullable=False)
     source_ip: Mapped[str | None] = mapped_column(String(64))
+    # JSON 操作上下文快照（如请求参数与变更前后值），已由写入端脱敏。
     details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

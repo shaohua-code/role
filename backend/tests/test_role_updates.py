@@ -51,6 +51,10 @@ class RoleUpdateIntegrationTests(unittest.TestCase):
                                      resource_type="role", scope="update")
         self.db.add_all([self.tenant, self.actor])
         self.db.flush()
+        # 绿场规则：actor 需显式绑定 L1 才能通过按码判权。
+        from tests.greenfield_fixture import make_platform_admin_binding
+
+        make_platform_admin_binding(self.db, self.actor)
         self.db.add_all([self.role, self.permission])
         self.db.flush()
         self.grant = RolePermission(role_id=self.role_id, permission_id=self.permission_id)

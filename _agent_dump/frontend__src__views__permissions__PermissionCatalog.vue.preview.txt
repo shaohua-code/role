@@ -1,0 +1,92 @@
+<script setup lang="ts">
+import { computed, reactive, ref, watch } from 'vue'
+import { message, Modal } from 'ant-design-vue'
+import { api } from '@/api'
+import { getCachedCapabilities } from '@/api/capabilities'
+import AdminListPage from '@/components/AdminListPage.vue'
+import AdminSearchField from '@/components/AdminSearchField.vue'
+import AdminStatBand from '@/components/AdminStatBand.vue'
+import AdminDetailDrawer from '@/components/AdminDetailDrawer.vue'
+import { PERMISSION_CLASSES, PERMISSION_DOMAINS, PERMISSION_SCOPES, SCOPE_LEVEL_LABELS, SCOPE_LEVEL_ORDER, SCOPE_LEVEL_TIPS, isManagementCode, resolvePermissionClass, resolvePermissionDomain, resolvePermissionScope } from '@/utils/permissionGroups'
+
+interface PermissionRecord {
+  id: string
+  code: string
+  catalog_namespace: string
+  resource_type: string
+  scope: string
+  description: string | null
+  status: 'active' | 'disabled'
+  assigned_role_count: number
+  /** 绿场模型字段：管理面/业务面与数据范围强制标记（后端已回传，此处仅展示用） */
+  surface?: 'management' | 'business'
+  requires_data_scope?: boolean
+}
+
+const props = defineProps<{ active: boolean }>()
+// 绿场 §6.5 写死：权限目录写（登记/停用）仅 L1 持 rbac.permission.manage；L2/L3 只读。
+const canManageCatalog = computed(() => getCachedCapabilities()?.platform_admin === true)
+const permissions = ref<PermissionRecord[]>([])
+const searchText = ref('')
+const namespaceFilter = ref('')
+// P395 两类分组：统计卡带按「全部 / 平台编码 / 应用业务编码」筛选（'' = 全部）
+const scopeFilter = ref('')
+// P397 权限域筛选改为多选 chips：命中任一选中域即保留（空数组 = 不限）
+const domainFilter = ref<string[]>([])
+const domainChips = computed(() => {
+  const counts = new Map<string, number>()
+  for (const permission of permissions.value) {
+    const key = resolvePermissionDomain(permission.code).key
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  return PERMISSION_DOMAINS.map(domain => ({ ...domain, count: counts.get(domain.key) || 0 }))
+})
+
+// 多选域 chips 切换：已选中再点取消
+function toggleDomainChip(key: string): void {
+  domainFilter.value = domainFilter.value.includes(key)
+    ? domainFilter.value.filter(item => item !== key)
+    : [...domainFilter.value, key]
+}
+const loading = ref(false)
+const errorText = ref('')
+const createOpen = ref(false)
+const creating = ref(false)
+const changingPermissionId = ref('')
+const form = reactive({ domain: 'platform', code: '', resource_type: '', scope: '', description: '' })
+let requestSequence = 0
+
+const namespaceOptions = computed(() => {
+  const values = new Set(permissions.value.map(item => item.catalog_namespace))
+  // P393：空态文案由「全部分组」改为「全部命名空间」，消除与作用域分组的概念冲突
+  return [{ value: '', label: '全部命名空间' }, ...[...values].sort().map(value => ({ value, label: value }))]
+})
+
+// P393 作用域组序（L1 专属 → L3 起 → L2 起 → 业务码）：两类分组下平台编码组内仍按层级起点聚块
+const SCOPE_ORDER = SCOPE_LEVEL_ORDER
+
+const filteredPermissions = computed(() => {
+  const query = searchText.value.trim().toLocaleLowerCase()
+  const list = permissions.value.filter(permission => {
+    if (namespaceFilter.value && permission.catalog_namespace !== namespaceFilter.value) return false
+    if (scopeFilter.value && resolvePermissionClass(permission.code) !== scopeFilter.value) return false
+    if (domainFilter.value.length && !domainFilter.value.includes(resolvePermissionDomain(permission.code).key)) return false
+    if (!query) return true
+    return `${permission.code} ${permission.catalog_namespace} ${permission.resource_type} ${permission.scope} ${permission.description || ''}`
+      .toLocaleLowerCase().includes(query)
+  })
+  // 平台编码在前（组内按层级起点序 → 编码字母序），应用业务编码在后（命名空间 → 编码序）
+  return [...list].sort((a, b) => {
+    const scopeDelta = (SCOPE_ORDER[resolvePermissionScope(a.code).key] ?? 99) - (SCOPE_ORDER[resolvePermissionScope(b.code).key] ?? 99)
+    return scopeDelta !== 0 ? scopeDelta : a.code.localeCompare(b.code)
+  })
+})
+
+/** iam 码行展示所属权限域；业务码行的命名空间本身即语义分组，不重复打标。 */
+function domainLabel(code: string): string {
+  return resolvePermissionDomain(code).label
+}
+
+/** P395 平台编码行的层级起点标记（仅平台超管 / 租户管理员起 / 应用管理员起）；业务码行不打标。 */
+function levelLabel(code: string): string {
+  retu

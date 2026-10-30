@@ -46,6 +46,15 @@ class IamAdminClientTests(unittest.TestCase):
         self.assertEqual([item["code"] for item in items], ["demo.document.read"])
 
     @patch("iam_permission_sync.urlopen")
+    def test_list_permissions_unwraps_paged_wrapper(self, open_url) -> None:
+        open_url.return_value = _Response({
+            "items": [{"id": "p1", "code": "demo.document.read"}],
+            "total": 1, "limit": 1000, "offset": 0,
+        })
+        items = self.client.list_permissions("mgmt-token")
+        self.assertEqual([item["code"] for item in items], ["demo.document.read"])
+
+    @patch("iam_permission_sync.urlopen")
     def test_create_permission_posts_full_payload(self, open_url) -> None:
         open_url.return_value = _Response({"id": "p2", "code": "demo.document.create"})
         self.client.create_permission(
@@ -54,9 +63,14 @@ class IamAdminClientTests(unittest.TestCase):
         )
         request = open_url.call_args.args[0]
         self.assertEqual(request.get_method(), "POST")
+        # SDK 会按 code 前缀自动推导 catalog_namespace 并随 payload 提交。
         self.assertEqual(json.loads(request.data), {
-            "code": "demo.document.create", "resource_type": "document",
-            "scope": "write", "description": "创建文档",
+            "code": "demo.document.create", "catalog_namespace": "demo",
+            "resource_type": "document",
+            "scope": "write",
+            "surface": "business",
+            "requires_data_scope": True,
+            "description": "创建文档",
         })
 
     @patch("iam_permission_sync.urlopen", side_effect=HTTPError(
@@ -79,6 +93,35 @@ class IamAdminClientTests(unittest.TestCase):
         with self.assertRaises(IamAdminError) as error:
             self.client.list_permissions("mgmt-token")
         self.assertEqual(error.exception.status_code, 502)
+
+
+    @patch("iam_permission_sync.urlopen")
+    def test_application_scoped_endpoint(self, open_url) -> None:
+        """L2 path: /admin/applications/{id}/permissions."""
+        client = IamAdminClient("https://iam.example/", application_id="app-uuid-1")
+        open_url.return_value = _Response([])
+        client.list_permissions("mgmt-token")
+        request = open_url.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "https://iam.example/api/v1/admin/applications/app-uuid-1/permissions",
+        )
+
+    @patch("iam_permission_sync.urlopen")
+    def test_tenant_admin_surface_endpoint(self, open_url) -> None:
+        client = IamAdminClient(
+            "https://iam.example",
+            application_id="app-2",
+            api_surface="tenant-admin",
+        )
+        open_url.return_value = _Response([])
+        client.list_permissions("mgmt-token")
+        request = open_url.call_args.args[0]
+        self.assertEqual(
+            request.full_url,
+            "https://iam.example/api/v1/tenant-admin/applications/app-2/permissions",
+        )
+
 
 
 class SyncManifestTests(unittest.TestCase):
@@ -185,6 +228,8 @@ class SyncManifestTests(unittest.TestCase):
     def test_missing_management_token_rejected_locally(self) -> None:
         with self.assertRaises(ValueError):
             self.client.list_permissions("")
+
+
 
 
 if __name__ == "__main__":

@@ -7,19 +7,27 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OrganizationCreate(BaseModel):
+    """创建部门节点：key 租户内唯一；parent_id 缺省为根节点；负责人可选（G24）。"""
+
     tenant_id: UUID
     key: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     name: str = Field(min_length=1, max_length=160)
     parent_id: UUID | None = None
+    owner_user_id: UUID | None = None
 
 
 class OrganizationUpdate(BaseModel):
+    """部门部分更新：展示信息、状态、父节点与负责人；同租户与环形层级由服务端校验。"""
+
     name: str | None = Field(default=None, min_length=1, max_length=160)
     status: str | None = Field(default=None, pattern=r"^(active|disabled)$")
     parent_id: UUID | None = None
+    owner_user_id: UUID | None = None
 
 
 class MembershipOrganizationsUpdate(BaseModel):
+    """全量替换成员所属组织；主组织必须包含在本次提交的组织列表内。"""
+
     tenant_id: UUID
     organization_ids: list[UUID] = Field(max_length=100)
     primary_organization_id: UUID | None = None
@@ -43,6 +51,8 @@ class MembershipStatusUpdate(BaseModel):
 
 
 class RoleDataScopeItem(BaseModel):
+    """单条数据范围策略：仅 selected_organizations 类型允许携带 organization_ids。"""
+
     permission_id: UUID
     scope_type: str = Field(pattern=r"^(tenant|self|organization|organization_tree|selected_organizations)$")
     organization_ids: list[UUID] = Field(default_factory=list, max_length=100)
@@ -59,6 +69,8 @@ class RoleDataScopeItem(BaseModel):
 
 
 class RoleDataScopesUpdate(BaseModel):
+    """全量替换角色的数据范围策略；同一权限仅允许一条策略。"""
+
     policies: list[RoleDataScopeItem] = Field(max_length=200)
 
     @model_validator(mode="after")

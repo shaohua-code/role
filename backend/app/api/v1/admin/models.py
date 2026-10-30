@@ -8,18 +8,22 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.admin.common import audit, commit_or_conflict, flush_or_conflict, valid_redirect_uri
 from app.core.config import get_settings
-from app.core.security import platform_admin
+from app.core.security import current_user
 from app.db.session import get_db_session
 from app.models.identity import Tenant, User
 from app.models.model_catalog import ModelCatalog
 from app.schemas.models import ModelCatalogCreate, ModelCatalogStatusUpdate, ModelCatalogUpdate
+from app.services.rbac_guards import ensure_roles
+from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(prefix="/models", tags=["模型目录"])
 
 
 @router.get("")
-def list_models(tenant_id: UUID | None = None, db: Session = Depends(get_db_session)) -> list[dict]:
+def list_models(tenant_id: UUID | None = None, actor: User = Depends(current_user),
+                db: Session = Depends(get_db_session)) -> list[dict]:
     """列出模型配置摘要；凭证引用只转换为是否已配置，不向控制台回传。"""
+    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=tenant_id, detail="缺少管理角色（原 ops.model.read）")
     statement = select(ModelCatalog).order_by(ModelCatalog.created_at.desc()).limit(500)
     if tenant_id:
         statement = statement.where(ModelCatalog.tenant_id == tenant_id)
@@ -53,10 +57,11 @@ def list_models(tenant_id: UUID | None = None, db: Session = Depends(get_db_sess
 def create_model(
     body: ModelCatalogCreate,
     request: Request,
-    actor: User = Depends(platform_admin),
+    actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
     """目录只接收 Secret Manager 引用；不能把 Provider API Key 放入业务表。"""
+    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
     if not db.get(Tenant, body.tenant_id):
         raise HTTPException(404, "租户不存在")
     if body.endpoint_url and not valid_redirect_uri(body.endpoint_url):
@@ -85,13 +90,14 @@ def update_model(
     model_id: UUID,
     body: ModelCatalogUpdate,
     request: Request,
-    actor: User = Depends(platform_admin),
+    actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
     """更新模型资料与显式 RPM/TPM 策略；限额执行仍由服务级开关控制。"""
     row = db.get(ModelCatalog, model_id)
     if not row:
         raise HTTPException(404, "模型不存在")
+    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
 
     # 未提交字段保持不变；显式 null 可清除可选值或限额。
     # Secret Manager 引用不会进入审计详情或 API 响应，限额变更只审计字段名。
@@ -124,13 +130,14 @@ def set_model_status(
     model_id: UUID,
     body: ModelCatalogStatusUpdate,
     request: Request,
-    actor: User = Depends(platform_admin),
+    actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> dict:
     """行锁保护模型状态转换，过期页面不能覆盖新状态；审计与更新同事务。"""
     row = db.scalar(select(ModelCatalog).where(ModelCatalog.id == model_id).with_for_update())
     if not row:
         raise HTTPException(404, "模型不存在")
+    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
     if row.status != body.expected_status:
         raise HTTPException(409, "模型状态已被其他管理员修改，请刷新后重试")
     if row.status == body.status:
@@ -141,3 +148,27 @@ def set_model_status(
           {"tenant_id": str(row.tenant_id), "from_status": body.expected_status, "to_status": body.status})
     commit_or_conflict(db)
     return {"id": str(row.id), "status": row.status}
+
+
+@router.delete("/{model_id}", status_code=204)
+def delete_model(
+    model_id: UUID,
+    request: Request,
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> None:
+    """删除模型目录项；存在用量事件/预留（RESTRICT）时阻塞，提示走停用下线。"""
+    from app.models.model_catalog import ModelUsageEvent, ModelUsageReservation
+
+    row = db.scalar(select(ModelCatalog).where(ModelCatalog.id == model_id).with_for_update())
+    if not row:
+        raise HTTPException(404, "模型不存在")
+    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 ops.model.manage）")
+    usage_exists = db.scalar(select(ModelUsageEvent.id).where(ModelUsageEvent.model_id == row.id).limit(1))
+    reservation_exists = db.scalar(select(ModelUsageReservation.id).where(ModelUsageReservation.model_id == row.id).limit(1))
+    if usage_exists or reservation_exists:
+        raise HTTPException(409, "该模型存在用量账目，无法删除；如需下线请改用停用")
+    audit(db, actor, request, "model.delete", "model", str(row.id),
+          {"tenant_id": str(row.tenant_id), "key": row.key, "display_name": row.display_name})
+    db.delete(row)
+    commit_or_conflict(db)

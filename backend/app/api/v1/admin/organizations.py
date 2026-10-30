@@ -21,6 +21,7 @@ from app.services.admin_authorization import (
     has_organization_admin_access,
     require_organization_admin_access,
 )
+from app.services.rbac_guards import bump_memberships_holding_role
 from app.schemas.organizations import (
     MembershipOrganizationsUpdate,
     MembershipStatusUpdate,
@@ -28,6 +29,7 @@ from app.schemas.organizations import (
     OrganizationUpdate,
     RoleDataScopesUpdate,
 )
+from app.db.seed_greenfield import PLATFORM_TENANT_SLUG
 
 router = APIRouter(tags=["组织与数据范围"])
 
@@ -42,9 +44,48 @@ def list_organizations(tenant_id: UUID, actor: User = Depends(current_user),
     rows = db.scalars(select(Organization).where(Organization.tenant_id == tenant_id)
                       .order_by(Organization.key).limit(2000)).all()
     names = {row.id: row.name for row in rows}
+    # G24 部门负责人展示名：一次拉取本租户用户名映射，避免逐行查询。
+    owner_ids = {row.owner_user_id for row in rows if row.owner_user_id}
+    owner_names = dict(db.execute(select(User.id, User.display_name).where(User.id.in_(owner_ids))).all()) if owner_ids else {}
+    # parent_id 供组织工作台前端拼层级树；旧列表页只消费 parent_name，新增字段向后兼容。
     return [{"id": str(row.id), "tenant_id": str(row.tenant_id),
+             "parent_id": str(row.parent_id) if row.parent_id else None,
              "parent_name": names.get(row.parent_id, "顶层组织") if row.parent_id else "顶层组织",
+             "owner_user_id": str(row.owner_user_id) if row.owner_user_id else None,
+             "owner_name": owner_names.get(row.owner_user_id) if row.owner_user_id else None,
              "key": row.key, "name": row.name, "status": row.status, "created_at": row.created_at} for row in rows]
+
+
+@router.get("/organizations/{organization_id}/members")
+def list_organization_members(
+    organization_id: UUID,
+    q: str | None = Query(default=None, max_length=100),
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> list[dict]:
+    """Wave 2 组织工作台「成员」Tab：列出直接挂接该组织的成员（只读，不递归子组织）。"""
+    organization = db.get(Organization, organization_id)
+    if not organization:
+        raise HTTPException(404, "组织不存在")
+    require_organization_admin_access(actor, organization.tenant_id, db)
+    stmt = (select(MembershipOrganization, TenantMembership, User)
+            .join(TenantMembership, TenantMembership.id == MembershipOrganization.membership_id)
+            .join(User, User.id == TenantMembership.user_id)
+            .where(MembershipOrganization.organization_id == organization.id))
+    search = q.strip()[:100] if q else ""
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(User.display_name.ilike(pattern) | User.email.ilike(pattern))
+    rows = db.execute(stmt.order_by(User.display_name, User.email).limit(1000)).all()
+    return [{
+        "user_id": str(user.id),
+        "membership_id": str(membership.id),
+        "email": user.email,
+        "display_name": user.display_name,
+        "user_status": user.status,
+        "membership_status": membership.status,
+        "is_primary": link.is_primary,
+    } for link, membership, user in rows]
 
 
 @router.get("/members")
@@ -119,20 +160,33 @@ def create_organization(body: OrganizationCreate, request: Request,
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant or tenant.status != "active":
         raise HTTPException(404, "活动租户不存在")
+    # 平台引导租户是 L1 宿主与系统应用载体，业务组织挂上去会污染平台保留域。
+    if tenant.slug == PLATFORM_TENANT_SLUG:
+        raise HTTPException(422, "平台引导租户为系统保留租户，不支持业务组织")
     if not body.name.strip():
         raise HTTPException(422, "组织名称不能为空")
     if body.parent_id:
         parent = db.get(Organization, body.parent_id)
         if not parent or parent.tenant_id != tenant.id or parent.status != "active":
             raise HTTPException(422, "父组织必须属于同一活动租户")
+    # G24 部门负责人：必须是该租户的活动成员（跨租户/不存在成员拒绝）。
+    if body.owner_user_id:
+        owner_membership = db.scalar(select(TenantMembership).where(
+            TenantMembership.user_id == body.owner_user_id, TenantMembership.tenant_id == tenant.id,
+            TenantMembership.status == "active",
+        ))
+        if not owner_membership:
+            raise HTTPException(422, "负责人必须是该租户的活动成员")
     row = Organization(tenant_id=tenant.id, parent_id=body.parent_id,
-                       key=body.key, name=body.name.strip())
+                       key=body.key, name=body.name.strip(), owner_user_id=body.owner_user_id)
     db.add(row)
     flush_or_conflict(db)
     audit(db, actor, request, "organization.create", "organization", str(row.id),
-          {"tenant_id": str(tenant.id), "key": row.key, "parent_id": str(row.parent_id) if row.parent_id else None})
+          {"tenant_id": str(tenant.id), "key": row.key, "parent_id": str(row.parent_id) if row.parent_id else None,
+           "owner_user_id": str(row.owner_user_id) if row.owner_user_id else None})
     commit_or_conflict(db)
     return {"id": str(row.id), "tenant_id": str(row.tenant_id), "parent_id": str(row.parent_id) if row.parent_id else None,
+            "owner_user_id": str(row.owner_user_id) if row.owner_user_id else None,
             "key": row.key, "name": row.name, "status": row.status}
 
 
@@ -163,16 +217,58 @@ def update_organization(organization_id: UUID, body: OrganizationUpdate, request
                 raise HTTPException(422, "父组织必须属于同一租户且处于启用状态")
             cursor_id = parent.parent_id
         row.parent_id = body.parent_id
+    # G24 负责人变更：None 表示清空；指定时校验活动成员归属，变更写入审计。
+    previous_owner = row.owner_user_id
+    if "owner_user_id" in body.model_fields_set:
+        if body.owner_user_id:
+            owner_membership = db.scalar(select(TenantMembership).where(
+                TenantMembership.user_id == body.owner_user_id, TenantMembership.tenant_id == row.tenant_id,
+                TenantMembership.status == "active",
+            ))
+            if not owner_membership:
+                raise HTTPException(422, "负责人必须是该租户的活动成员")
+        row.owner_user_id = body.owner_user_id
     audit(db, actor, request, "organization.update", "organization", str(row.id),
-          {"tenant_id": str(row.tenant_id), "status": row.status, "parent_id": str(row.parent_id) if row.parent_id else None})
+          {"tenant_id": str(row.tenant_id), "status": row.status, "parent_id": str(row.parent_id) if row.parent_id else None,
+           "owner_user_id": str(row.owner_user_id) if row.owner_user_id else None})
+    if previous_owner != row.owner_user_id:
+        audit(db, actor, request, "organization.owner.change", "organization", str(row.id),
+              {"tenant_id": str(row.tenant_id),
+               "from_owner_user_id": str(previous_owner) if previous_owner else None,
+               "to_owner_user_id": str(row.owner_user_id) if row.owner_user_id else None})
     commit_or_conflict(db)
     return {"id": str(row.id), "tenant_id": str(row.tenant_id), "parent_id": str(row.parent_id) if row.parent_id else None,
+            "owner_user_id": str(row.owner_user_id) if row.owner_user_id else None,
             "key": row.key, "name": row.name, "status": row.status}
+
+
+@router.delete("/organizations/{organization_id}", status_code=204)
+def delete_organization(organization_id: UUID, request: Request,
+                        actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> None:
+    """删除组织：成员挂接随外键级联摘除（成员本身保留）；存在子组织时阻塞。
+
+    RoleDataScope 的 organization_ids 为 JSON 列（非外键），删除后相关数据范围中的
+    组织 ID 失效并按「无有效范围默认拒绝」语义收敛，不阻塞删除。
+    """
+    row = db.scalar(select(Organization).where(Organization.id == organization_id).with_for_update())
+    if not row:
+        raise HTTPException(404, "组织不存在")
+    if not has_organization_admin_access(actor, row.tenant_id, db, manage=True):
+        raise HTTPException(404, "组织不存在")
+    # 父引用为 RESTRICT：必须先删除或移动子组织，避免留下孤儿层级。
+    child_exists = db.scalar(select(Organization.id).where(Organization.parent_id == row.id).limit(1))
+    if child_exists:
+        raise HTTPException(409, "该组织存在子组织，请先删除或移动子组织")
+    audit(db, actor, request, "organization.delete", "organization", str(row.id),
+          {"tenant_id": str(row.tenant_id), "key": row.key, "name": row.name})
+    db.delete(row)
+    commit_or_conflict(db)
 
 
 @router.get("/users/{user_id}/organizations")
 def get_user_organizations(user_id: UUID, tenant_id: UUID, actor: User = Depends(current_user),
                            db: Session = Depends(get_db_session)) -> dict:
+    """查看用户在指定租户的组织挂接与主组织（共享序列化见 _user_organization_payload）。"""
     require_organization_admin_access(actor, tenant_id, db)
     membership = db.scalar(select(TenantMembership).where(TenantMembership.user_id == user_id,
                                                             TenantMembership.tenant_id == tenant_id))
@@ -200,7 +296,7 @@ def _user_organization_payload(user_id: UUID, tenant_id: UUID, membership_id: UU
 def list_user_memberships(user_id: UUID, actor: User = Depends(current_user),
                           db: Session = Depends(get_db_session)) -> list[dict]:
     """本人可查看自己的租户关系；查询其他用户时仅返回组织管理员有权查看的租户。"""
-    platform_admin = is_platform_admin_user(actor)
+    platform_admin = is_platform_admin_user(actor, db)
     if platform_admin and not db.get(User, user_id):
         raise HTTPException(404, "用户不存在")
     rows = db.execute(select(TenantMembership, Tenant).join(Tenant, Tenant.id == TenantMembership.tenant_id)
@@ -311,6 +407,7 @@ def set_user_organizations(user_id: UUID, body: MembershipOrganizationsUpdate, r
 @router.get("/roles/{role_id}/data-scopes")
 def get_role_data_scopes(role_id: UUID, actor: User = Depends(current_user),
                          db: Session = Depends(get_db_session)) -> list[dict]:
+    """读取角色当前的数据范围策略清单（跨租户/无权角色统一 404）。"""
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
@@ -378,6 +475,8 @@ def replace_role_data_scopes(role_id: UUID, body: RoleDataScopesUpdate, request:
     db.add_all([RoleDataScope(tenant_id=role.tenant_id, role_id=role.id, permission_id=item.permission_id,
                               scope_type=item.scope_type, organization_ids=[str(value) for value in item.organization_ids])
                 for item in body.policies])
+    # 数据范围替换即时收敛持有者旧凭证（绿场规则：数据范围变更建议 bump）。
+    bump_memberships_holding_role(db, role.id)
     audit(db, actor, request, "role.data_scopes.replace", "role", str(role.id),
           {"tenant_id": str(role.tenant_id), "policy_count": len(body.policies)})
     commit_or_conflict(db)

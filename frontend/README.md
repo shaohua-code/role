@@ -1,5 +1,44 @@
 # 前端技术与目录说明
 
+**2026-10-29 工作台收口：** 侧栏去掉「应用角色与成员」；角色行「应用权限」「配置成员」。旧深链 `/application-roles` 重定向到应用工作台。验证见根 CHANGELOG。
+
+**2026-10-29 P405：** 权限编码页只展示平台管理面码；高级角色页只列平台角色；工作台只列应用角色，分配时自动成为该应用平台成员。挂码弹窗去掉授权权禁选。验证见根 CHANGELOG。
+
+**2026-10-29 P404：** 拆 `can_create_applications`（只认租户域 `app.manage`）；L2 隐藏新建/删除应用。挂码弹窗消费后端已按操作者级别过滤的目录。验证见根 CHANGELOG。
+
+**2026-10-29 P403：** 侧栏 L1 入口改「运营总览」；租户 `/roles` 标「应用角色与成员」。用户详情抽屉展示有效权限码并集+来源。角色列表服务端真分页；权限目录带 total，超出加载上限时提示。验证见根 CHANGELOG。
+
+**2026-10-29 P402：** 工作台业务码「新建」按 `application.can_manage` 开放给 L2/L3（`ApplicationPermissionPanel`）；启停仍仅 L1。空态三步与无创建权文案、L4 `/no-access` 及应用角色页去掉过时 `iam.*`。验证见根 CHANGELOG；浏览器走查未运行。
+
+## UI 设计规范
+
+- 完整规范与验收要点：[产品需求](../docs/产品需求.md) 第 9 节。
+- 新页面必须套 List / Detail / Settings 模板；禁止新增裸 hex 色值。
+- **通用组件优先**：有则复用，禁止重复造轮子。
+- **目录约定**：`文件夹/index` 写法；有关联关系的文件放同一文件夹。
+
+**2026-10-28 P398 全站工具条筛选条统一重设计：** 全局 `.admin-table-toolbar` 控件宽度改三级体系（搜索 `min(100%,320px)` / 普通下拉 160px / `admin-filter-wide` 长枚举 208px），style.css 为唯一权威源（原一刀切 320px 未分层规则曾压过页面 Tailwind 宽度类致换行参差）；`AdminTableToolbar` 左区 gap-2、右区 `lg:ml-auto` + 细分隔线；清理 8 个页面的失效宽度类与死 scoped 样式；工具条阴影/深色边框 slate 残留改 token。新筛选下拉宽度**不要再写页面级宽度类**，长枚举加 `admin-filter-wide` 即可。验证：`vue-tsc -b` + `vite build` exit 0（10.65s）；浏览器走查未运行（待用户复看）。
+
+**2026-10-28 P397 管理台五页重设计：** 统一「统计带→工具条（搜索+筛选）→精简表格→行点击详情抽屉」信息架构，覆盖 /tenants /roles /permissions /applications /application-workspace。新通用组件：`components/AdminStatBand.vue`（账本式统计卡带，v-model 点击筛选）、`components/AdminDetailDrawer.vue`（详情抽屉骨架）、`components/AdminMonoValue.vue`（mono 值 + hover 一键复制）；`CopyOutlined` 加入 `plugins/icons.ts` 出口。交互约定：详情/浏览类用抽屉、编辑类留弹窗；行点击经 `customRow` 下钻，操作列与行内链接 `@click.stop` 防冒泡；工作台三 Tab 经 `stats` 事件向父级上报计数渲染概览统计条；`/application-workspace?application_id=` 深链预选应用。验证：`vue-tsc -b` + `vite build` exit 0（8.97s）；浏览器走查未运行（本机无后端运行环境，待用户复看）。
+
+**2026-10-27 P360 前端目录标准化（用户裁定按项目级目录规划）：** 纯目录重构，零逻辑/零 UI/零 API 变化，后端零改动（核查已符合 FastAPI 标准布局）。`features/**` → `views/**`（含两个 workspace 的 components/tabs 子结构，`app/auth/AuthEntry.vue` → `views/auth/`）；`app/router.ts` → `router/index.ts`，`navigation.ts`、`featureLoaders.ts`（改名 loaders.ts）归 `router/`；`app/App.vue` 提到 `src/` 根；壳层 `AppSidebar/AppBreadcrumb` → `layout/`；`shared/services/` → `api/`（api.ts 改名 index.ts）、`shared/utils/` → `utils/`、`shared/theme.ts` → `styles/`、`shared/ui/index.ts` → `components/index.ts`；`app/ui/antd.ts、registerManagementUi.ts` 与 `icons.ts` → `plugins/`；删除空目录 app、shared、services。`vite.config.ts` + `tsconfig.json` 配置 `@` → `src` 路径别名，约 50 个文件导入改写为 `@/`（views 模块内部相对引用保留）。新目录结构：
+
+```text
+src/
+├── App.vue        # 根组件（原 app/App.vue）
+├── router/        # index.ts 路由表 + navigation.ts 页面白名单/侧栏项 + loaders.ts 异步页加载
+├── views/         # 页面模块（原 features/，含 auth/AuthEntry.vue 与两个 workspace 子结构）
+├── layout/        # AppSidebar.vue、AppBreadcrumb.vue 壳层布局
+├── api/           # index.ts（原 shared/services/api.ts）+ health/capabilities 探针
+├── utils/         # 共享工具（原 shared/utils/）
+├── styles/        # theme.ts、tokens.css、antd-bridge.ts
+├── plugins/       # antd.ts、registerManagementUi.ts、icons.ts
+├── components/    # index.ts barrel（原 shared/ui/）+ AdminXxx 通用组件
+└── main.ts / style.css / appearance.css
+```
+
+验证：宿主机 `vue-tsc -b` 与 `vite build` exit 0（约 9.3s，antd/vue-vendor 拆包不变，仅存量 antd chunk 体积警告）；grep 旧路径（shared/services、app/icons、features/ 等）frontend/src 零残留；浏览器冒烟（dev 5175 真实登录 admin：登录 → /overview → 用户/角色/应用工作台 → 深链刷新守卫）全 PASS 零 Vue 告警、零写操作；后端隔离套件未运行（零后端改动）。
+
 **2026-10-22 P330 全站换皮：** ConfigProvider 补 Layout/Menu/Card token；顶栏浅色（默认黑底用内联色盖住）；向导选中卡/单组 Steps；内容列 `min-width:0` 避免宽表页级横滚。`vue-tsc -b` 与全路由走查见[验收记录](../docs/验收记录.md)。Vite 生产构建未跑。
 
 **2026-10-22 P329 管理台 antd：** 壳层 `a-layout`/`a-menu`/`a-drawer`/`a-breadcrumb`；总览 `a-statistic`；CRUD 页头 `AdminPageHeader`；接入向导 antd 控件（P328 示例保留）；审计 DatePicker；登录页 readiness `a-alert`。侧栏图标 `src/app/icons.ts`，不要把 `@ant-design/icons-vue` 别名到该文件。`vue-tsc -b` 与登录后走查见[验收记录](../docs/验收记录.md)。Vite 生产构建未跑。
@@ -231,44 +270,30 @@ frontend/
 ├── nginx.production.conf     # SPA 回退、同源 API/Discovery 反向代理、安全响应头
 ├── vite.config.ts
 └── src/
-    ├── app/
-    │   ├── App.vue             # 登录后会话、a-layout 壳层和 feature 装配
-    │   ├── auth/AuthEntry.vue  # 登录、OIDC 同意、邀请接受及登录主题展示
-    │   ├── icons.ts            # 侧栏/壳层本地 SVG 图标
-    │   ├── navigation.ts       # 页面白名单、侧栏项和面包屑标题
-    │   ├── components/
-    │   │   └── AppSidebar.vue  # 桌面 a-menu 与窄屏 a-drawer
-    │   └── ui/
-    │       ├── antd.ts         # 公共组件注册与管理组件延迟加载
-    │       └── registerManagementUi.ts # 登录后注册管理组件
-    ├── features/
-    │   ├── access-control/     # 授权模拟独立页面
-    │   ├── applications/       # OAuth 客户端登记、回调、信任与密钥生命周期；复用平台/租户模式
-    │   ├── application-roles/  # 单应用角色、业务权限与已授权成员
-    │   ├── audit/              # 审计查询、操作筛选和结果展示
-    │   ├── groups/             # 用户组独立页面及关系维护
-    │   ├── integration/        # 新项目接入向导
-    │   ├── invitations/        # 邀请查询、创建、撤销和一次性链接
-    │   ├── models/             # 模型目录与用量治理页面、领域 API 状态
-    │   ├── overview/           # 工作台概览和统计卡片
-    │   ├── organizations/      # 组织目录、租户筛选、创建与启停
-    │   ├── permissions/        # 权限编码目录与新建校验
-    │   ├── roles/              # 角色目录、授权预览和数据范围策略
-    │   ├── tenant-admin/       # 租户导航、成员组织归属与角色数据范围
-    │   ├── tenants/            # 租户目录、创建、启停和表单校验
-    │   ├── themes/             # 登录主题编辑、预览和版本管理
-    │   └── users/              # 身份目录、状态、租户角色和组织归属
-    ├── shared/
-    │   ├── components/         # AdminPageHeader、加载/错误反馈
-    │   └── services/           # 认证 API 请求和健康探针
-    ├── main.ts                 # Vue/Ant Design Vue 启动
-    ├── style.css               # OIDC 主题变量、预览画布、窄屏弹窗
-    └── appearance.css          # 外观覆盖（P329 后基本清空）
+    ├── App.vue                # 登录后会话、a-layout 壳层和页面装配（P360 起位于 src 根）
+    ├── router/
+    │   ├── index.ts           # vue-router 路由表（原 app/router.ts）
+    │   ├── navigation.ts      # 页面白名单、侧栏项和面包屑标题
+    │   └── loaders.ts         # 异步页面加载器（原 app/featureLoaders.ts）
+    ├── views/                 # 页面模块（原 features/）：access-control、applications、
+    │                          #   application-roles、application-workspace、audit、auth、groups、
+    │                          #   integration、invitations、models、overview、organizations、
+    │                          #   organization-workspace、permissions、roles、tenant-admin、
+    │                          #   tenants、themes、users
+    ├── layout/                # AppSidebar.vue（桌面 a-menu 与窄屏 a-drawer）、AppBreadcrumb.vue
+    ├── api/                   # index.ts 认证 API 请求、health/capabilities 探针（原 shared/services/）
+    ├── utils/                 # 共享工具（原 shared/utils/）
+    ├── styles/                # theme.ts、tokens.css、antd-bridge.ts
+    ├── plugins/               # antd.ts 公共组件注册、registerManagementUi.ts、icons.ts
+    ├── components/            # index.ts barrel + AdminPageHeader、加载/错误反馈等通用组件
+    ├── main.ts                # Vue/Ant Design Vue 启动
+    ├── style.css              # OIDC 主题变量、预览画布、窄屏弹窗
+    └── appearance.css         # 外观覆盖（P329 后基本清空）
 ```
 
-`frontend/` 是独立 Vue 工程，只包含 Vue、TypeScript 和浏览器侧 API 调用；Python 路由、ORM 模型和迁移仅存在于同级的 `backend/` 工程。两边不共享源码，通过 `shared/services/api.ts` 和 HTTP/OpenAPI 契约协作。OIDC 授权、令牌、用户信息和登出协议实现仅位于后端 `app/api/v1/oidc_provider/`，前端不持有客户端密钥、签名私钥或服务端 SDK 凭证；签名公钥重叠由 API 的 JWKS 端点发布给 OIDC relying party。工作台、每应用登录主题、用户组、成员邀请、授权模拟、审计查询、模型治理、权限目录、角色授权、租户目录、OAuth 应用、单应用角色、用户、组织管理和租户委派管理分别由 `features/overview/`、`features/themes/`、`features/groups/`、`features/invitations/`、`features/access-control/`、`features/audit/`、`features/models/`、`features/permissions/`、`features/roles/`、`features/tenants/`、`features/applications/`、`features/application-roles/`、`features/users/`、`features/organizations/` 和 `features/tenant-admin/` 管理。用户 feature 自管用户查询/创建/启停、活动租户角色绑定及成员组织归属，并在组织归属保存时保留已有停用组织；组织 feature 自管租户过滤、组织创建/层级和启停；租户委派 feature 自管当前授权租户中的成员搜索、组织归属读取/替换、角色权限读取和角色数据范围读取/替换。应用角色 feature 自管单应用角色 CRUD/启停、业务权限预览与原子替换、已授权成员查询和直接绑定移除；权限预览展示直接绑定/用户组继承成员去重数及逐权限的通用授权覆盖估算，不能新增 `iam.*` 权限。仅允许绑定现有活动租户成员，用户组关系仍只读显示。只读身份可以查看允许范围内的租户资源，修改入口仅在 manage 权限下开放，服务端逐请求重新授权。模型 feature 自管目录/用量请求，租户 feature 自管租户生命周期，应用 feature 自管 OAuth 客户端列表、回调校验、资料编辑、信任策略、密钥轮换及一次性密钥展示，邀请 feature 自管列表筛选、表单校验、创建/撤销和只展示一次的邀请链接，审计 feature 自管只读查询和操作编码筛选，角色 feature 自管角色 CRUD/启停、权限变更预览与数据范围编辑，权限 feature 自管稳定编码目录的检索、创建、停用/恢复确认及关联角色影响提示。`app/auth/AuthEntry.vue` 负责公开登录、OIDC consent、邀请接受与登录主题展示；`app/App.vue` 负责登录后会话、当前页状态和 feature 装配。`app/navigation.ts` 是页面键/标题/导航项的单一来源，`app/components/AppSidebar.vue` 负责桌面 `a-menu`、窄屏 `a-drawer` 与健康状态展示。前后端项目与代码目录继续分离。完整工程边界见[架构说明](../docs/技术架构与接入.md)。
+`frontend/` 是独立 Vue 工程，只包含 Vue、TypeScript 和浏览器侧 API 调用；Python 路由、ORM 模型和迁移仅存在于同级的 `backend/` 工程。两边不共享源码，通过 `@/api`（`src/api/index.ts`）和 HTTP/OpenAPI 契约协作。OIDC 授权、令牌、用户信息和登出协议实现仅位于后端 `app/api/v1/oidc_provider/`，前端不持有客户端密钥、签名私钥或服务端 SDK 凭证；签名公钥重叠由 API 的 JWKS 端点发布给 OIDC relying party。工作台、每应用登录主题、用户组、成员邀请、授权模拟、审计查询、模型治理、权限目录、角色授权、租户目录、OAuth 应用、单应用角色、用户、组织管理和租户委派管理分别由 `views/overview/`、`views/themes/`、`views/groups/`、`views/invitations/`、`views/access-control/`、`views/audit/`、`views/models/`、`views/permissions/`、`views/roles/`、`views/tenants/`、`views/applications/`、`views/application-roles/`、`views/users/`、`views/organizations/` 和 `views/tenant-admin/` 管理。用户 feature 自管用户查询/创建/启停、活动租户角色绑定及成员组织归属，并在组织归属保存时保留已有停用组织；组织 feature 自管租户过滤、组织创建/层级和启停；租户委派 feature 自管当前授权租户中的成员搜索、组织归属读取/替换、角色权限读取和角色数据范围读取/替换。应用角色 feature 自管单应用角色 CRUD/启停、业务权限预览与原子替换、已授权成员查询和直接绑定移除；权限预览展示直接绑定/用户组继承成员去重数及逐权限的通用授权覆盖估算，不能新增 `iam.*` 权限。仅允许绑定现有活动租户成员，用户组关系仍只读显示。只读身份可以查看允许范围内的租户资源，修改入口仅在 manage 权限下开放，服务端逐请求重新授权。模型 feature 自管目录/用量请求，租户 feature 自管租户生命周期，应用 feature 自管 OAuth 客户端列表、回调校验、资料编辑、信任策略、密钥轮换及一次性密钥展示，邀请 feature 自管列表筛选、表单校验、创建/撤销和只展示一次的邀请链接，审计 feature 自管只读查询和操作编码筛选，角色 feature 自管角色 CRUD/启停、权限变更预览与数据范围编辑，权限 feature 自管稳定编码目录的检索、创建、停用/恢复确认及关联角色影响提示。`views/auth/AuthEntry.vue` 负责公开登录、OIDC consent、邀请接受与登录主题展示；`src/App.vue` 负责登录后会话、当前页状态和页面装配。`router/navigation.ts` 是页面键/标题/导航项的单一来源，`layout/AppSidebar.vue` 负责桌面 `a-menu`、窄屏 `a-drawer` 与健康状态展示。前后端项目与代码目录继续分离。完整工程边界见[架构说明](../docs/技术架构与接入.md)。
 
-管理页面使用 `defineAsyncComponent` 做领域级代码拆分；15 个管理 feature 仅在首次导航时创建并请求自身 chunk，创建后以 `v-show` 保持挂载，避免离开页面时丢失表单草稿和筛选状态。共享加载提示与错误刷新提示位于 `shared/components/FeatureLoading.vue` 和 `FeatureLoadError.vue`。Ant Design Vue 公共组件在 `app/ui/antd.ts` 先行注册，管理专用组件位于异步导入的 `app/ui/registerManagementUi.ts`，管理员登录或恢复标签页会话后才完成注册；当前宿主机临时目录构建转换 3205 modules，主入口 chunk 为 378.96 KB（gzip 117.51 KB)，管理注册 chunk 为 285.65 KB（gzip 83.80 KB)，应用角色 chunk 为 15.40 KB（gzip 5.68 KB），最大 chunk 低于 500 KB 且 Vite 无体积告警。
+管理页面使用 `defineAsyncComponent` 做领域级代码拆分；15 个管理 feature 仅在首次导航时创建并请求自身 chunk，创建后以 `v-show` 保持挂载，避免离开页面时丢失表单草稿和筛选状态。共享加载提示与错误刷新提示位于 `components/FeatureLoading.vue` 和 `components/FeatureLoadError.vue`。Ant Design Vue 公共组件在 `plugins/antd.ts` 先行注册，管理专用组件位于异步导入的 `plugins/registerManagementUi.ts`，管理员登录或恢复标签页会话后才完成注册；当前宿主机临时目录构建转换 3205 modules，主入口 chunk 为 378.96 KB（gzip 117.51 KB)，管理注册 chunk 为 285.65 KB（gzip 83.80 KB)，应用角色 chunk 为 15.40 KB（gzip 5.68 KB），最大 chunk 低于 500 KB 且 Vite 无体积告警。
 
 ## 已实现页面
 
@@ -277,18 +302,18 @@ frontend/
 - 管理员登录：`POST /api/v1/auth/login`；身份查询 `GET /api/v1/auth/me`；401 时调用 `/api/v1/auth/refresh` 轮换 HttpOnly 刷新会话。共享续期 Promise 与 Web Locks 分别处理页面内并发和支持 Web Locks 浏览器的同源标签页并发；退出撤销当前刷新会话及管理 access JWT、删除 Cookie 并清除当前标签页访问令牌。
 - API 后台周期任务只回收已到期、不能再用于认证的会话/JWT 撤销摘要/OIDC 授权码/同意票据；不改前端会话协议或页面行为，也不触碰 OAuth 刷新族与其重放检测记录。
 - 工作台：从 API 读取租户、应用、用户和角色统计。
-- 租户目录独立位于 `features/tenants/TenantManagement.vue`，支持创建、启停、成员数查看和租户标识即时校验；停用确认说明其会撤销旗下 OAuth 刷新会话，创建/启停后 Shell 会刷新给其他表单使用的租户字典。
-- OAuth 应用管理独立位于 `features/applications/ApplicationManagement.vue`：新建时要求至少一个合法登录回调（最多 20 个），前端和后端 schema 都强制非空，路由再校验 HTTPS 或 localhost/127.0.0.1 的 HTTP，不接受 URL 凭据或片段；租户、Client ID、回调白名单创建后只读。可编辑名称/说明、逐项确认受信/撤销信任、轮换与启停；启停请求携带读取时的 `expected_status`，服务端在 409 冲突时拒绝覆盖旧状态；创建/轮换的 Client Secret 仅在组件内短暂展示，关闭对话框即清除。
-- 审计日志位于 `features/audit/AuditLogPage.vue`，使用 `/admin/audit/search` 只读服务端分页，支持按操作、结果、目标类型/ID、操作者 UUID、租户 UUID 和带时区的起止时间精确筛选；详情弹窗展示租户上下文和变更摘要。页面每页 10–100 条，后端最多 500 条、offset 上限 100000。
-- 成员邀请位于 `features/invitations/InvitationManagement.vue`，独立管理租户筛选、邀请创建/撤销、角色与有效期校验及一次性 bearer 链接；服务端创建响应使用 `Cache-Control: no-store`，链接仅在组件状态短暂展示，关闭展示框时清空。SMTP 邀请邮件由服务端可选启用、默认关闭；发送状态明确展示，失败时保留一次性备用链接。公开接受流程仍由认证入口处理。
-- 用户管理位于 `features/users/UserManagement.vue`，支持邮箱/姓名查询、限长校验的用户创建、停用时会话影响确认、用户所属活动租户中的角色绑定、活动成员的多组织/主组织归属；服务器端仍验证租户边界。组织管理位于 `features/organizations/OrganizationManagement.vue`，支持按租户列出组织、校验并创建父子层级、启停，并明确标识不可变组织编码。
-- 租户委派工作台按每个租户分别发现组织和应用能力，并过滤侧栏入口。`features/tenant-admin/TenantAccessManagement.vue` 继续提供成员组织归属和角色数据范围；共享 `features/applications/ApplicationManagement.vue` 根据 `apiPrefix` 读取平台全局目录或逐租户目录。应用权限既可授给租户范围角色，也可由绑定 `application_id` 的应用角色限定到单个应用；应用目录响应携带逐行 manage/secret.rotate 能力。新建客户端要求租户级 manage，已登记客户端的资料/启停按该应用 manage 控制，密钥轮换还需独立权限；受信状态仅平台管理员可修改。按钮权限只改善操作呈现，服务端仍逐请求鉴权。
-- `features/application-roles/ApplicationRoleManagement.vue` 管理当前获授权应用的专属角色、业务权限和已有授权成员。管理者可按邮箱绑定已加入该租户的活动成员；目录只返回已有应用角色成员，用户组继承来源可见但不能由应用管理员改组；邀请新租户成员需租户管理员操作。权限列表排除新的 `iam.*` 候选，服务端也阻止新增此类系统管理授权；权限修改先预览再按期望当前授权原子保存。角色只允许当前应用范围，跨应用 ID 按 404 隐藏。
-- 登录后先由受保护的 `/admin/overview` 判断平台管理员能力；平台管理员保留完整导航，其他账号仅以自己的活动且被授权租户加载租户工作台。租户模式提供组织管理与成员/数据范围两页，组织目录支持只读或创建/启停；成员页支持租户成员搜索、组织归属替换、读取角色已授予权限并配置数据范围。后端仍逐请求复核权限。迁移 0017 已应用到本地开发库，但不会自动授予权限；没有获授权租户的用户看到 403 空状态。
-- 模型目录和用量独立位于 `features/models/ModelGovernancePage.vue`。模型页支持按租户筛选、目录新建/编辑/启停，配置端点、能力、价格、RPM/TPM 和外部 Secret Manager 引用；凭证不回显，更新时留空保留、显式清除需勾选。启停请求提交当前读取到的 `expected_status`，遇到并发修改会提示冲突并重载目录，避免过期表单覆盖新状态。用量页展示按租户汇总和最近 100 条调用账目，均不含 Prompt/响应正文。
-- 登录主题位于 `features/themes/LoginThemeManagement.vue`，每个应用单独保存/发布并保留版本历史。除布局、品牌色、卡片位置/宽度/圆角和可选背景/Logo 地址外，外观细节可配置背景图位置、缩放和遮罩、卡片背景色/透明度、文字颜色、字体预设、Logo 尺寸、卡片阴影/内边距、输入框与按钮圆角及按钮高度；桌面/手机预览即时响应。可选图片地址可清空。`shared/theme.ts` 将历史或异常值限制到安全颜色、数值和预设；后端仍是最终校验权威。素材只支持 HTTPS 或站内地址，不支持上传、任意 CSS/HTML。
-- 角色管理位于 `features/roles/RoleManagement.vue`，独立负责角色目录、租户/应用范围筛选、创建、名称/说明编辑和启停；身份字段创建后只读。用户角色绑定仍由用户页面处理。
-- 权限目录位于 `features/permissions/PermissionCatalog.vue`，独立管理稳定权限编码、资源类型、Scope、说明、搜索/创建、启停和关联角色数。编码不支持编辑或物理删除；停用保留授予与数据范围并让服务端判权拒绝，恢复会重新激活仍保留的历史授予，页面需二次确认并提示影响。
+- 租户目录独立位于 `views/tenants/TenantManagement.vue`，支持创建、启停、成员数查看和租户标识即时校验；停用确认说明其会撤销旗下 OAuth 刷新会话，创建/启停后 Shell 会刷新给其他表单使用的租户字典。
+- OAuth 应用管理独立位于 `views/applications/ApplicationManagement.vue`：新建时要求至少一个合法登录回调（最多 20 个），前端和后端 schema 都强制非空，路由再校验 HTTPS 或 localhost/127.0.0.1 的 HTTP，不接受 URL 凭据或片段；租户、Client ID、回调白名单创建后只读。可编辑名称/说明、逐项确认受信/撤销信任、轮换与启停；启停请求携带读取时的 `expected_status`，服务端在 409 冲突时拒绝覆盖旧状态；创建/轮换的 Client Secret 仅在组件内短暂展示，关闭对话框即清除。应用 / 平台角色 / 权限编码目录在侧栏「高级管理」。应用角色与成员只在应用工作台配置。
+- 审计日志位于 `views/audit/AuditLogPage.vue`，使用 `/admin/audit/search` 只读服务端分页，顶部按「管理操作 / 登录与认证」两 Tab 分类（登录 Tab 传 `action_prefix=auth.` 由服务端前缀过滤，分页计数真实）；支持按操作、结果、目标类型/ID、操作者 UUID、租户 UUID 和带时区的起止时间精确筛选；详情弹窗展示租户上下文和变更摘要。页面每页 10–100 条，后端最多 500 条、offset 上限 100000。
+- 成员邀请位于 `views/invitations/InvitationManagement.vue`，独立管理租户筛选、邀请创建/撤销、角色与有效期校验及一次性 bearer 链接；服务端创建响应使用 `Cache-Control: no-store`，链接仅在组件状态短暂展示，关闭展示框时清空。SMTP 邀请邮件由服务端可选启用、默认关闭；发送状态明确展示，失败时保留一次性备用链接。公开接受流程仍由认证入口处理。
+- 用户管理位于 `views/users/UserManagement.vue`，支持邮箱/姓名查询、限长校验的用户创建、停用时会话影响确认、用户所属活动租户中的角色绑定（P345 起为 a-transfer 穿梭框：双栏按名称/英文标识搜索，停用且未绑定的角色禁止新勾入，已绑定的停用角色保留可移除）、活动成员的多组织/主组织归属；服务器端仍验证租户边界。组织管理位于 `views/organizations/OrganizationManagement.vue`，支持按租户列出组织、校验并创建父子层级、启停，并明确标识不可变组织编码。组织工作台位于 `views/organization-workspace/`（左组织树 +「成员 / 用户组」Tab，对齐 user-center-sys department 信息架构）：成员 Tab 走 `GET /admin/organizations/{id}/members` 只读浏览，用户组 Tab 按所选组织所属租户整租展示并复用共享 `GroupRelationModal` 管理成员/角色；组织归属与用户组 CRUD 仍在原页面完成。两个工作台的空态经共享 `AdminPathGuide` 按三步主路径引导，无数据时提供跳转创建出口（Wave 4）。
+- 租户委派工作台按每个租户分别发现组织和应用能力，并过滤侧栏入口。`views/tenant-admin/TenantAccessManagement.vue` 继续提供成员组织归属和角色数据范围；共享 `views/applications/ApplicationManagement.vue` 根据 `apiPrefix` 读取平台全局目录或逐租户目录。应用权限既可授给租户范围角色，也可由绑定 `application_id` 的应用角色限定到单个应用；应用目录响应携带逐行 manage/secret.rotate 能力。新建客户端要求租户级 manage，已登记客户端的资料/启停按该应用 manage 控制，密钥轮换还需独立权限；受信状态仅平台管理员可修改。按钮权限只改善操作呈现，服务端仍逐请求鉴权。
+- 应用角色与成员在 `views/application-workspace/` 的「角色」Tab 配置：行内「应用权限」抽屉（权限编码 + 资源树 + 数据权限）和「配置成员」抽屉。独立页已归档到 `views/_archive/application-roles/`。
+- 登录后由 `GET /auth/me/capabilities` 单次判定 consoleMode（platform/tenant/no_access，P340）；平台模式侧栏以运营总览为 L1 入口、应用/组织工作台为日常主路径。成员页支持租户成员搜索、组织归属替换、读取角色已授予权限并配置数据范围；用户详情抽屉展示有效权限码并集与来源。后端仍逐请求复核权限。没有获授权租户的用户看到 403 空状态。
+- 模型目录和用量独立位于 `views/models/ModelGovernancePage.vue`。模型页支持按租户筛选、目录新建/编辑/启停，配置端点、能力、价格、RPM/TPM 和外部 Secret Manager 引用；凭证不回显，更新时留空保留、显式清除需勾选。启停请求提交当前读取到的 `expected_status`，遇到并发修改会提示冲突并重载目录，避免过期表单覆盖新状态。用量页展示按租户汇总和最近 100 条调用账目，均不含 Prompt/响应正文。
+- 登录主题位于 `views/themes/LoginThemeManagement.vue`，每个应用单独保存/发布并保留版本历史。除布局、品牌色、卡片位置/宽度/圆角和可选背景/Logo 地址外，外观细节可配置背景图位置、缩放和遮罩、卡片背景色/透明度、文字颜色、字体预设、Logo 尺寸、卡片阴影/内边距、输入框与按钮圆角及按钮高度；桌面/手机预览即时响应。可选图片地址可清空。`styles/theme.ts` 将历史或异常值限制到安全颜色、数值和预设；后端仍是最终校验权威。素材只支持 HTTPS 或站内地址，不支持上传、任意 CSS/HTML。
+- 角色管理位于 `views/roles/RoleManagement.vue`，独立负责角色目录、租户/应用/状态服务端筛选、**真分页**（`limit/offset` + `total`）、创建、名称/说明编辑和启停；身份字段创建后只读。权限列「N 项」打开挂码弹窗；只读账号仅能查看权限。用户角色绑定仍由用户页面处理。应用工作台角色 Tab 按当前应用拉目录（平台模式带 `kind=application&application_id`）。
+- 权限目录位于 `views/permissions/PermissionCatalog.vue`，独立管理稳定权限编码、资源类型、Scope、说明、搜索/创建、启停和关联角色数。日常筛选用平台/业务卡带 + 搜索，五域与命名空间在「更多筛选」。编码不支持编辑或物理删除；停用保留授予与数据范围并让服务端判权拒绝，恢复会重新激活仍保留的历史授予，页面需二次确认并提示影响。应用工作台权限 Panel 以中文描述为主列，登记时锁定应用命名空间前缀。
 - 角色复制在角色列表操作中提供：新角色标识/名称可修改，租户、应用范围和启停状态沿用源角色。默认不复制权限；每次可显式勾选复制目录仍启用的通用/资源级授权与对应数据范围；直接成员绑定和用户组角色绑定绝不复制。复制完成后可在新角色上独立编辑授权。`POST /api/v1/admin/roles/{role_id}/clone` 与隔离后端用例 6/6、前端 `npm run build` 已验证，真实浏览器提交尚未验收。
 - 角色通用权限修改先读取真实授予列表，再预览新增/撤销、直接绑定活动成员覆盖面和关联数据范围清理项；保存前需确认预览，后端以一个事务原子提交。资源实例授权与通用授权分开显示和维护，相关编辑状态均归角色 feature。
 - 成员邀请页可选租户/活动角色和 1 小时至 14 天有效期，创建链接只展示一次且可复制；可按租户查看邀请状态并撤销待处理邀请。默认由管理员经可信渠道发送；启用 SMTP 投递时显示发送结果，失败仍可使用创建响应中的一次性链接。
@@ -322,11 +347,11 @@ frontend/
 
 2026-09-30 本地浏览器只读检查确认公开找回入口和密码重置表单可呈现，并确认打开带预览 fragment 的链接后地址栏片段已移除；没有提交表单或调用邮件/重置服务。本轮将源码复制到系统临时目录，复用本地依赖直接运行 `vue-tsc -b` 和 Vite production build，通过（3198 modules；入口 371.37 KB / gzip 115.31 KB；管理注册 chunk 285.61 KB / gzip 83.78 KB）；项目工作区未生成构建产物。
 
-页面统一调用 `src/shared/services/api.ts`，不得各自拼接请求头或读取令牌。服务端返回 401 时客户端先尝试刷新一次；续期失败后清除当前令牌并同步登录态。无权、校验失败和服务错误通过 Ant Design Vue message 显示。控制台包含平台/租户两种界面模式；菜单裁剪只改善导航体验，服务端逐请求授权才是访问控制。
+页面统一调用 `@/api`（`src/api/index.ts`），不得各自拼接请求头或读取令牌。服务端返回 401 时客户端先尝试刷新一次；续期失败后清除当前令牌并同步登录态。无权、校验失败和服务错误通过 Ant Design Vue message 显示。控制台包含平台/租户两种界面模式；菜单裁剪只改善导航体验，服务端逐请求授权才是访问控制。
 
-Vite 开发代理将 `/api` 转发至 `http://127.0.0.1:8000`；可通过 `VITE_API_PROXY_TARGET` 修改。`pnpm build` 是本项目构建命令。2026-10-03 `vue-tsc --noEmit` 与 Vite production build 通过，转换 3205 个模块。平台管理员保留完整导航；租户导航按 `iam.organization.read/manage` 与 `iam.application.read/manage/secret.rotate` 能力显示组织、成员/数据范围和应用页。单应用角色工作台由独立 `application-roles` feature 提供，应用管理员只能维护当前应用业务角色/权限并分配已有活动租户成员；新授予 `iam.*` 被服务端拒绝。应用权限候选按当前 `role_id` 查询，应用权限可为租户范围或单应用范围，新建需租户级 manage，已登记客户端的操作按逐应用能力控制，密钥轮换使用独立权限，受信状态保留平台管理员专属。最新主入口 chunk 为 378.96 KB（gzip 117.51 KB），应用角色 chunk 15.40 KB（gzip 5.68 KB），管理组件注册 chunk 285.65 KB（gzip 83.80 KB）；最大 chunk 小于 500 KB。Vite 本地页、`App.vue` 和新增应用角色 SFC 模块都返回 HTTP 200；本机 API OpenAPI 确认目录接口要求 `role_id`，匿名 role-list 返回 401；未登录租户管理员会话，故菜单授权、数据状态、弹窗写入和移动端真实渲染尚未验收。
+Vite 开发代理将 `/api` 转发至 `http://127.0.0.1:8000`；可通过 `VITE_API_PROXY_TARGET` 修改。`pnpm build` 是本项目构建命令。2026-10-03 `vue-tsc --noEmit` 与 Vite production build 通过，转换 3205 个模块。平台管理员保留完整导航；租户导航按 `org.read/manage` 与 `app.read/manage/secret.rotate` 能力显示组织、成员/数据范围和应用页。单应用角色工作台由独立 `application-roles` feature 提供，应用管理员只能维护当前应用业务角色/权限并分配已有活动租户成员；新授予管理面码（五域前缀）被服务端拒绝。应用权限候选按当前 `role_id` 查询，应用权限可为租户范围或单应用范围，新建需租户级 manage，已登记客户端的操作按逐应用能力控制，密钥轮换使用独立权限，受信状态保留平台管理员专属。最新主入口 chunk 为 378.96 KB（gzip 117.51 KB），应用角色 chunk 15.40 KB（gzip 5.68 KB），管理组件注册 chunk 285.65 KB（gzip 83.80 KB）；最大 chunk 小于 500 KB。Vite 本地页、`App.vue` 和新增应用角色 SFC 模块都返回 HTTP 200；本机 API OpenAPI 确认目录接口要求 `role_id`，匿名 role-list 返回 401；未登录租户管理员会话，故菜单授权、数据状态、弹窗写入和移动端真实渲染尚未验收。
 
-Docker 开发环境通过根目录 `compose.yaml` 启动；默认浏览器地址为 `http://localhost:5175`，API 由 Vite 代理到 `api:8000`。开发镜像构建会先运行 `vue-tsc -b` 和 Vite production build，之后容器使用 Vite 热重载服务。为兼容 Docker Desktop/Windows bind mount 的文件事件传播，Vite 开发服务器每 1000ms 轮询一次源码；重启 console 容器后，`/src/app/App.vue` 返回 200 且含 13 个动态 feature 导入，再次修改宿主机源码后 2.5 秒内模块响应也反映新内容。领域页面已按需拆包，Ant Design Vue 组件仍由主入口全局注册，后续优化方向为组件级按需导入。
+Docker 开发环境通过根目录 `compose.yaml` 启动；默认浏览器地址为 `http://localhost:5175`，API 由 Vite 代理到 `api:8000`。开发镜像构建会先运行 `vue-tsc -b` 和 Vite production build，之后容器使用 Vite 热重载服务。为兼容 Docker Desktop/Windows bind mount 的文件事件传播，Vite 开发服务器每 1000ms 轮询一次源码；重启 console 容器后，`/src/App.vue` 返回 200 且含 13 个动态页面导入，再次修改宿主机源码后 2.5 秒内模块响应也反映新内容。领域页面已按需拆包，Ant Design Vue 组件仍由主入口全局注册，后续优化方向为组件级按需导入。
 
 生产镜像由 `Dockerfile.production` 构建 Vue 静态站点并在 Nginx 8080 端口提供服务。Nginx 将 `/api/*` 与 OIDC Discovery 转给内部 API，并设置 CSP、MIME、防嵌入、Referrer、Permissions 与缓存响应头；由于 Nginx 1.27 的 location 级 `add_header` 会替换 server 级列表，`/assets/*` 和 `/index.html` 显式重复安全头，避免 SPA 入口或静态 chunk 漏头。同源部署不需要浏览器跨域配置。CSP 允许受控主题所需的 HTTPS 图片和 Ant Design Vue 的内联样式，不允许脚本内联、对象嵌入或跨站 API 连接。Nginx 不采信浏览器转发头；登录来源 IP 由 Caddy 覆写的专用头提供，前置 CDN/LB 时仅在 Caddy 显式配置可信 CIDR 后启用真实客户端解析。生产部署前可通过 `../deploy/validate-production.ps1` 同时预检 Compose、Caddyfile 与 Nginx 配置；完整步骤见[运维手册](../docs/部署与运维.md)。此前本机已构建生产静态管理台镜像并检查 `/healthz` 与 SPA 根页响应；本次响应头配置尚未通过生产镜像或真实浏览器重验，真实域名、TLS 和登录后的页面验收仍未完成。
 

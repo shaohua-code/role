@@ -6,21 +6,23 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class UserGroupCreate(BaseModel):
-    """创建租户用户组时，组标识与租户边界一并确定。"""
+    """创建租户用户组时，组标识与租户边界一并确定；父组可选（G24 组嵌套）。"""
 
     tenant_id: UUID
     key: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
+    parent_group_id: UUID | None = None
 
 
 class UserGroupUpdate(BaseModel):
-    """用户组仅允许变更展示信息，租户和标识创建后保持稳定。"""
+    """用户组允许变更展示信息与父组（G24），租户和标识创建后保持稳定。"""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
+    parent_group_id: UUID | None = None
 
     @model_validator(mode="after")
     def require_update_fields(self):

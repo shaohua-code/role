@@ -1,3 +1,5 @@
+"""健康与就绪探针接口：/health 只证明进程存活，/ready 校验数据库与迁移版本。"""
+
 from pathlib import Path
 
 from alembic.config import Config

@@ -42,10 +42,18 @@ export interface PermissionSyncReport {
 }
 
 export interface IamAdminClientOptions {
-  /** 限制请求和响应体读取的总时长，默认 3000 毫秒。 */
+  /** Optional request timeout in milliseconds; default 3000. */
   timeoutMs?: number
   /** Dependency seam for deterministic tests; production should use global fetch. */
   fetcher?: typeof fetch
+  /**
+   * Application UUID. When set, sync uses
+   * /api/v1/{apiSurface}/applications/{id}/permissions (L2).
+   * When omitted, uses /api/v1/{apiSurface}/permissions (L1 catalog).
+   */
+  applicationId?: string
+  /** 'admin' (default) or 'tenant-admin' */
+  apiSurface?: 'admin' | 'tenant-admin'
 }
 
 /** IAM 管理面最小客户端；仅覆盖权限目录 list/create 两个端点。 */
@@ -59,7 +67,15 @@ export class IamAdminClient {
         && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 2_147_483_647)) {
       throw new RangeError('IAM admin timeout must be a positive 32-bit millisecond value')
     }
-    this.permissionsEndpoint = `${apiBaseUrl.replace(/\/+$/, '')}/api/v1/admin/permissions`
+    const base = apiBaseUrl.replace(/\/+$/, '')
+    const surface = options.apiSurface ?? 'admin'
+    if (surface !== 'admin' && surface !== 'tenant-admin') {
+      throw new RangeError("apiSurface must be 'admin' or 'tenant-admin'")
+    }
+    const applicationId = options.applicationId?.trim()
+    this.permissionsEndpoint = applicationId
+      ? `${base}/api/v1/${surface}/applications/${applicationId}/permissions`
+      : `${base}/api/v1/${surface}/permissions`
     this.timeoutMs = options.timeoutMs ?? 3_000
     this.fetcher = options.fetcher ?? fetch
   }
@@ -67,15 +83,20 @@ export class IamAdminClient {
   /** 返回权限目录条目列表；响应不是数组或缺 code 即契约错误（502）。 */
   async listPermissions(managementToken: string): Promise<Array<Record<string, unknown>>> {
     const body = await this.request('GET', managementToken)
-    // 后端契约：GET /admin/permissions 返回裸数组（limit 1000，按 code 排序）。
-    if (!Array.isArray(body) || body.some((item) => {
+    // G29：平台目录改为 {items,total,limit,offset}；应用侧与旧裸数组仍兼容。
+    const items = Array.isArray(body)
+      ? body
+      : (body && typeof body === 'object' && Array.isArray((body as { items?: unknown }).items)
+        ? (body as { items: unknown[] }).items
+        : null)
+    if (!Array.isArray(items) || items.some((item) => {
       const record = item as Record<string, unknown> | null
       return !record || typeof record !== 'object'
         || typeof record.code !== 'string' || record.code.length === 0
     })) {
       throw new IamAdminError(502, 'IAM returned an invalid permission catalog response')
     }
-    return body as Array<Record<string, unknown>>
+    return items as Array<Record<string, unknown>>
   }
 
   /** 创建一条权限码；201 返回目录条目，409/422 等按 IamAdminError 抛出。 */
@@ -87,6 +108,8 @@ export class IamAdminClient {
       catalog_namespace: catalogNamespace,
       resource_type: entry.resource_type,
       scope: entry.scope,
+      surface: 'business',
+      requires_data_scope: true,
       ...(entry.description !== undefined ? { description: entry.description } : {}),
     }
     return this.request('POST', managementToken, payload) as Promise<Record<string, unknown>>
@@ -94,7 +117,7 @@ export class IamAdminClient {
 
   /** 统一传输层：HS256 管理 JWT 走 Bearer 头；错误语义与授权 client 一致。 */
   private async request(method: 'GET' | 'POST', managementToken: string, payload?: Record<string, unknown>): Promise<unknown> {
-    if (!managementToken) throw new Error('A platform management access token is required')
+    if (!managementToken) throw new Error('A management access token is required (L1 catalog or L2 app admin)')
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
     try {

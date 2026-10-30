@@ -35,6 +35,15 @@ test('listPermissions sends bearer token and normalizes trailing slash', async (
   } finally { restore() }
 })
 
+test('listPermissions unwraps paged wrapper', async () => {
+  const restore = fetchQueue([jsonResponse({ items: [{ id: 'p1', code: 'demo.a' }], total: 1, limit: 1000, offset: 0 })])
+  try {
+    const client = new IamAdminClient('https://iam.example/')
+    const items = await client.listPermissions('mgmt-token')
+    assert.deepEqual(items.map((item) => item.code), ['demo.a'])
+  } finally { restore() }
+})
+
 test('createPermission posts full payload', async () => {
   const calls = []
   const restore = fetchQueue([jsonResponse({ id: 'p2' })], calls)
@@ -45,7 +54,8 @@ test('createPermission posts full payload', async () => {
     })
     assert.equal(calls[0].method, 'POST')
     assert.deepEqual(JSON.parse(calls[0].body), {
-      code: 'demo.b', resource_type: 'doc', scope: 'write', description: '创建',
+      code: 'demo.b', catalog_namespace: 'demo', resource_type: 'doc', scope: 'write',
+      surface: 'business', requires_data_scope: true, description: '创建',
     })
   } finally { restore() }
 })
@@ -193,4 +203,36 @@ test('invalid manifest rejected before any network call', async () => {
 test('missing management token rejected locally', async () => {
   const client = new IamAdminClient('https://iam.example')
   await assert.rejects(client.listPermissions(''), { name: 'Error' })
+})
+
+test('application-scoped endpoint uses L2 path', async () => {
+  const calls = []
+  const urls = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    urls.push(String(url))
+    calls.push(init)
+    return jsonResponse([])
+  }
+  try {
+    const client = new IamAdminClient('https://iam.example/', { applicationId: 'app-1' })
+    await client.listPermissions('mgmt-token')
+    assert.equal(urls[0], 'https://iam.example/api/v1/admin/applications/app-1/permissions')
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('tenant-admin surface with applicationId', async () => {
+  const urls = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    urls.push(String(url))
+    return jsonResponse([])
+  }
+  try {
+    const client = new IamAdminClient('https://iam.example', {
+      applicationId: 'app-2', apiSurface: 'tenant-admin',
+    })
+    await client.listPermissions('mgmt-token')
+    assert.equal(urls[0], 'https://iam.example/api/v1/tenant-admin/applications/app-2/permissions')
+  } finally { globalThis.fetch = originalFetch }
 })
