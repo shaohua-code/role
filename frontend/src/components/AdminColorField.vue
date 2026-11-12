@@ -9,11 +9,12 @@ function onHexChange(value: string): void {
 
 <template>
   <a-space>
+    <!-- U22：原生取色器统一圆角 + 细边框，与同行输入框（32px/圆角）对齐，替代直角裸方块 -->
     <input
       :value="model"
       type="color"
       aria-label="选择颜色"
-      class="h-8 w-8 cursor-pointer border-0 bg-transparent p-0"
+      class="h-8 w-8 cursor-pointer rounded-lg border border-[var(--color-border)] bg-transparent p-0.5"
       @input="onHexChange(($event.target as HTMLInputElement).value)"
     />
     <a-input :value="model" :maxlength="7" class="w-28" @update:value="onHexChange" />

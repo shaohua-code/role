@@ -11,8 +11,8 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <!-- P398 统一筛选条：左区筛选控件（统一 8px 间距节奏）+ 右区提示/操作（桌面端细分隔线 + 右对齐） -->
-  <div class="admin-table-toolbar mb-3 flex w-full min-w-0 flex-col gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:gap-0">
+  <!-- P398/U5 统一筛选条：左区筛选控件（统一 8px 间距节奏）+ 右区提示/操作；圆角 rounded-xl 不超过外层卡片(12px) -->
+  <div class="admin-table-toolbar mb-3 flex w-full min-w-0 flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:gap-0">
     <div v-if="$slots.default" class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
       <slot />
     </div>

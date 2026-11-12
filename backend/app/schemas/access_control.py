@@ -7,22 +7,29 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, StrictBool, field_v
 
 
 class RoleCreate(BaseModel):
-    """创建角色请求：key 为小写编程标识；钉 application_id 即应用（L2/业务）角色。"""
+    """创建角色请求：key 为小写编程标识；钉 application_id 即应用（业务）角色。
 
-    tenant_id: UUID
+    平台角色全局化：平台类角色（application_id 为空）不再需要所属租户，
+    tenant_id 仅应用角色必填（必须与应用租户匹配）。
+    scope 为授权范围（super/tenant/app，只能向下：操作者范围秩必须 ≥ 所选范围）。
+    """
+
+    tenant_id: UUID | None = None
     application_id: UUID | None = None
     key: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
+    scope: str | None = Field(default=None, description="授权范围：super/tenant/app；缺省按钉应用推导")
 
 
 class RoleUpdate(BaseModel):
-    """角色仅允许编辑展示信息；租户、应用范围、标识和授权关系保持稳定。"""
+    """角色允许编辑展示信息与授权范围（scope 仅自定义角色可改且只能向下）；其余保持稳定。"""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
+    scope: str | None = Field(default=None, description="授权范围：super/tenant/app（仅自定义角色）")
 
     @model_validator(mode="after")
     def validate_update(self):
@@ -95,6 +102,8 @@ class PermissionCreate(BaseModel):
     scope: str = Field(min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=500)
     catalog_namespace: str | None = Field(default=None, max_length=100)
+    # 四类；菜单下新建按钮时编码仍可能以 menu. 开头，必须显式写入 kind。
+    kind: Literal["menu", "button", "api", "data"] | None = None
     # 权限面与数据范围要求：管理面码默认不强制范围，业务码默认强制（缺策略即拒绝）。
     surface: Literal["management", "business"] = "business"
     requires_data_scope: bool = True

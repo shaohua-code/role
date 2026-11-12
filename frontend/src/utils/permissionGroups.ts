@@ -1,6 +1,10 @@
 // P392 权限编码重规划：唯一的「码 → 域」映射（五域：platform / rbac / org / app / ops）。
 // 授权弹窗与权限目录页共用本模块；域与控制台菜单分组对齐，格式 <域>.<对象>.<动作> 三段式。
 // 分组仅服务展示与收敛，不影响判权、可选性与保存校验。
+// F2 单一来源：菜单/按钮层级归属消费 tree meta 契约缓存，不再硬编码。
+// 契约变化：管理面 27 个接口码已删除，管理面码只剩 menu.* / button.* 节点码。
+import { relatedApiCodes, type PermissionTreeMeta } from '@/utils/permissionTree'
+import { getCachedPermissionMeta } from '@/utils/permissionContract'
 
 export interface PermissionDomain {
   key: string
@@ -21,21 +25,28 @@ export const PERMISSION_DOMAINS: PermissionDomain[] = [
 
 const DOMAIN_BY_KEY = new Map(PERMISSION_DOMAINS.map(domain => [domain.key, domain]))
 
-/** 管理面五域前缀（业务码与「其他」不属于五域）。 */
-export const MANAGEMENT_DOMAIN_PREFIXES = ['platform.', 'rbac.', 'org.', 'app.', 'ops.'] as const
+/** 管理面码判定：管理面只有菜单/按钮节点码（五域接口码已从契约删除）。 */
+export const MANAGEMENT_DOMAIN_PREFIXES = ['menu.', 'button.'] as const
 
-/** 管理面码判定：五域前缀任一命中即管理码（替代旧 iam. 前缀判断）。 */
+/** 管理面码判定：五域前缀或菜单/按钮码。 */
 export function isManagementCode(code: string): boolean {
   return MANAGEMENT_DOMAIN_PREFIXES.some(prefix => code.startsWith(prefix))
 }
 
-/** 解析权限编码所属域：五域前缀直接映射；管理面孤儿码归「其他」；业务码归「业务码」。 */
+/**
+ * 解析权限编码所属域：节点码（menu./button.）跟所挂接口域走（旧契约兼容，映射可能为空）；
+ * 管理面接口码已删除，旧五域前缀分支仅对历史数据兜底。
+ */
 export function resolvePermissionDomain(code: string): PermissionDomain {
   if (code.startsWith('platform.')) return DOMAIN_BY_KEY.get('platform')!
   if (code.startsWith('rbac.')) return DOMAIN_BY_KEY.get('rbac')!
   if (code.startsWith('org.')) return DOMAIN_BY_KEY.get('org')!
   if (code.startsWith('app.')) return DOMAIN_BY_KEY.get('app')!
   if (code.startsWith('ops.')) return DOMAIN_BY_KEY.get('ops')!
+  if (code.startsWith('menu.') || code.startsWith('button.')) {
+    const related = relatedApiCodes(code, getCachedPermissionMeta()?.menus ?? [])
+    if (related.length) return resolvePermissionDomain(related[0])
+  }
   if (isManagementCode(code)) return DOMAIN_BY_KEY.get('other')!
   return DOMAIN_BY_KEY.get('business')!
 }
@@ -45,10 +56,11 @@ export function permissionNamespace(code: string): string {
   return code.split('.')[0] || code
 }
 
-// ===== P393 作用域一级分组（PRD docs/prototypes/permission-scope-grouping）：=====
-// 一级分类从功能域改为「平台 → 租户 → 应用 → 业务码」；归属规则由 P383 模板码集确定性推导：
+// ===== P393 作用域一级分组 =====
+// 一级分类从功能域改为「平台 → 租户 → 应用 → 业务码」；归属规则由模板节点集确定性推导，
+// 节点码集来自 tree meta 的 level_scopes（F2 单一来源，前端零硬编码）：
 // 仅 L1 模板持有 → 平台；L3 持有且 L2 不持有 → 租户；L2 模板持有（L3 全量兼容）→ 应用；
-// catalog_namespace 非 platform 的码 → 业务码。目录页与授权弹窗共用本口径（FR-03 单一来源）。
+// 非管理面码 → 业务码。
 
 export interface PermissionScope {
   key: 'platform' | 'tenant' | 'app' | 'business'
@@ -66,35 +78,63 @@ export const PERMISSION_SCOPES: PermissionScope[] = [
 
 const SCOPE_BY_KEY = new Map(PERMISSION_SCOPES.map(scope => [scope.key, scope]))
 
-/** 平台组 7 码：仅 L1（platform.admin）模板持有（含权限目录写）。 */
-const PLATFORM_SCOPE_CODES = new Set([
-  'platform.overview.read', 'platform.tenant.read', 'platform.tenant.manage',
-  'platform.account.read', 'platform.account.manage', 'rbac.role.manage', 'rbac.permission.manage',
-])
+// 层级码集派生缓存：以 meta 对象引用为 key，避免每次调用重建 Set。
+let levelSetsMeta: PermissionTreeMeta | null = null
+let levelSets: { platform: Set<string>; tenant: Set<string>; app: Set<string> } | null = null
 
-/** 租户组 5 码：L3（tenant.admin）持有且 L2（app.admin）不持有。 */
-const TENANT_SCOPE_CODES = new Set([
-  'org.read', 'org.manage', 'rbac.role.read', 'rbac.app_role.assign', 'ops.model.manage',
-])
+/** 从 tree meta 派生三级互斥判定用的码集（带 memo）。 */
+function levelScopeSets(meta: PermissionTreeMeta): { platform: Set<string>; tenant: Set<string>; app: Set<string> } {
+  if (levelSetsMeta !== meta || !levelSets) {
+    levelSets = {
+      platform: new Set(meta.level_scopes.platform_admin),
+      tenant: new Set(meta.level_scopes.tenant_admin),
+      app: new Set(meta.level_scopes.app_admin),
+    }
+    levelSetsMeta = meta
+  }
+  return levelSets
+}
 
-/** 解析权限编码所属作用域组：平台/租户按静态归属表，其余管理码归应用，业务命名空间归业务码。 */
+/** 单个节点码的层级归属：L1 独有 → 平台；L3 有而 L2 无 → 租户；其余（含未入模板的新码）→ 应用。 */
+function apiScopeKey(api: string, sets: { platform: Set<string>; tenant: Set<string>; app: Set<string> }): 'platform' | 'tenant' | 'app' {
+  if (sets.platform.has(api) && !sets.tenant.has(api)) return 'platform'
+  if (sets.tenant.has(api) && !sets.app.has(api)) return 'tenant'
+  return 'app'
+}
+
+/**
+ * 解析权限编码所属作用域组：新契约 level_scopes 直接是节点码集，
+ * 菜单/按钮码可直接查集归属；接口映射为空时同口径兜底（业务码 → business）。
+ */
 export function resolvePermissionScope(code: string): PermissionScope {
   if (!isManagementCode(code)) return SCOPE_BY_KEY.get('business')!
-  if (PLATFORM_SCOPE_CODES.has(code)) return SCOPE_BY_KEY.get('platform')!
-  if (TENANT_SCOPE_CODES.has(code)) return SCOPE_BY_KEY.get('tenant')!
-  return SCOPE_BY_KEY.get('app')!
+  const meta = getCachedPermissionMeta()
+  // 契约缓存未就绪：层级码集不可用，全部管理码按「应用级」宽松回退（宁可多展示也不误藏上级码）；
+  // 层级相关的判定前，调用方应先 await ensurePermissionContract() 等待缓存就绪。
+  if (!meta) return SCOPE_BY_KEY.get('app')!
+  const sets = levelScopeSets(meta)
+  if (code.startsWith('menu.') || code.startsWith('button.')) {
+    const related = relatedApiCodes(code, meta.menus)
+    if (related.length) {
+      const unique = new Set(related.map(api => apiScopeKey(api, sets)))
+      if (unique.size === 1 && unique.has('platform')) return SCOPE_BY_KEY.get('platform')!
+      if (!unique.has('platform') && unique.size === 1 && unique.has('tenant')) return SCOPE_BY_KEY.get('tenant')!
+      return SCOPE_BY_KEY.get('app')!
+    }
+  }
+  return SCOPE_BY_KEY.get(apiScopeKey(code, sets))!
 }
 
 // ===== P395 两类分组（PRD docs/prototypes/permission-hierarchy-view）：=====
-// 分类只有两种——「平台编码」（27 个管理面码，平台统一管理）与「应用业务编码」（应用命名空间业务码）。
-// 「平台 ⊃ 租户 ⊃ 应用」的层级关系不靠分组表达：它由模板码集天然承载（L1 持 27 ⊃ L3 持 20 ⊃ L2 持 15），
+// 分类只有两种——「平台编码」（管理面码，平台统一管理）与「应用业务编码」（应用命名空间业务码）。
+// 「平台 ⊃ 租户 ⊃ 应用」的层级关系不靠分组表达：它由五级模板码集天然承载（各级码数见 tree meta.template_sizes），
 // 在行级以「层级起点」标记呈现（复用 resolvePermissionScope 的互斥归属）。
 
 export type PermissionClass = 'platform-class' | 'business'
 
 /** 两类分组定义（目录页卡带与授权弹窗导航共用，组序即展示序）。 */
 export const PERMISSION_CLASSES: { key: PermissionClass; label: string; hint: string }[] = [
-  { key: 'platform-class', label: '平台编码', hint: '平台统一管理的管理面码，四级管理员分层持有' },
+  { key: 'platform-class', label: '平台编码', hint: '平台统一管理的管理面码，五级角色分层持有' },
   { key: 'business', label: '应用业务编码', hint: '租户下各应用命名空间的业务码，强制数据范围' },
 ]
 

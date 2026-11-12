@@ -13,7 +13,8 @@ if (!pageKeyMatch) {
   process.exit(1)
 }
 const keys = [...pageKeyMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
-const required = ['overview', 'application_workspace', 'organization_workspace', 'users', 'roles', 'permissions', 'audit']
+// 权限编码页已下线：required 清单不再包含 permissions（/permissions 旧深链重定向到 /roles）。
+const required = ['overview', 'application_workspace', 'organization_workspace', 'users', 'roles', 'audit']
 for (const k of required) {
   if (!keys.includes(k)) {
     console.error('smoke: missing PageKey', k)

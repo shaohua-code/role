@@ -8,7 +8,7 @@ import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminColorField from '@/components/AdminColorField.vue'
 import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
 import { api, getToken, setToken, type AdminOverview } from '@/api'
-import { allCodes, clearCapabilities, deriveConsoleMode, hasAnyCode, loadCapabilities, setCachedCapabilities, type Capabilities, type ConsoleMode } from '@/api/capabilities'
+import { allCodes, clearCapabilities, deriveConsoleMode, hasAnyCode, loadCapabilities, setCachedCapabilities, TENANT_ADMIN_API_PREFIX, type Capabilities, type ConsoleMode } from '@/api/capabilities'
 import { ensureManagementUi } from '@/plugins/antd'
 import FeatureLoading from '@/components/FeatureLoading.vue'
 import AppSidebar from '@/layout/AppSidebar.vue'
@@ -17,18 +17,16 @@ import AuthEntry from '@/views/auth/AuthEntry.vue'
 import { NAV_ITEMS, PAGE_INFO as pageInfo, PAGE_PATHS, type PageKey } from '@/router/navigation'
 import { asPagedList } from '@/utils/paged'
 import {
-  ApplicationManagement,
   ApplicationWorkspace,
   AuditLogPage,
   AuthorizationSimulator,
   GroupManagement,
+  IntegrationGuidePage,
   InvitationManagement,
   LoginThemeManagement,
   ModelGovernancePage,
-  OrganizationManagement,
   OrganizationWorkspace,
   OverviewPage,
-  PermissionCatalog,
   RoleManagement,
   TenantAccessManagement,
   TenantManagement,
@@ -40,7 +38,8 @@ import { useShellAppearance } from '@/composables/useShellAppearance'
 import { PAGE_COMPONENTS } from '@/layout/page-registry'
 
 type Row = Record<string, unknown>
-type TenantMembership = { tenant_id: string; tenant_name: string; tenant_kind: 'organization' | 'consumer'; membership_status: string; tenant_status: string }
+// tenant_slug 由 memberships 契约下发（slug=platform 为平台保留租户）；未下发时保持 undefined 兜底
+type TenantMembership = { tenant_id: string; tenant_name: string; tenant_kind: 'organization' | 'consumer'; membership_status: string; tenant_status: string; tenant_slug?: string }
 const route = useRoute()
 const router = useRouter()
 
@@ -72,6 +71,10 @@ const {
   bindAppearanceListeners,
   disposeAppearanceListeners,
 } = useShellAppearance()
+
+// U9 外观面板受控开关：antd Popover 默认无键盘关闭路径（走查实测 Esc 无效），
+// 受控后内容区与触发键都能 Esc 收起；顶栏按钮同步改 type=text（原描边 chip 在深色顶栏上常亮突兀）。
+const appearanceOpen = ref(false)
 
 const pageComponents = PAGE_COMPONENTS
 // 保留目录引用，避免拆壳后组件清单被误删；模板仍按页传不同 props。
@@ -129,12 +132,11 @@ const platformTenantOptions = computed(() => tenants.value.map(tenant => ({
   name: String(tenant.name),
   slug: typeof tenant.slug === 'string' ? tenant.slug : undefined,
 })))
-// 跨租户并集的管理码集合；菜单按 requiredPermissions(any-of) 裁剪，不再硬编码 key 判断。
+// 跨租户并集的管理码集合；侧栏只认对应 menu.*。
 const heldCodes = computed(() => capabilities.value ? allCodes(capabilities.value) : new Set<string>())
 // 绿场统一导航（11 号文档 §6.3）：平台与租户模式共用 NAV_ITEMS + 能力过滤。
 // Wave 1 对齐 user-centent：「应用与权限」组以应用工作台为主入口。
-// 高级管理改造：应用/角色/权限三个列表页归入侧栏「高级管理」折叠组（低频全局能力），
-// 不再区分平台/租户模式做侧栏排除，能力满足即展示；应用角色只在应用工作台配置。
+// 高级管理只留平台角色 / 权限编码 / 用户组；应用与组织目录已收口到工作台。
 const visibleNavigation = computed(() => {
   if (consoleMode.value === 'no_access') return []
   return NAV_ITEMS.filter(item => hasAnyCode(heldCodes.value, item.requiredPermissions))
@@ -150,7 +152,8 @@ let pageRequestSequence = 0
 // maxHeight 消除内容区双滚动条；minHeight 与其同值让少数据/空态的面板也撑满卡片，
 // 空态 placeholder 单元格吃到面板高度实现垂直居中（td 默认 vertical-align:middle）。
 async function loadPage(force = false): Promise<void> {
-  if (!token.value || consoleMode.value !== 'platform' || page.value !== 'overview') return
+  // P1-6：租户模式同样加载运营总览（后端已按操作者范围过滤计数），不再永远显示占位符。
+  if (!token.value || (consoleMode.value !== 'platform' && consoleMode.value !== 'tenant') || page.value !== 'overview') return
   // 登录初始化已写入 overview 时，路由同步不再重复请求。
   if (!force && overview.value) return
   const requestSequence = ++pageRequestSequence
@@ -193,40 +196,44 @@ async function loadDictionaries(force = false): Promise<void> {
   }
 }
 
-function tenantRowFromCapabilities(capability: Capabilities['tenants'][number], name: string, kind: string, status: string): Row {
-  // 能力响应已按租户归组管理码；这里换算成租户控制台历史 can_* 布尔，子页面续用。
+function tenantRowFromCapabilities(capability: Capabilities['tenants'][number], name: string, kind: string, status: string, slug?: string): Row {
+  // 能力响应已按租户归组管理码（menu.*/button.* 节点码）；这里换算成租户控制台历史 can_* 布尔，子页面续用。
   const tenantCodes = new Set<string>(capability.codes)
   const codes = new Set<string>(capability.codes)
   for (const application of capability.applications) {
     for (const code of application.codes) codes.add(code)
   }
-  const canReadOrganizations = codes.has('org.read') || codes.has('org.manage')
-  const canReadApplications = codes.has('app.read') || codes.has('app.manage')
+  const canReadOrganizations = codes.has('menu.organization_workspace')
+  const canReadApplications = codes.has('menu.application_workspace')
     || capability.applications.length > 0
   return {
     id: capability.tenant_id,
     name,
     kind,
     status,
+    // 透传租户 slug（平台保留租户 slug=platform），供下游排除逻辑使用；缺失时为 undefined
+    slug,
     can_read_organizations: canReadOrganizations,
-    can_manage_organizations: codes.has('org.manage'),
+    can_manage_organizations: codes.has('button.org.manage'),
     can_read_applications: canReadApplications,
-    can_manage_applications: codes.has('app.manage'),
-    // P404：新建/删除应用只看租户域码（L3），不要把 L2 应用级 app.manage 并进来。
-    can_create_applications: tenantCodes.has('app.manage'),
-    can_rotate_application_secret: codes.has('app.secret.rotate'),
+    can_manage_applications: codes.has('button.apps.manage'),
+    // P404：新建/删除应用只看租户域节点（L3），不要把 L2 应用级 button.apps.manage 并进来。
+    can_create_applications: tenantCodes.has('button.apps.manage'),
+    can_rotate_application_secret: codes.has('button.apps.secret'),
   }
 }
 
-async function loadTenantNameLookups(userId: string, tenantIds: string[]): Promise<Map<string, { name: string; kind: string; status: string }>> {
+async function loadTenantNameLookups(userId: string, tenantIds: string[]): Promise<Map<string, { name: string; kind: string; status: string; slug?: string }>> {
   // 能力响应只含 tenant_id；用本人 membership 接口补齐展示名（失败时退化为占位名）。
-  const lookups = new Map<string, { name: string; kind: string; status: string }>()
+  const lookups = new Map<string, { name: string; kind: string; status: string; slug?: string }>()
   try {
-    const memberships = await api<TenantMembership[]>(`/tenant-admin/users/${encodeURIComponent(userId)}/memberships`).catch(() => null)
+    const memberships = await api<TenantMembership[]>(`${TENANT_ADMIN_API_PREFIX}/users/${encodeURIComponent(userId)}/memberships`).catch(() => null)
     if (memberships) {
       for (const membership of memberships) {
         lookups.set(membership.tenant_id, {
           name: membership.tenant_name, kind: membership.tenant_kind, status: membership.tenant_status,
+          // 契约下发 tenant_slug 才透传，用于平台保留租户（slug=platform）排除
+          slug: typeof membership.tenant_slug === 'string' ? membership.tenant_slug : undefined,
         })
       }
     }
@@ -279,21 +286,36 @@ async function initializeConsole(user: { id?: string; capabilities?: Capabilitie
   const lookups = await loadTenantNameLookups(user.id || '', capabilityTenants.map(item => item.tenant_id))
   tenants.value = capabilityTenants.map(capability => {
     const lookup = lookups.get(capability.tenant_id)
-    return tenantRowFromCapabilities(capability, lookup?.name || capability.tenant_id, lookup?.kind || 'organization', lookup?.status || 'active')
+    return tenantRowFromCapabilities(capability, lookup?.name || capability.tenant_id, lookup?.kind || 'organization', lookup?.status || 'active', lookup?.slug)
   })
-  // 租户模式的应用字典：主题页按应用管理登录主题；仅在持有应用码时拉取首租户列表。
+  // 租户模式的应用字典：主题页按应用管理登录主题；P2-6 改为按全部可读租户并发拉取合并，
+  // 多租户管理员在登录主题页能看到并管理所有租户的应用品牌（原先只拉首租户）。
   const firstTenantId = capabilityTenants[0]?.tenant_id
-  if (firstTenantId && heldCodes.value.has('app.read')) {
-    applications.value = await api<Row[]>(`/tenant-admin/applications?tenant_id=${encodeURIComponent(firstTenantId)}`).catch(() => [])
+  if (capabilityTenants.length && heldCodes.value.has('menu.application_workspace')) {
+    const tenantAppLists = await Promise.all(capabilityTenants.map(tenant =>
+      api<Row[]>(`${TENANT_ADMIN_API_PREFIX}/applications?tenant_id=${encodeURIComponent(tenant.tenant_id)}`).catch(() => [] as Row[]),
+    ))
+    applications.value = tenantAppLists.flat()
     if (applications.value.length && !themeAppId.value) themeAppId.value = String(applications.value[0].id)
   }
-  // 租户模式的角色字典：邀请页预绑角色按 organization.read 从租户角色目录读取。
-  if (firstTenantId && heldCodes.value.has('org.read')) {
-    roleOptions.value = await api<Row[]>(`/tenant-admin/roles?tenant_id=${encodeURIComponent(firstTenantId)}`).catch(() => [])
+  // 租户模式的角色字典：平台角色全局化后候选=全局平台角色+本租户应用角色，
+  // 统一走 /admin/roles（不再按租户过滤平台角色）；按组织工作台菜单节点拉取。
+  if (firstTenantId && heldCodes.value.has('menu.organization_workspace')) {
+    // P1-5：/admin/roles 已分页化返回 {items}，兼容数组与分页对象两种形态解析，
+    // 解析失败不再中断 initializeConsole（曾导致租户模式登录后首屏空白）。
+    const rolesResult = await api<Row[] | { items?: Row[] }>('/admin/roles?limit=500').catch(() => [] as Row[])
+    const roleRows = Array.isArray(rolesResult) ? rolesResult : rolesResult.items ?? []
+    roleOptions.value = roleRows.filter(role => {
+      // 未钉应用的是平台角色（全局一份，直接保留）；应用角色仅保留宿主在当前租户的
+      if (!role.application_id) return true
+      return String(role.tenant_id ?? '') === String(firstTenantId)
+    })
   }
-  const firstPage = visibleNavigation.value[0]?.key || 'organizations'
+  const firstPage = visibleNavigation.value[0]?.key || 'organization_workspace'
   visitedPages.value = new Set<PageKey>([firstPage])
   await router.replace(PAGE_PATHS[firstPage])
+  // P1-6 收尾：登录页路由即首页时同路由 replace 不触发路由 watch，需与平台分支对等显式加载总览。
+  void loadPage()
 }
 
 async function onAuthenticated(
@@ -443,14 +465,14 @@ onUnmounted(() => {
             <!-- 顶栏面包屑组件：渐变模式徽章 + 页面标题 -->
             <AppBreadcrumb
               :mode-label="consoleMode === 'tenant' ? '租户工作台' : consoleMode === 'platform' ? '平台' : '访问受限'"
-              :page-title="pageInfo[page].title"
+              :page-title="pageInfo[page]?.title ?? ''"
             />
           </div>
           <!-- UI 检查 P349：去掉 wrap——375 视口下换行会叠加溢出固定高 header；外观按钮移动端图标化省宽。 -->
           <a-space :size="8" class="shrink-0">
-            <a-popover trigger="click" placement="bottomRight">
+            <a-popover v-model:open="appearanceOpen" trigger="click" placement="bottomRight">
               <template #content>
-                <div class="grid min-w-48 gap-2">
+                <div class="grid min-w-48 gap-2" @keydown.esc="appearanceOpen = false">
                   <span class="text-xs text-[var(--color-text-secondary)]">界面主题</span>
                   <a-radio-group v-model:value="themePreference" button-style="solid" @change="onThemePreferenceChange">
                     <a-radio-button value="light">浅色</a-radio-button>
@@ -470,7 +492,7 @@ onUnmounted(() => {
               <!-- 375 视口收敛宽度：移动端只留齿轮图标，桌面保留「外观」文字。
                    用 isMobile 条件渲染而非 hidden 类——antd 未分层的 .ant-btn > span{display:inline-block}
                    会压过 Tailwind @layer utilities 的 .hidden（P349 浏览器复验实测）。 -->
-              <a-button aria-label="外观设置">
+              <a-button aria-label="外观设置" type="text" @keydown.esc="appearanceOpen = false">
                 <SettingOutlined v-if="isMobile" />
                 <span v-else>外观</span>
               </a-button>
@@ -508,17 +530,20 @@ onUnmounted(() => {
               @refresh="() => loadPage(true)"
             />
           </div>
-          <!-- 应用工作台：左树选应用 + 角色/权限编码/资源树 Tab（日常主入口）。 -->
+          <!-- 应用工作台：左树选应用 + 角色/权限编码/资源树 Tab；新建与设置都走节点更多。 -->
           <div v-if="visitedPages.has('application_workspace')" v-show="page === 'application_workspace'">
             <ApplicationWorkspace
               :active="page === 'application_workspace'"
               :console-mode="consoleMode === 'tenant' ? 'tenant' : 'platform'"
-              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: tenant.can_create_applications === true }))"
+              :api-prefix="consoleMode === 'tenant' ? TENANT_ADMIN_API_PREFIX : '/admin'"
+              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), kind: tenant.kind === 'consumer' ? 'consumer' : 'organization', can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: consoleMode === 'platform' || tenant.can_create_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
               :shell-applications="consoleMode === 'platform' ? applications : null"
               :shell-catalog-generation="platformCatalogGeneration"
               @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined"
             />
+          </div>
+          <div v-if="visitedPages.has('integration_guide')" v-show="page === 'integration_guide'">
+            <IntegrationGuidePage />
           </div>
           <div v-if="visitedPages.has('themes')" v-show="page === 'themes'">
             <LoginThemeManagement
@@ -540,22 +565,15 @@ onUnmounted(() => {
               @changed="() => loadDictionaries(true)"
             />
           </div>
-          <div v-if="visitedPages.has('applications')" v-show="page === 'applications'">
-            <ApplicationManagement :active="page === 'applications'"
-              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :shell-catalog-generation="platformCatalogGeneration"
-              :shell-applications="consoleMode === 'platform' ? applications : null"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_applications: tenant.can_read_applications === true, can_manage_applications: tenant.can_manage_applications === true, can_create_applications: tenant.can_create_applications === true, can_rotate_application_secret: tenant.can_rotate_application_secret === true }))"
-              @changed="consoleMode === 'platform' ? loadDictionaries(true) : undefined" />
-          </div>
           <div v-if="visitedPages.has('audit')" v-show="page === 'audit'">
             <AuditLogPage :active="page === 'audit'" />
           </div>
           <div v-if="visitedPages.has('invitations')" v-show="page === 'invitations'">
+            <!-- 平台角色全局化后 tenant_id 可能为空（全局角色），连同 application_id 一起透传供候选过滤 -->
             <InvitationManagement
               :active="page === 'invitations'"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined }))"
-              :roles="roleOptions.map(role => ({ id: String(role.id), tenant_id: String(role.tenant_id), name: String(role.name), status: String(role.status) }))"
+              :roles="roleOptions.map(role => ({ id: String(role.id), tenant_id: role.tenant_id ? String(role.tenant_id) : '', application_id: role.application_id ? String(role.application_id) : null, name: String(role.name), status: String(role.status) }))"
             />
           </div>
           <div v-if="visitedPages.has('roles')" v-show="page === 'roles'">
@@ -565,9 +583,6 @@ onUnmounted(() => {
               :applications="applications.map(application => ({ id: String(application.id), tenant_id: String(application.tenant_id), name: String(application.name), status: String(application.status), permission_namespace: String(application.permission_namespace ?? '') }))"
               @changed="() => loadDictionaries(true)"
             />
-          </div>
-          <div v-if="visitedPages.has('permissions')" v-show="page === 'permissions'">
-            <PermissionCatalog :active="page === 'permissions'" />
           </div>
           <div v-if="visitedPages.has('users')" v-show="page === 'users'">
             <!-- 绿场 §6.6 用户管理融合：租户模式=租户成员与数据范围；平台模式=全局用户目录。 -->
@@ -581,25 +596,21 @@ onUnmounted(() => {
               :active="page === 'users'"
               :current-user-id="String(currentUser?.id || '')"
               :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) }))"
+              :applications="applications.map(application => ({ id: String(application.id), name: String(application.name), tenant_id: String(application.tenant_id ?? '') }))"
               @changed="() => loadDictionaries(true)" />
           </div>
-          <div v-if="visitedPages.has('organizations')" v-show="page === 'organizations'">
-            <OrganizationManagement :active="page === 'organizations'"
-              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined, can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true, can_manage_organizations: consoleMode === 'platform' || tenant.can_manage_organizations === true }))" />
-          </div>
-          <!-- Wave 2 组织工作台：左组织树 + 成员/用户组 Tab；组织仍挂租户，用户组仅在组织上下文展示。 -->
+          <!-- 组织工作台：左组织树 + 成员/用户组 Tab；新建与设置都走节点更多。 -->
           <div v-if="visitedPages.has('organization_workspace')" v-show="page === 'organization_workspace'">
             <OrganizationWorkspace
               :active="page === 'organization_workspace'"
-              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
-              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true }))"
+              :api-prefix="consoleMode === 'tenant' ? TENANT_ADMIN_API_PREFIX : '/admin'"
+              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined, can_read_organizations: consoleMode === 'platform' || tenant.can_read_organizations === true, can_manage_organizations: consoleMode === 'platform' || tenant.can_manage_organizations === true }))"
             />
           </div>
           <div v-if="visitedPages.has('groups')" v-show="page === 'groups'">
             <GroupManagement
               :active="page === 'groups'"
-              :api-prefix="consoleMode === 'tenant' ? '/tenant-admin' : '/admin'"
+              :api-prefix="consoleMode === 'tenant' ? TENANT_ADMIN_API_PREFIX : '/admin'"
               :tenants="consoleMode === 'platform' ? platformTenantOptions : tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), slug: typeof tenant.slug === 'string' ? tenant.slug : undefined }))"
             />
           </div>
@@ -615,12 +626,17 @@ onUnmounted(() => {
               :seed-applications="applications"
             />
           </div>
-          <footer class="app-footer mt-auto flex min-w-0 max-w-full flex-col justify-between gap-2 border-t pt-3 text-xs sm:flex-row">
-            <span class="min-w-0 shrink-0">统一身份与权限管理平台</span>
-            <span class="min-w-0 break-words sm:text-right">{{ page === 'authorization_simulation' ? '授权模拟只读，不会修改策略' : '管理变更由服务端鉴权并写入审计' }}</span>
-          </footer>
           </template>
         </a-layout-content>
+        <!-- 滚动条修复：页脚从滚动流内移出，作为壳层固定底行——此前它把 main 内容顶出折叠线，
+             让桌面端工作台恒现一条内部滚动条（形似页面滚动条）。内容区 flex-1 自动为其让位。 -->
+        <footer class="app-footer shrink-0 border-t">
+          <div class="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col justify-between gap-2 px-[var(--content-padding-x)] py-2.5 text-xs sm:flex-row">
+            <span class="min-w-0 shrink-0">统一身份与权限管理平台</span>
+            <!-- U23：模拟器页脚免责特判移除——页面顶部「只读预演」alert 已有同义说明，页脚回归统一口径 -->
+            <span class="min-w-0 break-words sm:text-right">管理变更由服务端鉴权并写入审计</span>
+          </div>
+        </footer>
         <!-- G02 自助改密弹窗：挂在登录态布局内；changed 后强制退出（服务端已撤销全部会话）。 -->
         <ChangePasswordModal v-model:open="changePasswordOpen" @changed="signOut" />
       </a-layout>

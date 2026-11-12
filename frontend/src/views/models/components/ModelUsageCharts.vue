@@ -288,8 +288,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 冷启动收敛：无任何聚合数据时不渲染双图骨架，整段降为一条安静空档带（避免两张大白空框）。 -->
+  <!-- 冷启动收敛：无任何聚合数据时不渲染双图骨架，整段降为一条编号完整的安静空档带（M1：补「02」头，避免 01→04→05 跳号）。 -->
   <a-card v-if="!hasAnyData" class="data-card" :bordered="false">
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+      <h3 class="mb-0 flex items-baseline gap-2 text-base font-semibold text-[var(--color-text-primary)]">
+        <span class="font-mono text-[11px] font-medium text-[var(--color-text-muted)]">02</span>
+        用量与分布
+      </h3>
+    </div>
     <div v-if="chartsLoading" class="flex min-h-[88px] items-center justify-center text-[13px] text-[var(--color-text-muted)]" role="status">正在加载用量图表…</div>
     <div v-else-if="loadFailed" class="flex items-center gap-3 py-2" role="alert">
       <span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--color-bg-subtle)] text-base" aria-hidden="true">⚠️</span>
@@ -298,13 +304,10 @@ onUnmounted(() => {
         <span class="mt-0.5 block text-xs text-[var(--color-warning)]">当前展示可能为上次结果，请刷新重试。</span>
       </span>
     </div>
-    <div v-else class="flex items-center gap-4 py-2">
-      <span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-base" aria-hidden="true">📈</span>
-      <span class="min-w-0">
-        <span class="block text-sm font-medium text-[var(--color-text-primary)]">暂无模型调用记录</span>
-        <span class="mt-0.5 block text-xs text-[var(--color-text-muted)]">网关上报或核对入账后，这里会展示每日 Token 消耗趋势与各模型分布。</span>
-      </span>
-    </div>
+    <!-- M1 空态与其他区块统一为居中 AdminEmpty，附口径说明子行 -->
+    <AdminEmpty v-else emoji="📈" description="暂无模型调用记录">
+      <p class="m-0 text-xs text-[var(--color-text-muted)]">网关上报或核对入账后，这里会展示每日 Token 消耗趋势与各模型分布。</p>
+    </AdminEmpty>
   </a-card>
 
   <div v-else class="grid grid-cols-1 gap-4 lg:grid-cols-2">

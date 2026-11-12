@@ -2,9 +2,11 @@
 import { ref, watch } from 'vue'
 type DayjsLike = { isValid: () => boolean; toISOString: () => string }
 import { api } from '@/api'
+import { ADMIN_API_PREFIX } from '@/api/capabilities'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminFilterPanel from '@/components/AdminFilterPanel.vue'
 import AdminFilterField from '@/components/AdminFilterField.vue'
+import AdminMonoValue from '@/components/AdminMonoValue.vue'
 import { DownOutlined, FilterOutlined, UpOutlined } from '@/plugins/icons'
 
 interface AuditEvent {
@@ -123,7 +125,7 @@ async function loadEvents(): Promise<void> {
     ]
     for (const [key, value] of exactFilters) if (value) query.set(key, value)
 
-    const result = await api<AuditSearchResult>(`/admin/audit/search?${query.toString()}`)
+    const result = await api<AuditSearchResult>(`${ADMIN_API_PREFIX}/audit/search?${query.toString()}`)
     if (sequence === requestSequence && props.active) {
       events.value = result.items
       total.value = result.total
@@ -208,7 +210,7 @@ watch(() => props.active, (active) => {
     :data-source="events"
     :loading="loading"
     row-key="id"
-    :scroll="{ x: 1580, y: 'calc(100vh - 430px)' }"
+    :scroll="{ x: 1580, y: 'calc(max(360px, 100vh - 430px))' }"
     :pagination="{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: (count: number) => `共 ${count} 条` }"
     :error-text="errorText"
     empty-emoji="🔍"
@@ -255,6 +257,11 @@ watch(() => props.active, (active) => {
     </template>
     <template #bodyCell="{ column, record }">
       <template v-if="column.key === 'created_at'">{{ formatTime(String(record.created_at || '')) }}</template>
+      <!-- U13 操作者 UUID：mono + 悬停完整值 + 一键复制，替代「切在连字符上形似乱码」的裸截断 -->
+      <template v-else-if="column.key === 'actor_user_id'">
+        <AdminMonoValue v-if="record.actor_user_id" :value="String(record.actor_user_id)" max-width="150px" />
+        <span v-else class="text-xs text-[var(--color-text-muted)]">—</span>
+      </template>
       <!-- 操作类型用中性 mono tag（P350 黑白灰：蓝色块破坏灰阶体系），结果列保留语义色 -->
       <template v-else-if="column.key === 'action'"><a-tag class="font-mono">{{ record.action || '—' }}</a-tag></template>
       <template v-else-if="column.key === 'outcome'">
@@ -271,7 +278,7 @@ watch(() => props.active, (active) => {
     </template>
   </AdminListPage>
 
-  <a-modal v-model:open="detailsOpen" title="审计事件详情" :footer="null" width="720px">
+  <a-modal v-model:open="detailsOpen" title="审计事件详情" :footer="null" width="800px">
     <template v-if="selectedEvent">
       <a-descriptions bordered :column="1" size="small" class="audit-event-meta">
         <a-descriptions-item label="事件 ID">{{ selectedEvent.id }}</a-descriptions-item>
@@ -289,8 +296,9 @@ watch(() => props.active, (active) => {
 </template>
 
 <style scoped>
-.audit-retention-note { margin: 14px 0 0; color: var(--subtle); font-size: 12px; line-height: 1.6; }
+/* P2-10：原 var(--subtle)/var(--text)/var(--soft) 全前端未定义导致样式静默失效，改用 tokens.css 变量。 */
+.audit-retention-note { margin: 14px 0 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.6; }
 .audit-event-meta { margin-top: 8px; overflow-wrap: anywhere; }
 .audit-detail-heading { margin: 20px 0 8px; font-size: 14px; font-weight: 600; }
-.audit-detail-json { max-height: 360px; overflow: auto; padding: 14px; border-radius: 8px; color: var(--text); background: var(--soft); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.audit-detail-json { max-height: 360px; overflow: auto; padding: 14px; border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-subtle); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

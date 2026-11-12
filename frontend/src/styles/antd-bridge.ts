@@ -89,8 +89,9 @@ export function buildManagementAntdTheme(input: ManagementThemeInput) {
       Button: {
         borderRadius: 8,
         controlHeight,
-        // 去掉 antd 默认的 0 2px 0 硬投影（黑色品牌下显脏），换贴地柔影
-        primaryShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+        // U26 主按钮阴影统一口径：全站一律无阴影（此前 disabled/loading 态无阴影、常态有柔影，
+        // 同页两种状态肉眼可辨「两套皮肤」），扁平实底与黑白灰体系更一致
+        primaryShadow: 'none',
       },
     },
   }

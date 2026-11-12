@@ -186,9 +186,16 @@ class ThemeUpdate(BaseModel):
 
 
 class AdminUserCreate(BaseModel):
-    """管理员直建用户：初始密码至少 12 位；role_id 可选，缺省不授予角色。"""
+    """管理员直建用户：初始密码至少 12 位。
 
-    tenant_id: UUID
+    tenant_ids 至少一个（前端默认选中一个租户）；organization_ids / application_ids
+    为可选多选绑定，组织必须属于所选租户，应用绑定自动补该应用的 app.member。
+    role_id 可选，缺省不授予角色（绑定到第一个租户）。
+    """
+
+    tenant_ids: list[UUID] = Field(min_length=1, max_length=50)
+    organization_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    application_ids: list[UUID] = Field(default_factory=list, max_length=200)
     email: EmailStr
     display_name: str = Field(min_length=1, max_length=120)
     initial_password: str = Field(min_length=12, max_length=128)

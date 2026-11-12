@@ -13,10 +13,11 @@ from app.models.model_catalog import ModelCatalog
 from app.models.organization import RoleDataScope
 
 
+# 停用应用的豁免节点码：应用管理节点持有者不受应用停用限制（与 authorization.py 同源）。
 APPLICATION_ADMIN_PERMISSION_CODES = frozenset({
-    "app.read",
-    "app.manage",
-    "app.secret.rotate",
+    "menu.application_workspace",
+    "button.apps.manage",
+    "button.apps.secret",
 })
 
 
@@ -25,19 +26,26 @@ class StaleRolePermissionPreview(Exception):
 
 
 def _active_role_member_ids(role: Role, db: Session) -> set[UUID]:
-    """统计可通过直接绑定或活动用户组继承此角色的活动租户成员。"""
+    """统计可通过直接绑定或活动用户组继承此角色的活动租户成员。
+
+    平台角色全局化：平台类角色（application_id IS NULL）的直连绑定跨租户生效，
+    不限成员租户；应用类角色仍限角色所属租户。组继承分支保持组所在租户。
+    """
+    direct_filters = [
+        RoleBinding.role_id == role.id,
+        TenantMembership.status == "active",
+        Tenant.status == "active",
+        User.status == "active",
+    ]
+    if role.application_id is not None:
+        # 应用类角色仍要求成员与角色同租户。
+        direct_filters.append(TenantMembership.tenant_id == role.tenant_id)
     direct_members = (
         select(TenantMembership.id.label("membership_id"))
         .join(User, User.id == TenantMembership.user_id)
         .join(Tenant, Tenant.id == TenantMembership.tenant_id)
         .join(RoleBinding, RoleBinding.membership_id == TenantMembership.id)
-        .where(
-            RoleBinding.role_id == role.id,
-            TenantMembership.tenant_id == role.tenant_id,
-            TenantMembership.status == "active",
-            Tenant.status == "active",
-            User.status == "active",
-        )
+        .where(*direct_filters)
     )
     group_members = (
         select(TenantMembership.id.label("membership_id"))
@@ -78,19 +86,23 @@ def _other_general_role_grants(
     # 通用租户角色可用于任意应用上下文；应用角色只覆盖本应用及通用角色。
     application_scope = (Role.application_id.is_(None) if role.application_id is None else
                          or_(Role.application_id.is_(None), Role.application_id == role.application_id))
-    common_filters = (
+    common_filters = [
         TenantMembership.id.in_(membership_ids),
-        TenantMembership.tenant_id == role.tenant_id,
         TenantMembership.status == "active",
         User.status == "active",
         Role.id != role.id,
-        Role.tenant_id == role.tenant_id,
         Role.status == "active",
         application_scope,
+    ]
+    if role.application_id is not None:
+        # 应用类角色保持同租户边界；平台类角色全局生效，不再限制成员/角色租户。
+        common_filters.append(TenantMembership.tenant_id == role.tenant_id)
+        common_filters.append(Role.tenant_id == role.tenant_id)
+    common_filters.extend((
         Permission.code.in_(permission_codes),
         Permission.status == "active",
         RolePermission.resource_id.is_(None),
-    )
+    ))
     direct_grants = (
         select(TenantMembership.id.label("membership_id"), Permission.code.label("permission_code"))
         .join(User, User.id == TenantMembership.user_id)

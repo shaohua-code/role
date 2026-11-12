@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '@/api'
 
 // G16 用户详情聚合抽屉：单次拉取 /admin/users/{id}/profile，分区展示资料/成员关系/角色/会话/最近认证事件。
@@ -13,7 +13,15 @@ interface UserProfile {
   status: string
   auth_version: number
   created_at: string
-  memberships: { tenant_id: string; tenant_name: string; tenant_status: string; membership_status: string; joined_at: string }[]
+  memberships: {
+    tenant_id: string
+    tenant_name: string
+    tenant_status: string
+    membership_status: string
+    joined_at: string
+    /** 新契约：成员关系内嵌组织归属（含主组织标记）。 */
+    organizations: { organization_id: string; organization_name: string; is_primary: boolean }[]
+  }[]
   role_bindings: { role_id: string; role_key: string; role_name: string; role_status: string; application_id: string | null; tenant_name: string; membership_status: string }[]
   effective_permissions: {
     code: string
@@ -41,6 +49,9 @@ const errorText = ref('')
 
 const statusLabels: Record<string, string> = { active: '启用', disabled: '停用', locked: '管理员锁定' }
 const membershipLabels: Record<string, string> = { active: '在职', disabled: '已停用', departed: '已离职' }
+
+// 应用绑定从角色绑定中提取：application_id 非空的条目即应用级绑定
+const applicationBindings = computed(() => (profile.value?.role_bindings || []).filter(binding => binding.application_id))
 
 // 每次打开按最新 userId 重新拉取；失败展示错误态而非空白。
 watch([open, () => props.userId], async ([next, userId]) => {
@@ -85,14 +96,23 @@ function formatTime(value: string): string {
           <a-descriptions-item label="创建时间" :span="2">{{ formatTime(profile.created_at) }}</a-descriptions-item>
         </a-descriptions>
 
-        <!-- 租户成员关系 -->
+        <!-- 租户成员关系（含组织归属标签） -->
         <h3 class="mb-2 mt-4 text-sm font-semibold">租户成员关系（{{ profile.memberships.length }}）</h3>
         <a-empty v-if="!profile.memberships.length" :image-style="{ height: '40px' }" description="未加入任何租户" />
         <div v-else class="grid gap-2">
           <div v-for="membership in profile.memberships" :key="membership.tenant_id"
-            class="flex items-center justify-between rounded border border-[var(--color-border)] px-3 py-2 text-xs">
-            <span class="min-w-0 truncate font-medium">{{ membership.tenant_name }}</span>
-            <a-space :size="6">
+            class="flex items-center justify-between gap-2 rounded border border-[var(--color-border)] px-3 py-2 text-xs">
+            <div class="min-w-0">
+              <span class="truncate font-medium">{{ membership.tenant_name }}</span>
+              <!-- 组织归属标签：主组织带 ★ 标记 -->
+              <div v-if="(membership.organizations || []).length" class="mt-1 flex flex-wrap gap-1">
+                <a-tag v-for="organization in membership.organizations" :key="organization.organization_id"
+                  :color="organization.is_primary ? 'blue' : 'default'">
+                  {{ organization.organization_name }}{{ organization.is_primary ? ' ★' : '' }}
+                </a-tag>
+              </div>
+            </div>
+            <a-space :size="6" class="shrink-0">
               <a-tag :color="membership.membership_status === 'active' ? 'green' : membership.membership_status === 'departed' ? 'default' : 'orange'">
                 {{ membershipLabels[membership.membership_status] || membership.membership_status }}
               </a-tag>
@@ -115,6 +135,20 @@ function formatTime(value: string): string {
               <span class="text-[var(--color-text-muted)]">{{ binding.tenant_name }}{{ binding.application_id ? ' · 应用角色' : '' }}</span>
               <a-tag v-if="binding.role_status !== 'active'" color="default">角色已停用</a-tag>
             </a-space>
+          </div>
+        </div>
+
+        <!-- 应用绑定：从角色绑定提取 application_id 非空的条目 -->
+        <h3 class="mb-2 mt-4 text-sm font-semibold">应用绑定（{{ applicationBindings.length }}）</h3>
+        <a-empty v-if="!applicationBindings.length" :image-style="{ height: '40px' }" description="未绑定任何业务应用" />
+        <div v-else class="grid gap-2">
+          <div v-for="binding in applicationBindings" :key="`app-${binding.role_id}-${binding.application_id}`"
+            class="flex items-center justify-between rounded border border-[var(--color-border)] px-3 py-2 text-xs">
+            <span class="min-w-0">
+              <span class="font-medium">{{ binding.role_name }}</span>
+              <span class="ml-2 text-[var(--color-text-muted)]">{{ binding.tenant_name }} · 应用角色</span>
+            </span>
+            <a-tag v-if="binding.role_status !== 'active'" color="default">角色已停用</a-tag>
           </div>
         </div>
 

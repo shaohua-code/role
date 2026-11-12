@@ -1,0 +1,40 @@
+﻿.\.venv\Scripts\python.exe : test_application_deletion_succeeds_without_usage (tests.test_entity_deletion.EntityDeletio
+nApiTests.test_application_deletion_succeeds_without_usage) ... ok
+At C:\Users\刘少华\AppData\Local\Temp\trae-agent-toolhost\jobs\job-dd2cd4f9f1bb4e5eaa85cfd7c00887f2\command.ps1:15 char:51
+77
++ ... oads-test'; .\.venv\Scripts\python.exe -m unittest tests.test_entity_ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test_applicatio...t_usage) ... ok:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+test_application_with_usage_records_is_blocked_with_409 (tests.test_entity_deletion.EntityDeletionApiTests.test_applica
+tion_with_usage_records_is_blocked_with_409) ... ok
+test_leaf_organization_deletion_succeeds (tests.test_entity_deletion.EntityDeletionApiTests.test_leaf_organization_dele
+tion_succeeds) ... ok
+test_missing_tenant_returns_404 (tests.test_entity_deletion.EntityDeletionApiTests.test_missing_tenant_returns_404) ...
+ ok
+test_model_deletion_succeeds_without_usage (tests.test_entity_deletion.EntityDeletionApiTests.test_model_deletion_succe
+eds_without_usage) ... ok
+test_model_with_usage_records_is_blocked_with_409 (tests.test_entity_deletion.EntityDeletionApiTests.test_model_with_us
+age_records_is_blocked_with_409) ... ok
+test_organization_with_children_is_blocked_with_409 (tests.test_entity_deletion.EntityDeletionApiTests.test_organizatio
+n_with_children_is_blocked_with_409) ... ok
+test_platform_super_admin_role_is_protected_from_deletion (tests.test_entity_deletion.EntityDeletionApiTests.test_platf
+orm_super_admin_role_is_protected_from_deletion) ... ok
+test_platform_tenant_is_protected_from_deletion (tests.test_entity_deletion.EntityDeletionApiTests.test_platform_tenant
+_is_protected_from_deletion) ... ok
+test_role_deletion_clears_application_registration_reference (tests.test_entity_deletion.EntityDeletionApiTests.test_ro
+le_deletion_clears_application_registration_reference) ... ok
+test_role_referenced_by_invitation_is_blocked_with_409 (tests.test_entity_deletion.EntityDeletionApiTests.test_role_ref
+erenced_by_invitation_is_blocked_with_409) ... ok
+test_tenant_deletion_succeeds_without_usage (tests.test_entity_deletion.EntityDeletionApiTests.test_tenant_deletion_suc
+ceeds_without_usage) ... ok
+test_tenant_with_usage_records_is_blocked_with_409 (tests.test_entity_deletion.EntityDeletionApiTests.test_tenant_with_
+usage_records_is_blocked_with_409) ... ok
+test_user_group_deletion_succeeds (tests.test_entity_deletion.EntityDeletionApiTests.test_user_group_deletion_succeeds)
+ ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 2.060s
+
+OK

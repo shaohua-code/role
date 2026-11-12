@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { NavigationItem, PageKey } from '@/router/navigation'
@@ -158,9 +158,10 @@ function groupMenuKey(groupKey: string): string {
         </router-link>
       </div>
       <div class="relative flex justify-end px-3 pb-1">
+        <!-- U25：折叠图标提亮到 sider-text-strong（颜色类会被无层 reset 吃掉，改由 style.css 固定） -->
         <button
           type="button"
-          class="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-sider-text)] transition-colors duration-150 hover:bg-[var(--color-sider-item-hover)] hover:text-[var(--color-sider-text-active)]"
+          class="sider-toggle-btn flex h-8 w-8 items-center justify-center rounded-lg transition-colors duration-150 hover:bg-[var(--color-sider-item-hover)]"
           :aria-expanded="!props.collapsed"
           :aria-label="props.collapsed ? expandLabel : collapseLabel"
           @click="toggleSidebar"
@@ -170,7 +171,8 @@ function groupMenuKey(groupKey: string): string {
         </button>
       </div>
       <p v-if="!props.collapsed" class="relative shrink-0 px-5 pb-2 text-[11px] font-medium tracking-[0.06em] text-[var(--color-sider-text)]">{{ props.modeLabel }}</p>
-      <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2">
+      <!-- U25：菜单纵向滚动时上下缘 8/12px 渐隐提示（mask 不随内容滚动，视觉恒定在可视框） -->
+      <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 [mask-image:linear-gradient(to_bottom,transparent,#000_8px,#000_calc(100%-12px),transparent)]">
         <a-menu
           mode="inline"
           theme="dark"

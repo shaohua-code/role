@@ -18,6 +18,7 @@ from app.models.identity import Tenant, User
 from app.models.oidc import OAuthRefreshToken
 from app.schemas.access_control import PermissionCreate
 from app.schemas.applications import ApplicationCreate, ApplicationStatusUpdate, ApplicationUpdate
+from app.services.permission_kinds import ensure_data_scope_children, infer_permission_kind
 from app.services.permission_namespace import (
     default_namespace_from_client_id,
     normalize_namespace,
@@ -116,7 +117,7 @@ def create_application(body: ApplicationCreate, request: Request, response: Resp
                       post_logout_redirect_uris=body.post_logout_redirect_uris,
                       trusted=False, client_secret_hash=hash_password(client_secret))
     db.add(row); flush_or_conflict(db)
-    # P405：应用开通即预置多应用管理员 / 应用管理员 / 应用成员三个平台角色模板。
+    # P405：应用开通即预置应用管理员 / 应用成员两个平台角色模板（多应用管理员已并入应用管理员）。
     provision_application_platform_roles(db, row.tenant_id, row.id)
     audit(db, actor, request, "application.create", "application", str(row.id), {"client_id": row.client_id, "tenant_id": str(body.tenant_id), "trusted": False}); commit_or_conflict(db)
     # 一次性返回的客户端密钥不得进入共享缓存或代理缓存。
@@ -168,6 +169,7 @@ def list_application_permission_catalog(
             "status": permission.status,
             "surface": permission.surface,
             "requires_data_scope": permission.requires_data_scope,
+            "kind": infer_permission_kind(permission.code),
             "assigned_role_count": int(assigned_role_count),
         }
         for permission, assigned_role_count in rows
@@ -207,10 +209,12 @@ def create_application_permission(
     )
     db.add(row)
     flush_or_conflict(db)
+    ensure_data_scope_children(db, row)
     audit(db, actor, request, "permission.create", "permission", str(row.id), {
         "code": row.code,
         "catalog_namespace": row.catalog_namespace,
         "application_id": str(application.id),
+        "kind": infer_permission_kind(row.code),
     })
     commit_or_conflict(db)
     return {
@@ -220,6 +224,7 @@ def create_application_permission(
         "resource_type": row.resource_type,
         "scope": row.scope,
         "status": row.status,
+        "kind": infer_permission_kind(row.code),
         "assigned_role_count": 0,
     }
 

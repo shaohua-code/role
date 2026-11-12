@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue'
 import AdminPageHeader from './AdminPageHeader.vue'
-import AdminTableToolbar from './AdminTableToolbar.vue'
-import AdminEmpty from './AdminEmpty.vue'
+import AdminTable from './AdminTable.vue'
 
 /**
- * 列表页骨架：页头 + 数据卡片（工具条 / 错误提示 / 表格 / emoji 空态）。
+ * 列表页骨架：页头 + 数据卡片（AdminTable：工具条 / 错误提示 / 表格 / emoji 空态）。
  * 页面只保留数据逻辑与弹窗；筛选表单等页面特有内容放 card-top 插槽，
- * 表格底部备注放 card-bottom 插槽；未声明的 a-table 属性经 $attrs 透传。
+ * 表格底部备注放 card-bottom 插槽；未声明的 a-table 属性经 $attrs 透传到 AdminTable。
  */
 defineOptions({ inheritAttrs: false })
 
@@ -52,24 +51,25 @@ const emit = defineEmits<{
 
   <a-card class="data-card mgmt-data-card" :bordered="false">
     <slot name="card-top" />
-    <AdminTableToolbar v-if="hint || $slots.default || $slots.actions" :hint="hint">
-      <slot />
-      <template v-if="$slots.actions" #actions><slot name="actions" /></template>
-    </AdminTableToolbar>
-    <a-alert v-if="errorText" type="error" show-icon :message="errorText" class="mb-4" />
-    <a-table
+    <AdminTable
       v-bind="$attrs"
-      :data-source="dataSource"
       :columns="columns"
+      :data-source="dataSource"
       :loading="loading"
       :row-key="rowKey"
       :scroll="scroll"
       :pagination="pagination"
-      @change="emit('table-change', $event)"
+      :hint="hint"
+      :error-text="errorText"
+      :empty-emoji="emptyEmoji"
+      :empty-text="emptyText"
+      @table-change="emit('table-change', $event)"
     >
+      <slot />
+      <template v-if="$slots.actions" #actions><slot name="actions" /></template>
       <template v-if="$slots.bodyCell" #bodyCell="cell"><slot name="bodyCell" v-bind="cell" /></template>
-      <template #emptyText><slot name="emptyText"><AdminEmpty :emoji="emptyEmoji" :description="emptyText" /></slot></template>
-    </a-table>
+      <template v-if="$slots.emptyText" #emptyText><slot name="emptyText" /></template>
+    </AdminTable>
     <slot name="card-bottom" />
   </a-card>
 </template>

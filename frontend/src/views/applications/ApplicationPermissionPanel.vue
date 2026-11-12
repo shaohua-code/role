@@ -4,9 +4,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
+import { operatorScope } from '@/api/capabilities'
 import AdminSearchField from '@/components/AdminSearchField.vue'
-import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
+import AdminTable from '@/components/AdminTable.vue'
 
 interface ApplicationRef {
   id: string
@@ -47,13 +47,11 @@ const changingPermissionId = ref('')
 const form = reactive({ code: '', resource_type: '', scope: '', description: '' })
 let requestSequence = 0
 
-// 业务码登记：L1（rbac.permission.manage）或钉住该应用的管理者（L2 app.admin / L3 本租户，以后端 can_manage 为准）。
-const canRegisterCatalog = computed(() => {
-  if (Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('rbac.permission.manage')) return true
-  return props.application?.can_manage === true
-})
-// 启停仍走平台目录 PATCH /admin/permissions/{id}/status，仅 L1。
-const canChangeStatus = computed(() => Boolean(getCachedCapabilities()?.platform_admin) && cachedHas('rbac.permission.manage'))
+// 业务码登记：钉住该应用的管理者（L2 app.admin / L3 本租户 / L1），以后端 can_manage 为准
+// （旧 button.permissions.manage 判权点已随契约删除）。
+const canRegisterCatalog = computed(() => props.application?.can_manage === true)
+// 启停仍走平台目录 PATCH /admin/permissions/{id}/status，后端仅超管范围可调用。
+const canChangeStatus = computed(() => operatorScope() === 'super')
 
 function applicationPath(path: string): string {
   return `${props.apiPrefix}${path}`
@@ -182,14 +180,9 @@ watch([() => props.active, () => props.application?.id], ([active]) => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <AdminTableToolbar :hint="`命名空间 ${application?.permission_namespace || ''}：业务编码须以该前缀登记，前缀已锁定不可改。`">
-      <AdminSearchField v-model="searchText" placeholder="搜索编码、资源类型或说明" />
-      <template #actions>
-        <a-button :loading="loading" :disabled="!application" @click="loadPermissions">刷新</a-button>
-        <a-button v-if="canRegisterCatalog" type="primary" @click="openCreate">新建权限</a-button>
-      </template>
-    </AdminTableToolbar>
-    <a-table
+    <!-- 统一表格组件：搜索工具条与表格一体（size=small 经 $attrs 透传） -->
+    <AdminTable
+      :hint="`命名空间 ${application?.permission_namespace || ''}：业务编码须以该前缀登记，前缀已锁定不可改。`"
       :columns="columns"
       :data-source="filteredPermissions"
       :loading="loading"
@@ -198,6 +191,11 @@ watch([() => props.active, () => props.application?.id], ([active]) => {
       :pagination="{ pageSize: 12, showSizeChanger: false }"
       :scroll="{ x: 640 }"
     >
+      <AdminSearchField v-model="searchText" placeholder="搜索编码、资源类型或说明" />
+      <template #actions>
+        <a-button :loading="loading" :disabled="!application" @click="loadPermissions">刷新</a-button>
+        <a-button v-if="canRegisterCatalog" type="primary" @click="openCreate">新建权限</a-button>
+      </template>
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'code'">
           <div class="flex min-w-0 flex-col gap-0.5">
@@ -220,7 +218,7 @@ watch([() => props.active, () => props.application?.id], ([active]) => {
           </a-button>
         </template>
       </template>
-    </a-table>
+    </AdminTable>
 
     <a-modal v-model:open="createOpen" title="登记应用权限" ok-text="创建" cancel-text="取消" :confirm-loading="creating" @ok="createPermission">
       <a-form layout="vertical">

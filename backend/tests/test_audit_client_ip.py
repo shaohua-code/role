@@ -30,6 +30,8 @@ class AuditClientIPTests(unittest.TestCase):
             "scheme": "https",
         })
         self.db = Mock()
+        # P2-1：record_event 会查 actor 成员身份租户；Mock 下按「无成员身份」折叠为单行 NULL 租户。
+        self.db.scalars.return_value.all.return_value = []
         self.actor = SimpleNamespace(id=uuid4())
 
     def _event(self) -> AuditEvent:

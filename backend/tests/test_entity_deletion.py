@@ -112,7 +112,14 @@ class EntityDeletionApiTests(unittest.TestCase):
     # ---- 角色删除 ----
 
     def test_platform_super_admin_role_is_protected_from_deletion(self) -> None:
-        role = self._make_role(key="platform.admin", kind="platform", tenant_id=self.platform_tenant.id)
+        # 平台角色全局化：夹具已在平台管理租户建好唯一的 L1，直接查用，
+        # 不再自建同 key 角色（(tenant_id, key) 唯一约束只允许一份）。
+        from sqlalchemy import select
+
+        role = self.db.scalar(select(Role).where(
+            Role.tenant_id == self.platform_tenant.id, Role.key == "platform.admin",
+        ))
+        self.assertIsNotNone(role)
         with self.assertRaises(HTTPException) as ctx:
             delete_role(role.id, request=self.request, actor=self.actor, db=self.db)
         self.assertEqual(ctx.exception.status_code, 422)

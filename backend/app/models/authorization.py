@@ -9,8 +9,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.services.permission_namespace import derive_catalog_namespace_value
 
-# 角色层级写死为四级模型：platform=L1、tenant=L3、application=L2/业务角色。
+# 角色层级收敛为三管理员 + 应用成员（platform.admin 超管 / tenant.admin 租户级 / app.admin 应用级 / app.member 成员）；
+# kind 为存储枚举：platform=超管、tenant=租户级、application=应用级/成员及业务角色。
 ROLE_KINDS = ("platform", "tenant", "application")
+# 授权范围（只能向下：super > tenant > app；member 不参与配权）。权威常量见 permission_kinds。
+ROLE_SCOPES = ("super", "tenant", "app", "member")
 # 权限面：management=IAM 管理面码（可授予管理台能力）；business=业务码（必须走数据范围）。
 PERMISSION_SURFACES = ("management", "business")
 
@@ -25,6 +28,10 @@ class Role(Base):
         Index("uq_role_tenant_key", "tenant_id", "key", unique=True, postgresql_where=text("application_id IS NULL")),
         Index("uq_role_app_key", "tenant_id", "application_id", "key", unique=True, postgresql_where=text("application_id IS NOT NULL")),
         CheckConstraint("kind IN ('platform', 'tenant', 'application')", name="ck_role_kind"),
+        CheckConstraint(
+            "scope IS NULL OR scope IN ('super', 'tenant', 'app', 'member')",
+            name="ck_role_scope",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -36,6 +43,9 @@ class Role(Base):
     )
     # L1 平台角色挂在专用平台租户下；L3 租户角色 application_id 为空；L2/业务角色必须钉应用。
     kind: Mapped[str] = mapped_column(String(20), default="tenant", nullable=False)
+    # 授权范围（只能向下）：super=平台全部内容可见；tenant=当前用户所有租户的数据；
+    # app=当前用户所有应用的数据；member=零管理权限。空值由判权层按模板 key / 钉应用推导。
+    scope: Mapped[str | None] = mapped_column(String(20), index=True)
     # 角色编程标识；配合上方部分唯一索引，保证租户内（或应用内）不重名。
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -61,6 +71,7 @@ class Permission(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active', 'disabled')", name="ck_permission_status"),
         CheckConstraint("surface IN ('management', 'business')", name="ck_permission_surface"),
+        CheckConstraint("kind IN ('menu', 'button', 'api', 'data')", name="ck_permission_kind"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -70,6 +81,8 @@ class Permission(Base):
     # 授权动作（如 read、run），与 resource_type 组成完整权限语义。
     scope: Mapped[str] = mapped_column(String(80), nullable=False)
     description: Mapped[str | None] = mapped_column(String(500))
+    # 四类：菜单 / 按钮 / 接口 / 数据。菜单下新建的按钮编码可继承 menu.* 前缀，必须以本列为准。
+    kind: Mapped[str] = mapped_column(String(20), default="api", server_default="api", nullable=False)
     # 目录项停用时保留角色授权关系和数据策略，避免丢失治理历史；判权只接受 active 项。
     status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
     # 管理面码与应用注册的业务码分面管理；绿场业务码默认强制数据范围，缺策略即拒绝。

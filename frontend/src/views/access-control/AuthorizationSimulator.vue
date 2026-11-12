@@ -1,7 +1,8 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
+import { ADMIN_API_PREFIX, TENANT_ADMIN_API_PREFIX } from '@/api/capabilities'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 import { asPagedList } from '@/utils/paged'
 
@@ -67,11 +68,11 @@ function onTenantChange(): void {
   result.value = null
 }
 
-// 租户模式（seedTenants 已注入）没有 platform.account.read：目标用户改从租户成员接口读取。
+// 租户模式（seedTenants 已注入）没有平台用户目录菜单节点：目标用户改从租户成员接口读取。
 async function loadTenantMembers(): Promise<Row[]> {
   const tenantIdValue = form.tenant_id || props.seedTenants[0]?.id
   if (!tenantIdValue) return []
-  const page = await api<{ items: Row[] }>(`/tenant-admin/members?tenant_id=${encodeURIComponent(String(tenantIdValue))}&limit=500`)
+  const page = await api<{ items: Row[] }>(`${TENANT_ADMIN_API_PREFIX}/members?tenant_id=${encodeURIComponent(String(tenantIdValue))}&limit=500`)
   return page.items.map(member => ({
     id: String(member.user_id), display_name: member.display_name, email: member.email,
   }))
@@ -83,10 +84,10 @@ async function loadOptions(): Promise<void> {
     const needTenantFetch = !props.seedTenants.length
     const needApplicationFetch = !props.seedApplications.length
     const [tenantRows, userRows, applicationRows, permissionRows] = await Promise.all([
-      needTenantFetch ? api<Row[]>('/admin/tenants') : Promise.resolve(props.seedTenants),
-      needTenantFetch ? api<Row[]>('/admin/users') : loadTenantMembers(),
-      needApplicationFetch ? api<Row[]>('/admin/applications') : Promise.resolve(props.seedApplications),
-      api<Row[] | { items: Row[] }>('/admin/permissions?limit=1000').then(result => asPagedList(result).items),
+      needTenantFetch ? api<Row[]>(`${ADMIN_API_PREFIX}/tenants`) : Promise.resolve(props.seedTenants),
+      needTenantFetch ? api<Row[]>(`${ADMIN_API_PREFIX}/users`) : loadTenantMembers(),
+      needApplicationFetch ? api<Row[]>(`${ADMIN_API_PREFIX}/applications`) : Promise.resolve(props.seedApplications),
+      api<Row[] | { items: Row[] }>(`${ADMIN_API_PREFIX}/permissions?limit=1000`).then(result => asPagedList(result).items),
     ])
     tenants.value = tenantRows.filter(row => row.status === 'active')
     users.value = userRows
@@ -115,7 +116,7 @@ async function simulate(): Promise<void> {
   submitting.value = true
   result.value = null
   try {
-    result.value = await api<AuthorizationSimulationResult>('/admin/authorization/simulate', {
+    result.value = await api<AuthorizationSimulationResult>(`${ADMIN_API_PREFIX}/authorization/simulate`, {
       method: 'POST',
       body: JSON.stringify({
         tenant_id: form.tenant_id,
@@ -159,7 +160,11 @@ watch(() => props.active, active => { if (active) void loadOptions() }, { immedi
             <a-input v-model:value="form.resource_id" :maxlength="180" placeholder="用于预演指定资源授权" @change="result = null" />
           </a-form-item>
           <a-form-item label="判定选项">
-            <a-switch v-model:checked="form.include_data_scope" checked-children="解析数据范围" un-checked-children="仅检查 RBAC" @change="result = null" />
+            <!-- U28：开关改标准结构——去掉 checked-children 文字挤压开关触控目标，说明外置成 13px 次级文字，随状态切换 -->
+            <div class="flex h-9 items-center gap-2">
+              <a-switch v-model:checked="form.include_data_scope" @change="result = null" />
+              <span class="text-[13px] text-[var(--color-text-secondary)]">{{ form.include_data_scope ? '解析数据范围' : '仅检查 RBAC' }}</span>
+            </div>
           </a-form-item>
         </div>
         <div class="simulator-actions">

@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>权限闭环治理方案 PRD · 单一口径与体检闭环</title>
+<style>
+  :root{
+    --ink:#18181b; --secondary:#52525b; --muted:#a1a1aa;
+    --border:#e4e4e7; --border-strong:#d4d4d8; --subtle:#f4f4f5; --elevated:#ffffff; --canvas:#fafafa;
+    --success:#059669; --warning:#d97706; --error:#dc2626; --info:#2563eb;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:Inter,"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:var(--sans);font-size:14px;line-height:1.55;color:var(--ink);background:var(--canvas)}
+  a{color:inherit}
+  button{font-family:inherit;cursor:pointer}
+  :focus-visible{outline:3px solid rgba(24,24,27,.18);outline-offset:1px;border-radius:4px}
+  code,.mono{font-family:var(--mono);font-size:.92em}
+  /* ---------- 顶栏 ---------- */
+  .topbar{position:fixed;inset:0 0 auto 0;height:56px;background:var(--elevated);border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:16px;padding:0 20px;z-index:50}
+  .topbar h1{font-size:16px;font-weight:600;margin:0;letter-spacing:.01em}
+  .topbar .sub{font-size:12px;color:var(--muted)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--border);background:var(--subtle);color:var(--secondary);white-space:nowrap}
+  .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--warning)}
+  .topbar .spacer{flex:1}
+  .mode-switch{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .mode-switch button{border:0;background:transparent;padding:5px 12px;font-size:12px;color:var(--secondary)}
+  .mode-switch button[aria-pressed="true"]{background:var(--ink);color:#fafafa}
+  /* ---------- 分屏骨架 ---------- */
+  .split{display:grid;grid-template-columns:minmax(400px,46%) 1fr;gap:0;padding-top:56px;height:100vh}
+  .proto{border-right:1px solid var(--border);background:var(--subtle);display:flex;flex-direction:column;min-width:0}
+  .proto-scroll{flex:1;overflow:auto;padding:16px}
+  .doc{overflow:auto;min-width:0;background:var(--elevated)}
+  /* 浏览器框 */
+  .browser{background:var(--elevated);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(15,23,42,.06)}
+  .chrome{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--subtle)}
+  .chrome .dots{display:flex;gap:5px}
+  .chrome .dots i{width:9px;height:9px;border-radius:50%;background:var(--border-strong)}
+  .chrome .addr{flex:1;background:var(--elevated);border:1px solid var(--border);border-radius:6px;font-family:var(--mono);font-size:11px;color:var(--secondary);padding:3px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .screen{display:none}
+  .screen.active{display:block}
+  .screen-body{padding:16px;min-height:430px}
+  .proto-nav{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border);background:var(--elevated)}
+  .proto-nav button{border:1px solid var(--border);background:var(--elevated);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--secondary)}
+  .proto-nav button[aria-current="true"]{background:var(--ink);border-color:var(--ink);color:#fafafa}
+  .proto-cap{font-size:12px;color:var(--muted);margin:10px 2px 0}
+  /* 原型内部组件（对齐管理台黑白灰） */
+  .app-side{display:flex;min-height:430px}
+  .app-nav{width:132px;background:#09090b;color:#a1a1aa;font-size:11px;padding:12px 8px;flex-shrink:0}
+  .app-nav .grp{font-size:10px;color:#71717a;padding:8px 8px 4px;letter-spacing:.06em}
+  .app-nav .it{padding:6px 8px;border-radius:6px}
+  .app-nav .it.on{background:rgba(255,255,255,.10);color:#fafafa;border-left:2px solid #fafafa}
+  .app-main{flex:1;min-width:0;padding:14px 16px}
+  .pg-title{font-size:16px;font-weight:600;margin:0 0 2px}
+  .pg-sub{font-size:11px;color:var(--muted);margin:0 0 12px}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+  .stat{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--elevated)}
+  .stat .n{font-family:var(--mono);font-size:22px;font-weight:600;line-height:1}
+  .stat .l{font-size:11px;color:var(--secondary);margin-top:4px}
+  .stat.blocked .n{color:var(--error)} .stat.warn .n{color:var(--warning)} .stat.ok .n{color:var(--success)}
+  .checks{border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .check{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:var(--elevated)}
+  .check:last-child{border-bottom:0}
+  .check:hover{background:var(--subtle)}
+  .check .nm{flex:1;min-width:0}
+  .check .nm b{display:block;font-size:13px;font-weight:600}
+  .check .nm span{font-size:11px;color:var(--muted)}
+  .tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;border-radius:4px;padding:1px 7px;border:1px solid var(--border);white-space:nowrap}
+  .tag.err{color:var(--error);border-color:#fecaca;background:#fef2f2}
+  .tag.warn{color:var(--warning);border-color:#fde68a;background:#fffbeb}
+  .tag.ok{color:var(--success);border-color:#a7f3d0;background:#ecfdf5}
+  .tag.hint{color:var(--secondary)}
+  .btn{border:1px solid var(--border);background:var(--elevated);border-radius:8px;padding:5px 12px;font-size:12px;color:var(--ink)}
+  .btn.primary{background:var(--ink);border-color:var(--ink);color:#fafafa}
+  .btn.sm{padding:3px 9px;font-size:11px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .tree{font-size:12px;border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--elevated)}
+  .tree .node{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:6px}
+  .tree .node:hover{background:var(--subtle)}
+  .tree .node .code{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .tree .indent{width:16px;flex-shrink:0}
+  .tree .tw{color:var(--muted);font-size:10px;width:10px}
+  .tree .alert-badge{font-size:10px;color:var(--error);border:1px solid #fecaca;background:#fef2f2;border-radius:4px;padding:0 5px}
+  .drawer{position:fixed;inset:0;background:rgba(24,24,27,.32);z-index:60;display:none}
+  .drawer.open{display:block}
+  .drawer .panel{position:absolute;top:0;right:0;bottom:0;width:min(560px,94vw);background:var(--elevated);box-shadow:-12px 0 40px rgba(15,23,42,.14);display:flex;flex-direction:column}
+  .drawer .hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
+  .drawer .hd b{font-size:15px}
+  .drawer .hd .x{margin-left:auto;border:0;background:transparent;font-size:16px;color:var(--muted)}
+  .drawer .bd{padding:16px 18px;overflow:auto;flex:1}
+  .kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;font-size:12px;margin:10px 0}
+  .kv dt{color:var(--muted)} .kv dd{margin:0;min-width:0}
+  .note{border:1px solid #fde68a;background:#fffbeb;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;margin:10px 0}
+  .note.err{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+  .note.ok{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}
+  .chain{border:1px solid var(--border);border-radius:10px;padding:12px;font-size:12px;background:var(--elevated)}
+  .chain .hop{display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px dashed var(--border)}
+  .chain .hop:last-child{border-bottom:0}
+  .chain .arrow{color:var(--muted);font-size:10px;padding-top:2px}
+  .modal{border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 40px rgba(15,23,42,.12);background:var(--elevated);overflow:hidden}
+  .modal .mhd{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);font-size:14px;font-weight:600}
+  .modal .mbd{padding:12px 16px;max-height:300px;overflow:auto}
+  .modal .mft{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--border);background:var(--subtle)}
+  .impact{display:flex;align-items:center;gap:8px;background:var(--subtle);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:11px;color:var(--secondary);margin-bottom:8px}
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);padding:0 24px;position:sticky;top:0;background:var(--elevated);z-index:10}
+  .tabs button{border:0;background:transparent;padding:12px 14px;font-size:13px;color:var(--secondary);border-bottom:2px solid transparent}
+  .tabs button[aria-selected="true"]{color:var(--ink);font-weight:600;border-bottom-color:var(--ink)}
+  .tabpanel{display:none;padding:24px 28px 80px;max-width:860px}
+  .tabpanel.active{display:block}
+  .tabpanel h2{font-size:20px;font-weight:600;margin:0 0 4px}
+  .tabpanel h3{font-size:15px;font-weight:600;margin:26px 0 8px}
+  .tabpanel h4{font-size:13px;font-weight:600;margin:16px 0 6px;color:var(--secondary)}
+  .tabpanel p{margin:6px 0}
+  .lede{font-size:14px;color:var(--secondary)}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;margin:10px 0}
+  th,td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--subtle);font-weight:500;color:var(--secondary)}
+  td .mono,th .mono{font-size:11.5px}
+  .tbl-wrap{overflow-x:auto}
+  .feature-section{border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:18px 0;background:var(--elevated)}
+  .feature-section:target,.feature-section.flash{border-color:var(--ink);box-shadow:0 0 0 3px rgba(24,24,27,.08)}
+  .feature-section h3{margin-top:0;display:flex;align-items:baseline;gap:10px}
+  .fid{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:1px 6px}
+  .pri{font-size:11px;border-radius:4px;padding:1px 7px;border:1px solid var(--border)}
+  .pri.p0{color:var(--error);border-color:#fecaca;background:#fef2f2}
+  .pri.p1{color:var(--warning);border-color:#fde68a;background:#fffbeb}
+  .proto-jump{font-size:12px;color:var(--info);background:none;border:none;padding:0;text-decoration:underline}
+  .blink{animation:blink 1.2s ease 2}
+  @keyframes blink{0%,100%{background:var(--elevated)}50%{background:#fffbeb}}
+  .loop{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:12px 0}
+  .loop .ring{border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;background:var(--elevated)}
+  .loop .arr{color:var(--muted);font-size:11px}
+  .loop .ring.hot{border-color:var(--ink);font-weight:600}
+  ol,ul{padding-left:20px;margin:8px 0}
+  li{margin:3px 0}
+  .small{font-size:12px;color:var(--muted)}
+  .kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--subtle)}
+  /* ---------- 文本模式 / 窄屏 / 打印 ---------- */
+  body.text-mode .split{display:block;height:auto;padding-top:56px}
+  body.text-mode .proto{border-right:0;border-bottom:1px solid var(--border)}
+  body.text-mode .proto-scroll{overflow:visible}
+  body.text-mode .screen{display:block;margin-bottom:18px}
+  body.text-mode .proto-nav,body.text-mode .tabs{display:none}
+  body.text-mode .drawer{position:static;background:transparent;display:block}
+  body.text-mode .drawer .panel{position:static;width:auto;box-shadow:none;border:1px solid var(--border);border-radius:12px;margin-top:10px}
+  body.text-mode .tabpanel{display:block;max-width:none;padding-top:12px}
+  body.text-mode .screen-body{min-height:0}
+  @media (max-width:960px){
+    .split{display:block;height:auto;padding-top:56px}
+    .proto{border-right:0;border-bottom:1px solid var(--border)}
+    .proto-scroll{overflow:visible}
+    .drawer .panel{width:100vw}
+    .tabpanel{padding:18px 16px 60px}
+    .stats{grid-template-columns:repeat(3,1fr)}
+  }
+  @media print{
+    .topbar,.proto-nav,.tabs,.mode-switch{display:none !important}
+    .split{display:block;height:auto;padding-top:0}
+    .screen{display:block;page-break-inside:avoid}
+    .tabpanel{display:block;max-width:none}
+    .drawer{position:static;display:block;background:none}
+    .drawer .panel{position:static;width:auto;box-shadow:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>权限闭环治理方案</h1>
+  <span class="sub">平台权限 · 角色分配 · 单一口径与体检闭环</span>
+  <span class="pill"><span class="dot"></span>v1.0 草案 · 待评审</span>
+  <span class="spacer"></span>
+  <div class="mode-switch" role="group" aria-label="视图模式">
+    <button type="button" id="mode-split" aria-pressed="true" onclick="setMode('split')">分屏评审</button>
+    <button type="button" id="mode-text" aria-pressed="false" onclick="setMode('text')">全文模式</button>
+  </div>
+</header>
+
+<main class="split" id="main">
+
+  <!-- ============ 左：交互原型 ============ -->
+  <aside class="proto" aria-label="交互原型">
+    <div class="proto-scroll">
+      <div class="browser">
+        <div class="chrome"><span class="dots"><i></i><i></i><i></i></span><span class="addr" id="addr">localhost:5175 / 高级管理 / 权限体检</span></div>
+
+        <!-- S1 权限体检 -->
+        <div class="screen active" id="s-health">
+          <div class="app-side">
+            <nav class="app-nav" aria-label="侧栏">
+              <div class="grp">总览</div><div class="it">运营总览</div>
+              <div class="grp">高级管理</div>
+              <div class="it on">权限体检</div><div class="it" onclick="navigate('s-catalog')">权限编码</div><div class="it" onclick="navigate('s-grant')">平台角色</div>
+              <div class="grp">审计与验证</div><div class="it" onclick="navigate('s-trouble')">成员与生效</div>
+            </nav>
+            <div class="app-main">
+              <p class="pg-title">权限体检</p>
+              <p class="pg-sub">一致性检查 · 每次挂码 / 迁移 / 种子后运行 · 示例数据（2026-10-30 侦察基线）</p>
+              <div class="stats">
+                <div class="stat blocked"><div class="n" id="cnt-blocked">1</div><div class="l">阻断</div></div>
+                <div class="stat warn"><div class="n" id="cnt-warn">3</div><div class="l">告警</div></div>
+                <div class="stat ok"><div class="n" id="cnt-ok">4</div><div class="l">通过</div></div>
+              </div>
+              <div class="checks" id="check-list">
+                <div class="check" id="ck-h1">
+                  <span class="tag err">阻断</span>
+                  <span class="nm"><b>H1 菜单-接口对齐</b><span>2 个角色持菜单码缺接口码 · 进页 403（证据：挂码弹窗 403 提示逻辑）</span></span>
+                  <button class="btn sm" data-link="f-health" onclick="openDrawer()">详情</button>
+                </div>
+                <div class="check" id="ck-h2">
+                  <span class="tag warn">告警</span>
+                  <span class="nm"><b>H2 按钮映射唯一性</b><span><code>button.roles.manage</code> 同时映射 <code>rbac.role.manage</code> + <code>org.manage</code>，与 <code>button.org.manage</code> 重叠</span></span>
+                  <button class="btn sm" onclick="goLink('f-single-source')">详情</button>
+                </div>
+                <div class="check" id="ck-h3">
+                  <span class="tag warn">告警</span>
+                  <span class="nm"><b>H3 模板回退残留</b><span><code>ensure_codes</code> 仍认角色 key 回退（有角色无码也放行）</span></span>
+                  <button class="btn sm" onclick="goLink('f-gate')">详情</button>
+                </div>
+                <div class="check" id="ck-h4">
+                  <span class="tag warn">告警</span>
+                  <span class="nm"><b>H4 数据范围双轨</b><span>数据叶子码 <code>*.scope.*</code> 授权 0 条，存量 RoleDataScope 策略仍在双读</span></span>
+                  <button class="btn sm" onclick="goLink('f-data-migrate')">详情</button>
+                </div>
+                <div class="check" id="ck-h5">
+                  <span class="tag hint">通过</span>
+                  <span class="nm"><b>H5 未挂载码</b><span>目录内 0 个码不在任何菜单下（nav:unmapped 为空）</span></span>
+                  <span></span>
+                </div>
+                <div class="check" id="ck-h6">
+                  <span class="tag hint">通过</span>
+                  <span class="nm"><b>H6 计数一致性</b><span>目录 kind 计数 = 码表契约定义（史实：走查曾现 菜单 13 vs 定义 14，补种后对齐）</span></span>
+                  <span></span>
+                </div>
+                <div class="check" id="ck-h7">
+                  <span class="tag hint">通过</span>
+                  <span class="nm"><b>H7 孤儿码</b><span>0 个管理码不被任何角色持有（P384 盘点口径延续）</span></span>
+                  <span></span>
+                </div>
+                <div class="check" id="ck-h8">
+                  <span class="tag hint">通过</span>
+                  <span class="nm"><b>H8 前端判权写法</b><span>按钮判权统一走 <code>hasButton()</code> 单一工具（修复前存在 2 种写法）</span></span>
+                  <span></span>
+                </div>
+              </div>
+              <p style="margin-top:12px"><button class="btn primary" onclick="recheck()">立即复检</button>
+              <span class="small" style="margin-left:8px">上次运行：今天 09:12 · 触发者 seed-greenfield</span></p>
+            </div>
+          </div>
+        </div>
+
+        <!-- S2 权限编码目录（四类树） -->
+        <div class="screen" id="s-catalog">
+          <div class="app-side">
+            <nav class="app-nav" aria-label="侧栏">
+              <div class="grp">总览</div><div class="it">运营总览</div>
+              <div class="grp">高级管理</div>
+              <div class="it" onclick="navigate('s-health')">权限体检</div><div class="it on">权限编码</div><div class="it" onclick="navigate('s-grant')">平台角色</div>
+              <div class="grp">审计与验证</div><div class="it" onclick="navigate('s-trouble')">成员与生效</div>
+            </nav>
+            <div class="app-main">
+              <p class="pg-title">权限编码</p>
+              <p class="pg-sub">资源权限 / 数据权限 两 Tab · 码表契约单一来源（F2）· 登记与启停仅 L1</p>
+              <div class="impact" style="margin-bottom:10px">
+                <span class="tag hint">资源权限</span><span class="tag hint">数据权限</span>
+                <span style="margin-left:auto">来源：<code>GET /admin/permissions/tree</code>（唯一映射源，前端零硬编码）</span>
+              </div>
+              <div class="tree">
+                <div class="node"><span class="tw">▾</span><b>运营总览</b><span class="code">menu.overview</span></div>
+                <div class="node"><span class="indent"></span><span class="tw">·</span><span class="code">platform.overview.read</span><span class="small">接口</span></div>
+                <div class="node"><span class="tw">▾</span><b>用户管理</b><span class="code">menu.users</span><span class="alert-badge">缺接口映射 → 体检 H1</span><button class="btn sm" onclick="goLink('f-health')">去体检</button></div>
+                <div class="node"><span class="indent"></span><span class="tw">·</span><span class="code">button.users.manage</span><span class="small">按钮</span></div>
+                <div class="node"><span class="tw">▸</span><b>平台角色</b><span class="code">menu.roles</span></div>
+                <div class="node"><span class="tw">▸</span><b>组织写操作</b><span class="code">button.org.manage</span><span class="small">与 button.roles.manage 重叠 → 体检 H2</span></div>
+                <div class="node"><span class="tw">▾</span><b>数据权限（独立树）</b><span class="small">管理面 27 接口码不进这里；业务码缺叶子时在此显示</span></div>
+                <div class="node"><span class="indent"></span><span class="tw">·</span><span class="code">appa.doc.read.scope.self</span><span class="small">数据 · 示例</span></div>
+              </div>
+              <p class="proto-cap">树形与现网侧栏同形；分组不可勾。角标与体检检查项联动（同一 feature ID）。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- S3 角色挂码弹窗（目标态） -->
+        <div class="screen" id="s-grant">
+          <div class="app-main">
+            <p class="pg-title">平台角色 · 挂码</p>
+            <p class="pg-sub">「看得见才能配」+ 缺口阻断 + 影响预览（F5）· 示例角色「运营专员」</p>
+            <div class="modal">
+              <div class="mhd">配置权限 · 运营专员 <span class="tag hint" style="margin-left:8px">自定义平台角色</span></div>
+              <div class="mbd">
+                <div class="impact">影响预览：该角色当前 <b>3</b> 名成员；本次保存将 <b>新增 2 码 / 移除 0 码</b>，保存后按新并集即时生效并审计。</div>
+                <div class="tree">
+                  <div class="node"><span class="tw">▾</span><b>用户管理</b><span class="code">menu.users</span>
+                    <label style="margin-left:auto"><input type="checkbox" id="cb-menu" checked onchange="gapCheck()"> 勾选</label>
+                  </div>
+                  <div class="node"><span class="indent"></span><span class="tw">·</span><span class="code">button.users.manage</span><label style="margin-left:auto"><input type="checkbox" checked> 勾选</label></div>
+                  <div class="node"><span class="indent"></span><span class="tw">·</span><span class="code">platform.account.read</span><label style="margin-left:auto"><input type="checkbox" id="cb-api1" onchange="gapCheck()"> 勾选</label></div>
+                  <div class="node"><span class="indent"></span><span class="tw">·</span><span class="code">platform.account.manage</span><label style="margin-left:auto"><input type="checkbox" onchange="gapCheck()"> 勾选</label></div>
+                  <div class="node"><span class="tw">▸</span><b>租户管理</b><span class="code">menu.tenants</span><span class="small">仅平台超管可见可配</span></div>
+                </div>
+                <div id="gap-note" class="note" style="display:none"></div>
+                <p class="small">看不见的码不出现、也配不进去：列表 = 本人有效角色持码 ∩ 本层级范围（租户管理员不含 <code>platform.*</code>）。</p>
+              </div>
+              <div class="mft">
+                <button class="btn">取消</button>
+                <button class="btn" onclick="alertDemo('已生成预览 diff（POST preview），含乐观锁版本号')">生成预览</button>
+                <button class="btn primary" id="btn-save" onclick="saveGrant()">保存授权</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- S4 成员与生效（排障链路） -->
+        <div class="screen" id="s-trouble">
+          <div class="app-main">
+            <p class="pg-title">成员与生效</p>
+            <p class="pg-sub">一次看全：用户 → 有效角色（来源）→ 持码 → 命中结果（F6）· 示例用户</p>
+            <div class="impact" style="margin-bottom:10px">
+              <span>用户：</span><code>l3-ops@example.com</code>
+              <span style="margin-left:auto">租户上下文：演示租户</span>
+            </div>
+            <div class="chain">
+              <div class="hop"><span class="tag ok">生效角色</span><span><b>租户管理员</b> <code>tenant.admin</code> · 来源：直连绑定（2026-10-28 授予）</span></div>
+              <div class="hop"><span class="arrow">↓ 并集</span><span><b>运营专员</b> <span class="small">自定义平台角色</span> · 来源：用户组「运营组」继承</span></div>
+              <div class="hop"><span class="tag hint">持码</span><span><code>menu.users</code>、<code>org.member.read</code>、<code>rbac.permission.read</code> 等 <b>23</b> 项 <span class="small">（菜单 3 / 按钮 2 / 接口 18 / 数据 0）</span></span></div>
+              <div class="hop"><span class="tag err">命中检查</span><span>进入「用户管理」：持 <code>menu.users</code> ✓ 但缺 <code>platform.account.read</code> ✗ → <b>路由 403</b>（即体检 H1 的一个实例）<button class="btn sm" style="margin-left:6px" onclick="navigate('s-health')">去修复</button></span></div>
+            </div>
+            <p class="proto-cap">排障顺序固化为一条链路：有没有角色 → 角色有没有码 → 上下文是否对。每个环节可点击跳转处理。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 体检详情抽屉（H1） -->
+      <div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="H1 菜单-接口对齐详情">
+        <div class="panel">
+          <div class="hd"><b>H1 菜单-接口对齐</b><span class="tag err">阻断</span><button class="x" onclick="closeDrawer()" aria-label="关闭">✕</button></div>
+          <div class="bd">
+            <dl class="kv">
+              <dt>检查逻辑</dt><dd>任一角色持 <code>menu.*</code> 却缺该菜单映射的任一接口码 → 阻断（进入页面必然 403，前端可见、后端拒绝）。</dd>
+              <dt>判定依据</dt><dd>码表契约（F2）中 <code>menu → api</code> 映射；判权只认码（F3）。</dd>
+              <dt>修复动作</dt><dd>给受影响角色补勾缺失接口码（走挂码弹窗预览-保存链路），或摘除多余菜单码。</dd>
+            </dl>
+            <div class="note">示例缺口（演示数据）：「租户管理员」持 <code>menu.users</code>，缺 <code>platform.account.read</code> / <code>platform.account.manage</code>；「运营专员（示例）」同缺口。</div>
+            <table>
+              <thead><tr><th>角色</th><th>持菜单码</th><th>缺接口码</th><th>影响成员</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr><td>租户管理员 <span class="tag hint">L3 模板</span></td><td class="mono">menu.users</td><td class="mono">platform.account.read · platform.account.manage</td><td class="mono">2</td><td><button class="btn sm primary" onclick="applyFix('h1')">生成补码</button></td></tr>
+                <tr><td>运营专员 <span class="tag hint">自定义</span></td><td class="mono">menu.users</td><td class="mono">platform.account.read</td><td class="mono">3</td><td><button class="btn sm primary" onclick="applyFix('h1')">生成补码</button></td></tr>
+              </tbody>
+            </table>
+            <div class="note ok" id="fix-done" style="display:none">已生成补码预览并走「预览 → 保存」链路（含乐观锁）。复检通过后本项转为通过。</div>
+            <p class="small">真实史实锚点：挂码弹窗已有 403 提示逻辑（missingRelatedHint），但只提示不阻断——本方案将其升级为保存阻断 + 体检联动。</p>
+          </div>
+        </div>
+      </div>
+
+      <nav class="proto-nav" aria-label="原型页面">
+        <button aria-current="true" onclick="navigate('s-health',this)">① 权限体检</button>
+        <button onclick="navigate('s-catalog',this)">② 权限编码</button>
+        <button onclick="navigate('s-grant',this)">③ 挂码弹窗</button>
+        <button onclick="navigate('s-trouble',this)">④ 成员与生效</button>
+      </nav>
+      <p class="proto-cap" style="padding:0 16px 14px">原型为桌面浏览器框；演示数据基于 2026-10-30 代码侦察的真实发现，标注「示例」处为演示值。</p>
+    </div>
+  </aside>
+
+  <!-- ============ 右：PRD 文档 ============ -->
+  <section class="doc">
+    <div class="tabs" role="tablist" aria-label="PRD 章节">
+      <button role="tab" aria-selected="true" onclick="showTab('tab-overview',this)">概览</button>
+      <button role="tab" aria-selected="false" onclick="showTab('tab-design',this)">现状与根因</button>
+      <button role="tab" aria-selected="false" onclick="showTab('tab-detail',this)">需求明细</button>
+      <button role="tab" aria-selected="false" onclick="showTab('tab-rules',this)">共享规则</button>
+    </div>
+
+    <!-- 概览 -->
+    <div class="tabpanel active" id="tab-overview" role="tabpanel">
+      <h2>权限闭环治理方案</h2>
+      <p class="lede">保持现网权限模型语义不推翻，用「单一口径 + 一致性门禁 + 体检排障」把平台权限与角色分配收成一个可验证的闭环。</p>
+
+      <h3>背景：乱的不是模型，是实现层的双轨</h3>
+      <p>2026-10-30 四类权限树（菜单 / 按钮 / 数据 / 接口）与五级平台角色（L1 / L3 / 多应用 / L2 / L4）落地后，<b>产品语义已经收敛</b>：三层配权、看得见才能配、租户隔离都有明文。本轮对前后端全量侦察（2026-10-30），确认「乱」来自 <b>16 处实现层双轨、漂移与死代码</b>，典型后果：</p>
+      <ul>
+        <li><b>看得见却进不去：</b>角色持 <code>menu.users</code> 但缺 <code>platform.account.read</code>，侧栏能点、列表 403（挂码弹窗只提示不阻断）。</li>
+        <li><b>没码也能过：</b>后端 <code>ensure_codes</code> 保留「五级模板角色 key 回退」——前端按码裁剪、后端认角色 key，同一事实两套口径。</li>
+        <li><b>一份映射两处维护：</b>菜单↔按钮↔接口映射在后端 <code>permission_kinds.py</code> 与前端 <code>permissionTree.ts</code> 各写一份，靠人工同步。</li>
+        <li><b>新旧并行：</b>数据范围 <code>*.scope.*</code> 叶子码与存量 <code>RoleDataScope</code> 双读；资源树与权限目录两套体系语义重叠。</li>
+      </ul>
+
+      <h3>产品契约</h3>
+      <table class="tbl-wrap">
+        <tr><th style="width:110px">主用户</th><td>平台超级管理员（L1）——治理动作的发起与复核者；L3 / 多应用 / L2 在各自范围内受益（不再遇到「看得见进不去」）。</td></tr>
+        <tr><th>触发</th><td>配权结果与预期不符：进页 403、改码不生效、码表对不上、审计对不上账。</td></tr>
+        <tr><th>核心任务</th><td>让「定义 → 呈现 → 挂码 → 分配 → 判权 → 审计 → 体检」七环单口径，每个乱点可发现、可定位、可修复、可复检。</td></tr>
+        <tr><th>完成条件</th><td>权限体检页 0 阻断 0 告警；任意用户「生效链路」一次查全；码表映射仅一处定义且有测试门禁。</td></tr>
+        <tr><th>共享对象</th><td>权限码（permission）及其上的角色授权（grant）。</td></tr>
+      </table>
+
+      <h3>闭环</h3>
+      <div class="loop">
+        <span class="ring">① 定义<br><span class="small">码表契约唯一源</span></span><span class="arr">→</span>
+        <span class="ring">② 呈现<br><span class="small">目录 / 树由契约生成</span></span><span class="arr">→</span>
+        <span class="ring">③ 挂码<br><span class="small">看得见才能配 + 阻断</span></span><span class="arr">→</span>
+        <span class="ring">④ 分配<br><span class="small">成员绑定唯一入口</span></span><span class="arr">→</span>
+        <span class="ring hot">⑤ 判权<br><span class="small">只认码</span></span><span class="arr">→</span>
+        <span class="ring">⑥ 审计<br><span class="small">变更留痕 + 失效</span></span><span class="arr">→</span>
+        <span class="ring">⑦ 体检<br><span class="small">一致性检查 + 排障链</span></span><span class="arr">↺</span>
+      </div>
+      <p class="small">第⑤环是本轮裁决核心：判权只认码。模板角色 key 只用于种子发放与 UI 标注，不再参与运行时判权。</p>
+
+      <h3>范围</h3>
+      <table class="tbl-wrap">
+        <tr><th>优先级</th><th>内容</th><th>对应需求</th></tr>
+        <tr><td><span class="pri p0">P0</span></td><td>权限体检页；码表单一来源与门禁；判权口径收口（去角色 key 回退）；数据范围收口（RoleDataScope → 数据叶子）</td><td>F1 F2 F3 F4</td></tr>
+        <tr><td><span class="pri p1">P1</span></td><td>挂码弹窗缺口阻断；排障链路视图；前端判权写法统一；死代码与旧词清理</td><td>F5 F6 F7 F8</td></tr>
+      </table>
+      <p class="small">明确不做：不改五级模板码集语义；不合并资源树与权限目录（两套树并存是产品裁决）；不动应用工作台业务资源树；不做审批流。</p>
+
+      <h3>决策与假设</h3>
+      <ul>
+        <li><b>已裁决（历史）：</b>五级模板、27 接口码、四类树、看得见才能配——维持不变（P392 / P405 / 2026-10-30 收口）。</li>
+        <li><b>本方案裁决：</b>判权只认码（D2）、映射单一来源（D3）、对齐即门禁（D4）、数据范围以叶子码为主路径（D5）。</li>
+        <li><span class="small">[Assumption, TBD]</span> 去角色 key 回退需要一个迁移窗口：先「体检告警 + 日志观察」，确认 0 命中后切换为拒绝。窗口长度由实施方排期定。</li>
+        <li><span class="small">[Assumption, TBD]</span> 存量 RoleDataScope 迁移需一次性 <code>map-data-scope-to-codes</code> 入库执行（需数据库迁移授权，按部署门禁走）。</li>
+      </ul>
+    </div>
+
+    <!-- 现状与根因 -->
+    <div class="tabpanel" id="tab-design" role="tabpanel">
+      <h2>现状与根因</h2>
+      <p class="lede">证据全部来自 2026-10-30 前后端全量侦察，逐条带文件位置；「归入」列指向需求编号。</p>
+
+      <h3>现状链路（哪里断了）</h3>
+      <div class="chain" style="font-size:12.5px">
+        <div class="hop"><span class="tag hint">① 定义</span><span>后端 <code>permission_kinds.py</code>（MENU_CATALOG 14 / BUTTON_CATALOG 13）+ <b>前端 <code>permissionTree.ts</code> 又一份</b> → <b>两份人工同步</b></span></div>
+        <div class="hop"><span class="tag hint">② 呈现</span><span><code>GET /admin/permissions/tree</code> 四类树；目录页统计带缺 data 卡；<b>史实：走查曾现菜单 13 vs 定义 14</b></span></div>
+        <div class="hop"><span class="tag hint">③④ 挂码 / 分配</span><span>挂码弹窗 403 只提示不阻断；<code>/tenant-admin</code> 前缀写死；路由重复注册</span></div>
+        <div class="hop"><span class="tag err">⑤ 判权</span><span><code>ensure_codes</code> 认码 <b>或</b> 角色 key；前端 <code>platform_admin && button.*</code> 与纯 <code>button.*</code> 两写法；数据范围双读</span></div>
+        <div class="hop"><span class="tag hint">⑥⑦ 审计 / 体检</span><span>审计齐全；<b>缺一致性体检与排障链路</b>——乱点只能靠人肉走查发现</span></div>
+      </div>
+
+      <h3>乱点清单（E1–E16）</h3>
+      <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>乱点</th><th>证据（文件）</th><th>后果</th><th>归入</th></tr></thead>
+        <tbody>
+          <tr><td>E1</td><td><code>ensure_codes</code> 角色模板回退：有角色无码也放行</td><td class="mono">rbac_guards.py:254-257</td><td>判权与前端裁剪口径不一致</td><td>F3</td></tr>
+          <tr><td>E2</td><td>菜单↔按钮↔接口映射前端再写一份</td><td class="mono">permissionTree.ts:60-110 ↔ permission_kinds.py:35-90</td><td>漂移风险，改一处漏一处</td><td>F2</td></tr>
+          <tr><td>E3</td><td><code>button.roles.manage</code> 双映射 <code>rbac.role.manage</code>+<code>org.manage</code></td><td class="mono">permission_kinds.py:62</td><td>与 button.org.manage 职责重叠</td><td>F2</td></tr>
+          <tr><td>E4</td><td>L3 持 <code>menu.users</code> 缺 <code>platform.account.*</code> → 进页 403</td><td class="mono">RolePermissionGrantModal.vue:148（仅提示）</td><td>看得见进不去</td><td>F1 F5</td></tr>
+          <tr><td>E5</td><td>数据范围双轨：叶子码 ∪ RoleDataScope 双读；替换接口只写旧表</td><td class="mono">authorization.py:146-165</td><td>收口永远完不成</td><td>F4</td></tr>
+          <tr><td>E6</td><td><code>ensure_management_permission</code> 整段死代码</td><td class="mono">rbac_guards.py:299-394</td><td>维护噪音、误导读者</td><td>F8</td></tr>
+          <tr><td>E7</td><td><code>grant_codes_skip_missing</code> 静默跳缺失码</td><td class="mono">permission_kinds.py:460-476</td><td>模板缺码被掩盖（H6 史实）</td><td>F2</td></tr>
+          <tr><td>E8</td><td>kind 双前缀回退推断与库列并存</td><td class="mono">permission_kinds.py:114-137</td><td>两套判定口径</td><td>F8</td></tr>
+          <tr><td>E9</td><td>数据范围读写不分级（manage 参数被弃）</td><td class="mono">organizations.py:34</td><td>L2 可写租户数据范围策略</td><td>F4</td></tr>
+          <tr><td>E10</td><td>绑定豁免：已存在绑定不再校验；grantable=None 全跳</td><td class="mono">access_control.py:466-467, 907-908</td><td>可见性防线依赖调用方自觉</td><td>F3</td></tr>
+          <tr><td>E11</td><td>前端按钮判权两种写法并存</td><td class="mono">ApplicationMoreHost.vue:87 等 ↔ RoleManagement.vue:41-44</td><td>同能力两种实现</td><td>F7</td></tr>
+          <tr><td>E12</td><td><code>/tenant-admin</code> 前缀写死，平台模式不跟随</td><td class="mono">RoleMembersModal.vue:134-191</td><td>入口口径分裂</td><td>F7</td></tr>
+          <tr><td>E13</td><td>路由重复注册（重定向两条）</td><td class="mono">router/index.ts:42-49</td><td>vue-router 告警</td><td>F7</td></tr>
+          <tr><td>E14</td><td>P390 向导死 CSS、PAGE_INFO 旧键</td><td class="mono">RoleManagement.vue:879-891；navigation.ts:104-123</td><td>死代码</td><td>F8</td></tr>
+          <tr><td>E15</td><td>旧词残留：iam.* 文案、「四级管理员」表述、统计数字硬编码</td><td class="mono">seed_greenfield.py:107；permissionGroups.ts:116；RoleManagement.vue:620</td><td>认知混乱（用户感知的「乱」）</td><td>F8</td></tr>
+          <tr><td>E16</td><td>层级码集前端硬编码（PLATFORM/TENANT_SCOPE_CODES）</td><td class="mono">permissionGroups.ts:75-83</td><td>与后端模板双份维护</td><td>F2</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>根因归纳</h3>
+      <table class="tbl-wrap">
+        <tr><th>根因</th><th>一句话</th><th>裁决</th></tr>
+        <tr><td>R1 双轨判权</td><td>「码」与「角色 key」都在放行</td><td>只认码（F3）</td></tr>
+        <tr><td>R2 映射多源</td><td>同一映射前后端各一份</td><td>单一来源 + 下发（F2）</td></tr>
+        <tr><td>R3 新旧并行</td><td>数据范围 / 资源体系新旧并存</td><td>迁移收口（F4）；资源树维持两套并存（产品裁决）</td></tr>
+        <tr><td>R4 对齐无门禁</td><td>菜单缺接口、按钮重映射无检查</td><td>体检 + 测试门禁（F1/F2）</td></tr>
+        <tr><td>R5 死代码旧词</td><td>历史轮次残留</td><td>清理（F8）</td></tr>
+        <tr><td>R6 入口重复</td><td>前缀写死、路由重复</td><td>统一工具与前缀常量（F7）</td></tr>
+      </table>
+    </div>
+
+    <!-- 需求明细 -->
+    <div class="tabpanel" id="tab-detail" role="tabpanel">
+      <h2>需求明细</h2>
+      <p class="lede">按闭环七环组织；每条给规则、边界与原型对应。P0 = F1–F4，P1 = F5–F8。</p>
+
+      <section class="feature-section" id="f-health">
+        <h3><span class="fid">F1</span> 权限体检页 <span class="pri p0">P0</span></h3>
+        <p><b>目的：</b>把「乱」从人肉走查变成一眼可见的检查项清单——发现、定位、修复、复检闭环的入口。</p>
+        <p><b>页面责任：</b>高级管理新增「权限体检」。顶部三卡（阻断 / 告警 / 通过计数），下方检查项列表；每项含名称、判定说明、状态、详情入口。</p>
+        <h4>检查项（初版八项）</h4>
+        <div class="tbl-wrap">
+        <table>
+          <tr><th>编号</th><th>检查</th><th>级别</th><th>判定</th></tr>
+          <tr><td>H1</td><td>菜单-接口对齐</td><td>阻断</td><td>任一角色持 <code>menu.*</code> 缺其映射的任一接口码</td></tr>
+          <tr><td>H2</td><td>按钮映射唯一性</td><td>告警</td><td><code>button.*</code> 映射 ≥2 个接口码，或与其他按钮码集合重叠</td></tr>
+          <tr><td>H3</td><td>模板回退残留</td><td>告警</td><td>迁移窗口内 <code>ensure_codes</code> 回退命中次数 &gt; 0</td></tr>
+          <tr><td>H4</td><td>数据范围双轨</td><td>告警</td><td>存在仅写 <code>RoleDataScope</code> 未映射叶子码的行</td></tr>
+          <tr><td>H5</td><td>未挂载码</td><td>提示</td><td>管理码不在任何菜单下（nav:unmapped）</td></tr>
+          <tr><td>H6</td><td>计数一致性</td><td>提示</td><td>库内 kind 计数 ≠ 码表契约定义（史实：菜单 13 vs 14）</td></tr>
+          <tr><td>H7</td><td>孤儿码</td><td>提示</td><td>管理码不被任何角色持有（P384 口径延续）</td></tr>
+          <tr><td>H8</td><td>判权写法一致</td><td>提示</td><td>前端按钮判权全部经由统一工具（静态扫描）</td></tr>
+        </table>
+        </div>
+        <h4>规则</h4>
+        <ul>
+          <li>触发时机：进入页面即运行；挂码保存、种子执行、迁移完成后服务端置「待复检」，页头提示。</li>
+          <li>详情抽屉给出受影响角色 / 成员计数与修复动作；修复一律走既有「预览 → 保存」链路，不旁路。</li>
+          <li>阻断级不阻止操作，但作为发布门禁输出（与测试断言同源，见 F2）。</li>
+          <li>可见性：仅 L1（页面挂在高级管理下，随菜单码裁剪）。</li>
+        </ul>
+        <p><button class="proto-jump" onclick="goScreen('s-health')">原型 ① 权限体检 ↗</button></p>
+      </section>
+
+      <section class="feature-section" id="f-single-source">
+        <h3><span class="fid">F2</span> 码表契约：映射单一来源与门禁 <span class="pri p0">P0</span></h3>
+        <p><b>目的：</b>菜单↔按钮↔接口映射、层级码集只允许一处定义；前端零硬编码。</p>
+        <ul>
+          <li><b>唯一源：</b>后端 <code>permission_kinds.py</code> 为契约唯一源；<code>GET /admin/permissions/tree</code> 下发完整映射（含 <code>menu → button[] → api[]</code> 与层级可见集）。</li>
+          <li><b>前端消费：</b><code>permissionTree.ts</code> 的 MENU_RELATED_APIS / BUTTON_RELATED_APIS / MENU_BUTTONS / MENU_GROUPS 硬编码全部删除，改为消费 tree 响应或构建期生成物；<code>permissionGroups.ts</code> 的 PLATFORM/TENANT_SCOPE_CODES 与「27/20/16/15」文案改由常量接口下发。</li>
+          <li><b>门禁：</b>后端测试断言「H1–H6 检查全通过」作为 CI 门禁（与体检同源同判定），防止回归。</li>
+          <li><b>修正项：</b><code>button.roles.manage</code> 收敛为只映射 <code>rbac.role.manage</code>（组织写归 <code>button.org.manage</code>）；<code>grant_codes_skip_missing</code> 缺码时不再静默——报错或体检告警。</li>
+        </ul>
+        <p><button class="proto-jump" onclick="goScreen('s-catalog')">原型 ② 权限编码（单一来源徽标）↗</button></p>
+      </section>
+
+      <section class="feature-section" id="f-gate">
+        <h3><span class="fid">F3</span> 判权口径收口：只认码 <span class="pri p0">P0</span></h3>
+        <p><b>目的：</b>消灭「有角色无码也能过」——前端裁剪与后端判权同一事实。</p>
+        <ul>
+          <li><b>裁决 D2：</b>运行时判权只看「有效角色 × 挂码并集」；<code>ensure_codes</code> 的 <code>role_keys</code> 回退移除。模板角色 key 仅用于：种子发放、UI 模板标签、体检归属展示。</li>
+          <li><b>迁移窗口：</b>先记录回退命中（日志 + 体检 H3 计数），确认归零后切换为拒绝；模板角色由种子保证码集完整，因此正常环境回退命中恒为 0。</li>
+          <li><b>绑定豁免收紧：</b>绑定已存在时同样走判权校验（去掉直接 return）；<code>grantable</code> 参数必传，L1 显式传全量而非 None 语义。</li>
+          <li><b>敏感码双检统一：</b><code>_SENSITIVE_CODE_DUAL_CHECK</code> 从单码扩为按「写类按钮码」清单统一处理。</li>
+        </ul>
+        <p class="small">边界：L1 整段放行维持不变（平台超管语义）；租户隔离与数据范围判定不受本条影响。</p>
+      </section>
+
+      <section class="feature-section" id="f-data-migrate">
+        <h3><span class="fid">F4</span> 数据范围收口：叶子码主路径 <span class="pri p0">P0</span></h3>
+        <p><b>目的：</b>结束 <code>*.scope.*</code> 叶子码与 <code>RoleDataScope</code> 双读双写。</p>
+        <ul>
+          <li><b>目标态：</b><code>evaluate_access</code> 只读数据叶子码授权；<code>RoleDataScope</code> 表保留为只读归档直至下轮删除。</li>
+          <li><b>迁移：</b>一次性执行 <code>map_role_data_scopes_to_codes</code>（已存在实现）把存量策略映射为叶子码授权；迁移需受保护备份 + 明确授权（部署门禁）。迁移后重跑体检，H4 归零。</li>
+          <li><b>写路径收口：</b>数据范围替换接口改为写叶子码授权（或双写一过渡期后停旧表）。</li>
+          <li><b>分级修复：</b>恢复写分级——数据范围策略写操作要求 <code>org.manage</code> 且 L3 起（L2 只读），删除当前的参数弃用写法。</li>
+        </ul>
+      </section>
+
+      <section class="feature-section" id="f-grant-modal">
+        <h3><span class="fid">F5</span> 挂码弹窗目标态：缺口阻断 + 影响预览 <span class="pri p1">P1</span></h3>
+        <p><b>目的：</b>把「看得见才能配」贯彻到保存一刻——配出必然 403 的授权直接被拦下。</p>
+        <ul>
+          <li><b>缺口阻断：</b>勾选 <code>menu.*</code> 而其映射接口码未全勾时，「保存授权」置灰并明示缺失码清单（现仅文案提示）。</li>
+          <li><b>影响预览：</b>顶部常驻「影响 N 名成员 / 新增 X / 移除 Y」；保存走既有 preview + 乐观锁两段式。</li>
+          <li><b>层级与来源标注：</b>每个码带层级起点标签（仅平台超管 / 租户管理员起 / 应用管理员起）与模板 / 自定义来源；不可见码不出现。</li>
+          <li><b>与体检联动：</b>弹窗内阻断与体检 H1 同一判定，显示「即体检 H1」链接。</li>
+        </ul>
+        <p><button class="proto-jump" onclick="goScreen('s-grant')">原型 ③ 挂码弹窗 ↗</button></p>
+      </section>
+
+      <section class="feature-section" id="f-troubleshoot">
+        <h3><span class="fid">F6</span> 排障链路：成员与生效 <span class="pri p1">P1</span></h3>
+        <p><b>目的：</b>「用户为什么进不去 / 为什么能进」一次查全，替代逐表人肉核对。</p>
+        <ul>
+          <li>按用户 + 上下文（租户 / 应用）展示：有效角色（直绑 / 组继承来源）→ 持码按四类分组 → 对所选页面 / 接口的命中结果（放行原因或 403 缺码）。</li>
+          <li>复用既有持有者反查与鉴权模拟能力；本需求是「把已有零件接成一条链路」，不新建判权逻辑。</li>
+          <li>可见性：L1 全量；L3 / L2 限本租户 / 本应用成员。</li>
+        </ul>
+        <p><button class="proto-jump" onclick="goScreen('s-trouble')">原型 ④ 成员与生效 ↗</button></p>
+      </section>
+
+      <section class="feature-section" id="f-frontend-unify">
+        <h3><span class="fid">F7</span> 前端判权写法统一 <span class="pri p1">P1</span></h3>
+        <ul>
+          <li>新增统一工具：<code>hasMenu(code)</code> / <code>hasButton(code)</code>（内部 any-of），全部按钮判权改走该工具；删除 <code>platform_admin && hasAny(...)</code> 双轨写法（L1 放行语义收进工具内部）。</li>
+          <li>API 前缀常量化：删除 <code>/tenant-admin</code> 硬编码，统一从会话上下文取（平台视角 <code>/admin</code>、租户视角 <code>/tenant-admin</code>）。</li>
+          <li>路由修复：<code>/applications</code> 等重定向去重注册；PAGE_INFO 清理已收口键。</li>
+        </ul>
+      </section>
+
+      <section class="feature-section" id="f-cleanup">
+        <h3><span class="fid">F8</span> 死代码与旧词清理 <span class="pri p1">P1</span></h3>
+        <ul>
+          <li>删除 <code>ensure_management_permission</code> 及旧码→角色映射表（E6）；kind 双前缀回退收敛为「库列为准，仅迁移兜底」（E8）。</li>
+          <li>文案归一：清残余 iam.* / super_admin 旧词（E15）；「四级管理员」→ 五级口径；模板码数改由契约常量渲染（E16 随 F2 一并解决）。</li>
+          <li>P390 向导死 CSS、 navigation 旧键清理（E14）。</li>
+        </ul>
+        <p class="small">验收口径：全仓 grep 无 <code>iam.</code> 管理码旧词、无 <code>platform_admin && </code> 判权写法、体检 8 项全过。</p>
+      </section>
+    </div>
+
+    <!-- 共享规则 -->
+    <div class="tabpanel" id="tab-rules" role="tabpanel">
+      <h2>共享规则</h2>
+      <p class="lede">全文档引用同一份定义；此处为唯一出处，需求明细不重复。</p>
+
+      <h3>四类码职责</h3>
+      <div class="tbl-wrap">
+      <table>
+        <tr><th>kind</th><th>管什么</th><th>谁消费</th><th>示例</th></tr>
+        <tr><td>menu</td><td>管理台侧栏显隐</td><td>前端导航裁剪</td><td class="mono">menu.users</td></tr>
+        <tr><td>button</td><td>页内写操作按钮显隐</td><td>前端统一工具</td><td class="mono">button.users.manage</td></tr>
+        <tr><td>api</td><td>后端路由判权（27 个五域码）</td><td><code>ensure_codes</code></td><td class="mono">platform.account.read</td></tr>
+        <tr><td>data</td><td>行级数据范围（业务码叶子）</td><td><code>evaluate_access</code></td><td class="mono">appa.doc.read.scope.self</td></tr>
+      </table>
+      </div>
+      <p class="small">映射规则：<code>menu → button[] → api[]</code> 由码表契约唯一定义（F2）；只勾菜单不勾接口 = 侧栏能进、列表 403——该状态由 F5 阻断、由 F1 体检兜底。</p>
+
+      <h3>判权口径（唯一）</h3>
+      <ul>
+        <li>运行时放行 = L1 整段放行，或「有效角色（直绑 ∪ 组继承）× 挂码并集」含所需码。<b>不读角色 key。</b></li>
+        <li>业务码命中后：有数据叶子码或（过渡期）RoleDataScope → 解析范围；两者皆缺 → 拒绝（F4 后只剩叶子码）。</li>
+        <li>租户隔离：上下文取自已验证身份，永不信任请求体。</li>
+      </ul>
+
+      <h3>五级层级与可见集</h3>
+      <div class="tbl-wrap">
+      <table>
+        <tr><th>层级</th><th>key</th><th>接口码</th><th>可配范围（看得见才能配）</th></tr>
+        <tr><td>L1 平台超级管理员</td><td class="mono">platform.admin</td><td>27</td><td>全部管理码</td></tr>
+        <tr><td>L3 租户管理员</td><td class="mono">tenant.admin</td><td>20</td><td>除 <code>platform.*</code> 外的管理码 ∩ 本人可见</td></tr>
+        <tr><td>多应用管理员</td><td class="mono">apps.admin</td><td>16</td><td>同 L2 + <code>rbac.app_role.assign</code>，限钉住应用</td></tr>
+        <tr><td>L2 应用管理员</td><td class="mono">app.admin</td><td>15</td><td>钉住应用的管理码与本应用业务码</td></tr>
+        <tr><td>L4 应用成员</td><td class="mono">app.member</td><td>0</td><td>不可配权</td></tr>
+      </table>
+      </div>
+
+      <h3>体检状态定义</h3>
+      <table class="tbl-wrap">
+        <tr><th>状态</th><th>含义</th><th>处理</th></tr>
+        <tr><td><span class="tag err">阻断</span></td><td>必然产生用户可见故障（如进页 403）</td><td>发布门禁；修复走挂码链路</td></tr>
+        <tr><td><span class="tag warn">告警</span></td><td>双轨 / 漂移，尚未必然故障</td><td>排期收口；计入门禁报告</td></tr>
+        <tr><td><span class="tag hint">通过</span></td><td>检查通过</td><td>—</td></tr>
+      </table>
+
+      <h3>术语</h3>
+      <ul class="small">
+        <li><b>码表契约：</b>菜单↔按钮↔接口映射与层级码集的唯一权威定义（后端一处，测试门禁保护）。</li>
+        <li><b>有效角色：</b>直连绑定 ∪ 活跃组递归继承，按上下文（租户 / 应用）过滤后的并集。</li>
+        <li><b>数据叶子码：</b>业务码登记强制范围时自动生成的 <code>*.scope.{self|organization|organization_tree|selected_organizations|tenant}</code> 五叶。</li>
+        <li><b>模板回退：</b>（将被移除）<code>ensure_codes</code> 依赖五级模板 key 的兜底放行。</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<script>
+  function setMode(mode){
+    var isText = mode === 'text'
+    document.body.classList.toggle('text-mode', isText)
+    document.getElementById('mode-split').setAttribute('aria-pressed', String(!isText))
+    document.getElementById('mode-text').setAttribute('aria-pressed', String(isText))
+    window.scrollTo(0, 0)
+  }
+  function showTab(id, btn){
+    document.querySelectorAll('.tabpanel').forEach(function(p){ p.classList.toggle('active', p.id === id) })
+    if (btn) {
+      document.querySelectorAll('.tabs button').forEach(function(b){ b.setAttribute('aria-selected', String(b === btn)) })
+    } else {
+      document.querySelectorAll('.tabs button').forEach(function(b){ b.setAttribute('aria-selected', String(b.textContent.indexOf(labelOf(id)) > -1)) })
+    }
+    var doc = document.querySelector('.doc'); if (doc) doc.scrollTop = 0
+  }
+  function labelOf(id){
+    return { 'tab-overview':'概览', 'tab-design':'现状与根因', 'tab-detail':'需求明细', 'tab-rules':'共享规则' }[id] || ''
+  }
+  function navigate(screenId, btn){
+    document.querySelectorAll('.screen').forEach(function(s){ s.classList.toggle('active', s.id === screenId) })
+    document.querySelectorAll('.proto-nav button').forEach(function(b){
+      b.setAttribute('aria-current', String(btn ? b === btn : false))
+    })
+    var addrs = {
+      's-health': 'localhost:5175 / 高级管理 / 权限体检',
+      's-catalog': 'localhost:5175 / 高级管理 / 权限编码',
+      's-grant': 'localhost:5175 / 高级管理 / 平台角色 · 挂码',
+      's-trouble': 'localhost:5175 / 审计与验证 / 成员与生效'
+    }
+    var addr = document.getElementById('addr'); if (addr && addrs[screenId]) addr.textContent = addrs[screenId]
+    document.querySelector('.proto-scroll').scrollTop = 0
+  }
+  function goScreen(screenId){
+    navigate(screenId)
+    document.querySelector('.proto').scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  function goLink(featureId){
+    showTab('tab-detail')
+    var el = document.getElementById(featureId)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash')
+    setTimeout(function(){ el.classList.remove('flash') }, 2600)
+  }
+  // 让「详情」按钮同时高亮需求侧：体检检查项也承担 data-link 职责
+  document.querySelectorAll('[data-link]').forEach(function(el){
+    el.addEventListener('click', function(){ goLink(el.getAttribute('data-link')) })
+  })
+  function openDrawer(){ document.getElementById('drawer').classList.add('open') }
+  function closeDrawer(){ document.getElementById('drawer').classList.remove('open') }
+  document.getElementById('drawer').addEventListener('click', function(e){ if (e.target === this) closeDrawer() })
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeDrawer() })
+  function applyFix(id){
+    var done = document.getElementById('fix-done')
+    if (done) done.style.display = 'block'
+  }
+  function recheck(){
+    // 演示：修复后 H1 转为通过，计数联动（真实实现由服务端检查结果驱动）
+    var ck = document.getElementById('ck-h1')
+    var tag = ck.querySelector('.tag')
+    tag.className = 'tag ok'; tag.textContent = '通过'
+    ck.querySelector('.nm span').textContent = '0 个角色持菜单码缺接口码（修复后复检通过）'
+    document.getElementById('cnt-blocked').textContent = '0'
+    document.getElementById('cnt-warn').textContent = '3'
+    document.getElementById('cnt-ok').textContent = '5'
+  }
+  function gapCheck(){
+    var menu = document.getElementById('cb-menu').checked
+    var a1 = document.getElementById('cb-api1').checked
+    var note = document.getElementById('gap-note')
+    var save = document.getElementById('btn-save')
+    if (menu && !a1) {
+      note.style.display = 'block'
+      note.className = 'note err'
+      note.innerHTML = '保存被阻断：勾选了 <code>menu.users</code> 但缺 <code>platform.account.read</code>（即体检 H1 判定）。请补勾缺失接口码，或取消菜单码。'
+      save.disabled = true
+    } else {
+      note.style.display = 'none'
+      save.disabled = false
+    }
+  }
+  function saveGrant(){
+    var note = document.getElementById('gap-note')
+    note.style.display = 'block'; note.className = 'note ok'
+    note.textContent = '已保存（PUT + 乐观锁）：授权已更新，成员凭证已失效重放，审计已记录 role.permissions.replace。'
+    var save = document.getElementById('btn-save'); save.disabled = true; save.textContent = '已保存'
+  }
+  function alertDemo(msg){
+    var note = document.getElementById('gap-note')
+    note.style.display = 'block'; note.className = 'note'
+    note.textContent = msg
+  }
+  // 初始即运行缺口判定：示例角色勾了 menu.users 未勾全接口码，进入即为阻断态（与体检 H1 同口径）
+  gapCheck()
+</script>
+</body>
+</html>

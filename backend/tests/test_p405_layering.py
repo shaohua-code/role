@@ -1,4 +1,4 @@
-"""P405：平台 / 应用权限分层——两类角色、五级模板、任命链、自动补成员。"""
+"""P405：平台 / 应用权限分层——两类角色、四模板范围、任命链、自动补成员。"""
 
 import unittest
 from uuid import uuid4
@@ -18,6 +18,7 @@ from app.api.v1.admin.access_control import (
 from app.api.v1.admin.applications import create_application, delete_application
 from app.api.v1.tenant_admin.application_roles import (
     bind_application_role,
+    list_application_member_candidates,
     list_application_members,
     list_application_permissions,
     list_application_roles,
@@ -37,12 +38,17 @@ from app.schemas.access_control import (
 from app.schemas.applications import ApplicationCreate
 from app.services.admin_authorization import has_application_admin_access
 from app.services.authorization import evaluate_access
+from app.services.permission_kinds import (
+    ROLE_SCOPE_APP,
+    ROLE_SCOPE_MEMBER,
+    ROLE_SCOPE_SUPER,
+    ROLE_SCOPE_TENANT,
+    TEMPLATE_ROLE_SCOPES,
+)
 from app.services.role_provisioning import (
-    L2M_PERMISSION_CODES,
-    L2M_ROLE_KEY,
-    L2_PERMISSION_CODES,
+    L2_GRANT_NODE_CODES,
     L2_ROLE_KEY,
-    L3_PERMISSION_CODES,
+    L3_GRANT_NODE_CODES,
     L3_ROLE_KEY,
     L4_ROLE_KEY,
     TEMPLATE_ROLE_KEYS,
@@ -70,14 +76,15 @@ class P405LayeringTests(unittest.TestCase):
         self.db.add(self.application)
         self.db.flush()
         self.catalog: dict[str, Permission] = {}
+        # 管理面节点目录：三管理员模板节点全集 + 租户写按钮（超管专属，供向上越权用例）。
         for code in sorted(
-            set(L3_PERMISSION_CODES) | set(L2_PERMISSION_CODES) | set(L2M_PERMISSION_CODES)
-            | {"platform.overview.read", "rbac.permission.manage"},
+            set(L3_GRANT_NODE_CODES) | set(L2_GRANT_NODE_CODES) | {"button.tenants.manage"}
         ):
             row = Permission(
                 code=code, catalog_namespace="platform",
                 resource_type=code.split(".", 1)[0], scope=code.rsplit(".", 1)[-1],
                 surface="management", requires_data_scope=False,
+                kind="menu" if code.startswith("menu.") else "button",
             )
             self.db.add(row)
             self.catalog[code] = row
@@ -90,16 +97,26 @@ class P405LayeringTests(unittest.TestCase):
         self.l1 = self._user("l1")
         make_platform_admin_binding(self.db, self.l1)
         self.l3 = self._user("l3")
-        self.l2m = self._user("l2m")
         self.l2 = self._user("l2")
         self.member = self._user("member")
-        l3_role = provision_tenant_admin_role(self.db, self.tenant.id)
-        self.multi_role, self.admin_role, self.member_role = provision_application_platform_roles(
+        # 平台角色全局化：tenant.admin 全局一份（宿主平台管理租户），跨租户生效。
+        self.l3_role = provision_tenant_admin_role(self.db, self.tenant.id)
+        # 应用开通预置 (应用管理员, 应用成员) 二元组（多应用管理员已并入应用管理员）。
+        self.admin_role, self.member_role = provision_application_platform_roles(
             self.db, self.tenant.id, self.application.id,
         )
-        self._bind(self.l3, l3_role)
-        self._bind(self.l2m, self.multi_role)
+        self._bind(self.l3, self.l3_role)
         self._bind(self.l2, self.admin_role)
+        # 应用级操作者的平台侧范围角色：operator_scope 只统计未钉应用的平台角色，
+        # 补一个 scope=app 的自定义平台角色让 L2 的授权范围秩为「应用级」。
+        self.l2_scope_role = Role(
+            tenant_id=self.tenant.id, application_id=None, kind="tenant",
+            key="custom.app.level", name="应用级平台角色",
+            scope=ROLE_SCOPE_APP, status="active",
+        )
+        self.db.add(self.l2_scope_role)
+        self.db.flush()
+        self._bind(self.l2, self.l2_scope_role)
         self.member_membership = self._membership(self.member)
         self.reader = Role(
             tenant_id=self.tenant.id, application_id=self.application.id,
@@ -172,27 +189,32 @@ class P405LayeringTests(unittest.TestCase):
             RoleBinding.role_id == role_id,
         )) is not None
 
-    def test_five_template_keys(self) -> None:
-        self.assertEqual(len(TEMPLATE_ROLE_KEYS), 5)
-        self.assertIn(L2M_ROLE_KEY, TEMPLATE_ROLE_KEYS)
-        self.assertEqual(self._held(self.admin_role), set(L2_PERMISSION_CODES))
-        self.assertEqual(self._held(self.multi_role), set(L2M_PERMISSION_CODES))
-        self.assertIn("rbac.app_role.assign", self._held(self.multi_role))
+    def test_four_template_keys(self) -> None:
+        # 四个模板 key；apps.admin（多应用管理员）已删除。
+        self.assertEqual(len(TEMPLATE_ROLE_KEYS), 4)
+        self.assertNotIn("apps.admin", TEMPLATE_ROLE_KEYS)
+        # 模板授权范围：超管/租户级/应用级/成员，只能向下。
+        self.assertEqual(TEMPLATE_ROLE_SCOPES["platform.admin"], ROLE_SCOPE_SUPER)
+        self.assertEqual(TEMPLATE_ROLE_SCOPES["tenant.admin"], ROLE_SCOPE_TENANT)
+        self.assertEqual(TEMPLATE_ROLE_SCOPES["app.admin"], ROLE_SCOPE_APP)
+        self.assertEqual(TEMPLATE_ROLE_SCOPES["app.member"], ROLE_SCOPE_MEMBER)
+        # 节点集断言：应用管理员恰持 L2 模板节点；应用成员零管理面节点。
+        self.assertEqual(self._held(self.admin_role), set(L2_GRANT_NODE_CODES))
         self.assertEqual(self._held(self.member_role), set())
 
     def test_platform_role_rejects_business_code(self) -> None:
         body = RolePermissionsUpdate(
-            permission_ids=[self.catalog["app.read"].id, self.business.id],
+            permission_ids=[self.catalog["menu.application_workspace"].id, self.business.id],
             expected_current_permission_ids=[],
         )
         with self.assertRaises(HTTPException) as ctx:
             replace_role_permissions(self.admin_role.id, body, self.request, actor=self.l1, db=self.db)
         self.assertEqual(ctx.exception.status_code, 422)
-        self.assertIn("平台角色不能挂应用权限", str(ctx.exception.detail))
+        self.assertIn("平台角色只能挂菜单/按钮节点", str(ctx.exception.detail))
 
     def test_application_role_rejects_invisible_management_code(self) -> None:
         body = RolePermissionsUpdate(
-            permission_ids=[self.catalog["org.read"].id],
+            permission_ids=[self.catalog["menu.organization_workspace"].id],
             expected_current_permission_ids=[],
         )
         with self.assertRaises(HTTPException) as ctx:
@@ -204,25 +226,25 @@ class P405LayeringTests(unittest.TestCase):
 
     def test_l3_can_grant_tenant_management_on_application_role(self) -> None:
         body = RolePermissionsUpdate(
-            permission_ids=[self.catalog["org.read"].id],
+            permission_ids=[self.catalog["menu.organization_workspace"].id],
             expected_current_permission_ids=[],
         )
         result = replace_application_role_permissions(
             self.application.id, self.reader.id, body, self.request, actor=self.l3, db=self.db,
         )
         self.assertTrue(result["changed"])
-        self.assertIn("org.read", self._held(self.reader))
+        self.assertIn("menu.organization_workspace", self._held(self.reader))
 
     def test_l2_can_grant_app_management_on_application_role(self) -> None:
         body = RolePermissionsUpdate(
-            permission_ids=[self.catalog["app.read"].id],
+            permission_ids=[self.catalog["menu.application_workspace"].id],
             expected_current_permission_ids=[],
         )
         result = replace_application_role_permissions(
             self.application.id, self.reader.id, body, self.request, actor=self.l2, db=self.db,
         )
         self.assertTrue(result["changed"])
-        self.assertIn("app.read", self._held(self.reader))
+        self.assertIn("menu.application_workspace", self._held(self.reader))
 
     def test_application_permission_catalog_respects_actor_level(self) -> None:
         l3_codes = {row["code"] for row in list_application_permissions(
@@ -234,13 +256,13 @@ class P405LayeringTests(unittest.TestCase):
         business_only = {row["code"] for row in list_application_permissions(
             self.application.id, self.reader.id, actor=self.l3, db=self.db,
         )}
-        self.assertIn("org.read", l3_codes)
-        self.assertIn("app.read", l3_codes)
+        self.assertIn("menu.organization_workspace", l3_codes)
+        self.assertIn("menu.application_workspace", l3_codes)
         self.assertIn("appa.doc.read", l3_codes)
-        self.assertNotIn("org.read", l2_codes)
-        self.assertIn("app.read", l2_codes)
-        self.assertIn("org.member.manage", l2_codes)
-        self.assertNotIn("org.read", business_only)
+        self.assertNotIn("menu.organization_workspace", l2_codes)
+        self.assertIn("menu.application_workspace", l2_codes)
+        self.assertIn("button.app_role.manage", l2_codes)
+        self.assertNotIn("menu.organization_workspace", business_only)
         self.assertIn("appa.doc.read", business_only)
 
     def test_bind_application_role_auto_completes_member(self) -> None:
@@ -276,6 +298,48 @@ class P405LayeringTests(unittest.TestCase):
         self.assertNotIn(str(other.id), ids)
         self.assertEqual(filtered["total"], 1)
 
+    def test_list_member_candidates_marks_already_bound(self) -> None:
+        unbound = self._user("unbound")
+        self._membership(unbound)
+        self.db.commit()
+        payload = list_application_member_candidates(
+            self.application.id, None, self.reader.id, 50, 0, actor=self.l2, db=self.db,
+        )
+        by_id = {item["user_id"]: item for item in payload["items"]}
+        self.assertIn(str(unbound.id), by_id)
+        self.assertFalse(by_id[str(unbound.id)]["already_bound"])
+        bind_application_role(
+            self.application.id,
+            ApplicationRoleBindingCreate(email=unbound.email, role_id=self.reader.id),
+            self.request, actor=self.l3, db=self.db,
+        )
+        payload = list_application_member_candidates(
+            self.application.id, None, self.reader.id, 50, 0, actor=self.l2, db=self.db,
+        )
+        by_id = {item["user_id"]: item for item in payload["items"]}
+        self.assertTrue(by_id[str(unbound.id)]["already_bound"])
+
+    def test_l2_cannot_list_other_app_member_candidates(self) -> None:
+        other = Application(
+            tenant_id=self.tenant.id, client_id=f"b-{uuid4().hex[:8]}",
+            name="应用B", permission_namespace="appb",
+            redirect_uris=["https://b.example.com/cb"], status="active",
+        )
+        self.db.add(other)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as ctx:
+            list_application_member_candidates(
+                other.id, None, None, 20, 0, actor=self.l2, db=self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_plain_member_cannot_list_member_candidates(self) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            list_application_member_candidates(
+                self.application.id, None, None, 20, 0, actor=self.member, db=self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
+
     def test_member_gets_business_code_from_application_role(self) -> None:
         self.db.add(RolePermission(role_id=self.reader.id, permission_id=self.business.id))
         self.db.add(RoleDataScope(
@@ -295,52 +359,21 @@ class P405LayeringTests(unittest.TestCase):
         allowed = evaluate_access(check, self.member, self.db)
         self.assertTrue(allowed["decision"]["allowed"])
 
-    def test_l3_can_appoint_multi_and_single_admin(self) -> None:
+    def test_l3_can_appoint_app_admin(self) -> None:
+        # 租户级可以任命应用管理员（应用管理员管 N 个应用 = 绑 N 个应用）。
         target = self._user("appointee")
         membership = TenantMembership(user_id=target.id, tenant_id=self.tenant.id, status="active")
         self.db.add(membership)
         self.db.commit()
         bind_application_role(
             self.application.id,
-            ApplicationRoleBindingCreate(email=target.email, role_id=self.multi_role.id),
-            self.request, actor=self.l3, db=self.db,
-        )
-        self.assertTrue(self._has_binding(membership.id, self.multi_role.id))
-        other = self._user("direct-l2")
-        other_membership = TenantMembership(user_id=other.id, tenant_id=self.tenant.id, status="active")
-        self.db.add(other_membership)
-        self.db.commit()
-        bind_application_role(
-            self.application.id,
-            ApplicationRoleBindingCreate(email=other.email, role_id=self.admin_role.id),
-            self.request, actor=self.l3, db=self.db,
-        )
-        self.assertTrue(self._has_binding(other_membership.id, self.admin_role.id))
-
-    def test_multi_admin_can_appoint_app_admin_but_not_peer(self) -> None:
-        target = self._user("next-admin")
-        membership = TenantMembership(user_id=target.id, tenant_id=self.tenant.id, status="active")
-        self.db.add(membership)
-        self.db.commit()
-        bind_application_role(
-            self.application.id,
             ApplicationRoleBindingCreate(email=target.email, role_id=self.admin_role.id),
-            self.request, actor=self.l2m, db=self.db,
+            self.request, actor=self.l3, db=self.db,
         )
         self.assertTrue(self._has_binding(membership.id, self.admin_role.id))
-        peer = self._user("peer-multi")
-        peer_membership = TenantMembership(user_id=peer.id, tenant_id=self.tenant.id, status="active")
-        self.db.add(peer_membership)
-        self.db.commit()
-        with self.assertRaises(HTTPException) as ctx:
-            bind_application_role(
-                self.application.id,
-                ApplicationRoleBindingCreate(email=peer.email, role_id=self.multi_role.id),
-                self.request, actor=self.l2m, db=self.db,
-            )
-        self.assertEqual(ctx.exception.status_code, 403)
 
     def test_app_admin_cannot_appoint_app_admin(self) -> None:
+        # 应用级不能向上任命应用管理员（任命是租户级能力）。
         target = self._user("blocked")
         membership = TenantMembership(user_id=target.id, tenant_id=self.tenant.id, status="active")
         self.db.add(membership)
@@ -354,17 +387,16 @@ class P405LayeringTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_catalog_hides_codes_actor_does_not_hold(self) -> None:
+        # 目录可见性 = 操作者已挂节点并集（看得见才能配）。
         l2_codes = self._codes(list_permissions(actor=self.l2, db=self.db))
-        self.assertIn("app.manage", l2_codes)
-        self.assertNotIn("org.read", l2_codes)
-        self.assertNotIn("platform.overview.read", l2_codes)
+        self.assertIn("menu.application_workspace", l2_codes)
+        self.assertNotIn("menu.organization_workspace", l2_codes)
         self.assertNotIn("appa.doc.read", l2_codes)
-        self.assertTrue(l2_codes.issubset(set(L2_PERMISSION_CODES)))
+        self.assertTrue(l2_codes.issubset(set(L2_GRANT_NODE_CODES)))
         l3_codes = self._codes(list_permissions(actor=self.l3, db=self.db))
-        self.assertIn("org.read", l3_codes)
-        self.assertNotIn("platform.overview.read", l3_codes)
+        self.assertIn("menu.organization_workspace", l3_codes)
         self.assertNotIn("appa.doc.read", l3_codes)
-        self.assertTrue(l3_codes.issubset(set(L3_PERMISSION_CODES)))
+        self.assertTrue(l3_codes.issubset(set(L3_GRANT_NODE_CODES)))
 
     def test_l2_cannot_create_or_delete_application(self) -> None:
         body = ApplicationCreate(
@@ -383,7 +415,9 @@ class P405LayeringTests(unittest.TestCase):
         rows = list_application_roles(self.application.id, actor=self.l3, db=self.db)
         keys = {item["key"] for item in rows}
         self.assertIn("appa.reader", keys)
-        self.assertNotIn(L2M_ROLE_KEY, keys)
+        # apps.admin（多应用管理员）已删除，且不在模板 key 集合中。
+        self.assertNotIn("apps.admin", keys)
+        self.assertNotIn("apps.admin", TEMPLATE_ROLE_KEYS)
         self.assertNotIn(L2_ROLE_KEY, keys)
         self.assertNotIn(L4_ROLE_KEY, keys)
 
@@ -394,7 +428,6 @@ class P405LayeringTests(unittest.TestCase):
         )
         keys = {item["key"] for item in payload["items"]}
         self.assertIn(L2_ROLE_KEY, keys)
-        self.assertIn(L2M_ROLE_KEY, keys)
         self.assertNotIn(L3_ROLE_KEY, keys)
         self.assertNotIn("appa.reader", keys)
 
@@ -405,7 +438,6 @@ class P405LayeringTests(unittest.TestCase):
         )
         keys = {item["key"] for item in payload["items"]}
         self.assertIn(L3_ROLE_KEY, keys)
-        self.assertIn(L2M_ROLE_KEY, keys)
         self.assertNotIn("appa.reader", keys)
 
     def test_l3_and_l2_can_create_custom_platform_role(self) -> None:
@@ -415,8 +447,9 @@ class P405LayeringTests(unittest.TestCase):
         )
         self.assertEqual(created["key"], "ops.reviewer")
         self.assertIsNone(created["application_id"])
+        # 应用级创建自定义平台角色：范围只能向下，显式选 app 范围。
         created_l2 = create_role(
-            RoleCreate(tenant_id=self.tenant.id, key="ops.other", name="其他"),
+            RoleCreate(tenant_id=self.tenant.id, key="ops.other", name="其他", scope="app"),
             self.request, actor=self.l2, db=self.db,
         )
         self.assertEqual(created_l2["key"], "ops.other")
@@ -429,19 +462,18 @@ class P405LayeringTests(unittest.TestCase):
         )
         from uuid import UUID
         body = RolePermissionsUpdate(
-            permission_ids=[self.catalog["platform.overview.read"].id, self.catalog["org.read"].id],
+            permission_ids=[self.catalog["menu.overview"].id, self.catalog["menu.organization_workspace"].id],
             expected_current_permission_ids=[],
         )
         result = replace_role_permissions(
             UUID(created["id"]), body, self.request, actor=self.l1, db=self.db,
         )
         self.assertTrue(result["changed"])
-        self.assertIn("platform.overview.read", result["grant_permission_codes"])
+        self.assertIn("menu.organization_workspace", result["grant_permission_codes"])
 
     def test_l3_can_replace_tenant_admin_template_with_own_codes(self) -> None:
-        l3_role = self.db.scalar(select(Role).where(
-            Role.tenant_id == self.tenant.id, Role.key == L3_ROLE_KEY,
-        ))
+        # 全局 L3 模板宿主平台管理租户，直接用 setUp 保存的引用。
+        l3_role = self.l3_role
         current = self._permission_ids(l3_role)
         body = RolePermissionsUpdate(
             permission_ids=current, expected_current_permission_ids=current,
@@ -452,12 +484,11 @@ class P405LayeringTests(unittest.TestCase):
         self.assertFalse(result["changed"])
 
     def test_l3_cannot_add_upward_code_to_tenant_admin_template(self) -> None:
-        l3_role = self.db.scalar(select(Role).where(
-            Role.tenant_id == self.tenant.id, Role.key == L3_ROLE_KEY,
-        ))
+        # 全局 L3 模板宿主平台管理租户，直接用 setUp 保存的引用。
+        l3_role = self.l3_role
         current = self._permission_ids(l3_role)
         body = RolePermissionsUpdate(
-            permission_ids=[*current, self.catalog["platform.overview.read"].id],
+            permission_ids=[*current, self.catalog["button.tenants.manage"].id],
             expected_current_permission_ids=current,
         )
         with self.assertRaises(HTTPException) as ctx:
@@ -474,17 +505,20 @@ class P405LayeringTests(unittest.TestCase):
         )
         self.assertFalse(result["changed"])
 
-    def test_l2_cannot_grant_upward_preset_apps_admin(self) -> None:
-        current = self._permission_ids(self.multi_role)
+    def test_l2_cannot_manage_upward_preset_tenant_admin(self) -> None:
+        # 范围只能向下：应用级看不见（更谈不上改）租户级预置模板的授权。
+        # 平台角色全局化：全局 L3 模板对应用级操作者仍按范围秩隐藏（404）。
+        l3_role = self.l3_role
+        current = self._permission_ids(l3_role)
         body = RolePermissionsUpdate(
             permission_ids=current, expected_current_permission_ids=current,
         )
         with self.assertRaises(HTTPException) as ctx:
             replace_role_permissions(
-                self.multi_role.id, body, self.request, actor=self.l2, db=self.db,
+                l3_role.id, body, self.request, actor=self.l2, db=self.db,
             )
-        self.assertEqual(ctx.exception.status_code, 403)
-        self.assertIn("不能配置上级预置角色的授权", str(ctx.exception.detail))
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.assertIn("角色不存在", str(ctx.exception.detail))
 
     def test_l3_cannot_grant_unheld_management_code(self) -> None:
         created = create_role(
@@ -493,7 +527,7 @@ class P405LayeringTests(unittest.TestCase):
         )
         from uuid import UUID
         body = RolePermissionsUpdate(
-            permission_ids=[self.catalog["platform.overview.read"].id],
+            permission_ids=[self.catalog["button.tenants.manage"].id],
             expected_current_permission_ids=[],
         )
         with self.assertRaises(HTTPException) as ctx:
@@ -501,16 +535,17 @@ class P405LayeringTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 422)
         detail = str(ctx.exception.detail)
         self.assertTrue(
-            "不能配置你没有的权限" in detail or "该角色作用域不可新增权限" in detail,
+            "授权下限高于角色范围" in detail or "不能配置你没有的权限" in detail,
             detail,
         )
 
-    def test_multi_admin_has_application_admin_access(self) -> None:
+    def test_app_admin_access_pinned_only(self) -> None:
+        # 应用管理员管 N 个应用 = 绑 N 个应用：钉住的应用可管，未钉应用（创建入口）不可向上。
         self.assertTrue(has_application_admin_access(
-            self.l2m, self.tenant.id, self.db, manage=True, application_id=self.application.id,
+            self.l2, self.tenant.id, self.db, manage=True, application_id=self.application.id,
         ))
         self.assertFalse(has_application_admin_access(
-            self.l2m, self.tenant.id, self.db, manage=True, application_id=None,
+            self.l2, self.tenant.id, self.db, manage=True, application_id=None,
         ))
 
 

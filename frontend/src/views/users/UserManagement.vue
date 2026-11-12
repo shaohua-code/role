@@ -2,9 +2,9 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { validateReservedEmailDomain } from '@/utils/emailValidation'
-import { DownOutlined } from '@/plugins/icons'
+import { DownOutlined, PlusOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
@@ -20,9 +20,28 @@ interface UserRecord {
   tenant_count: number
   created_at: string
 }
-interface RoleOption { id: string; tenant_id: string; key: string; name: string; status: string }
-/** 角色穿梭框数据项：key=角色 ID，roleKey=角色标识（英文）。 */
-interface RoleTransferItem { key: string; title: string; roleKey: string; active: boolean }
+interface RoleOption {
+  id: string
+  tenant_id: string
+  application_id?: string | null
+  key: string
+  name: string
+  status: string
+  /** 授权范围与中文标签（后端下发）：穿梭框展示范围层级，绑定口径恒向下兼容。 */
+  scope?: string
+  scope_label?: string
+}
+/** 角色穿梭框数据项：列表展示中文名称，英文标识仅用于搜索。 */
+interface RoleTransferItem {
+  key: string
+  title: string
+  roleKey: string
+  applicationName: string
+  scopeLabel: string
+  /** 禁用原因后缀（空串=可正常勾选）：停用角色不可勾，已绑定项保持可勾选以便移除。 */
+  note: string
+  active: boolean
+}
 interface SelectOption { label: string; value: string; disabled?: boolean }
 interface MembershipRecord {
   tenant_id: string
@@ -39,17 +58,37 @@ interface UserSession {
   expires_at: string
 }
 
-const props = defineProps<{ active: boolean; tenants: TenantOption[]; currentUserId?: string }>()
+const props = withDefaults(defineProps<{
+  active: boolean
+  tenants: TenantOption[]
+  applications?: Array<{ id: string; name: string; tenant_id?: string }>
+  currentUserId?: string
+}>(), {
+  applications: () => [],
+  currentUserId: '',
+})
 const emit = defineEmits<{ changed: [] }>()
 
 const users = ref<UserRecord[]>([])
-const canManageUsers = computed(() => cachedHas('platform.account.manage'))
+const canManageUsers = computed(() => cachedHasAny(['button.users.manage']))
 const loading = ref(false)
 const searchText = ref('')
 const createOpen = ref(false)
 const createSaving = ref(false)
 const createFormRef = ref<{ validate: () => Promise<unknown> }>()
-const createForm = reactive({ tenant_id: '', email: '', display_name: '', initial_password: '' })
+// 新契约：创建用户按「租户多选 + 组织多选 + 应用多选」三类绑定提交（旧 tenant_id 已删除）
+const createForm = reactive({
+  tenant_ids: [] as string[],
+  organization_ids: [] as string[],
+  application_ids: [] as string[],
+  email: '',
+  display_name: '',
+  initial_password: '',
+  role_id: '',
+})
+// 组织分组选项：按所选租户分组（数据源 GET /admin/organizations?tenant_id=）
+const createOrganizationOptions = ref<Array<{ label: string; options: Array<{ label: string; value: string }> }>>([])
+const createOrganizationsLoading = ref(false)
 const roleDialogOpen = ref(false)
 const roleSaving = ref(false)
 const roleUserId = ref('')
@@ -70,6 +109,12 @@ const membershipLoading = ref(false)
 const membershipUser = ref<UserRecord | null>(null)
 const memberships = ref<MembershipRecord[]>([])
 const membershipSaving = ref('')
+// 直加租户：弹窗内选择未加入的活动租户，批量提交
+const joinTenantIds = ref<string[]>([])
+const joinSaving = ref(false)
+// 行内操作进行中的租户 ID（删除 / 离职重新加入），用于按钮 loading
+const removingMembershipTenantId = ref('')
+const rejoiningMembershipTenantId = ref('')
 const sessionsOpen = ref(false)
 const sessionsLoading = ref(false)
 const sessionUser = ref<UserRecord | null>(null)
@@ -131,18 +176,31 @@ const tenantOptions = computed(() => activeTenants.value.map(tenant => ({ value:
 // 服务端口径的当前直接绑定集合：切换租户/打开弹窗时刷新，用于锁定已绑定的停用角色。
 const boundRoleIds = ref<string[]>([])
 const boundRoleKeySet = computed(() => new Set(boundRoleIds.value))
-// 穿梭框数据源：当前租户全部角色（含停用）；antd Transfer 直接读取 item.disabled，
-// 停用且未绑定的角色禁止新勾入，已绑定的停用角色保留可移除。
+// 穿梭框数据源：操作者可见的全量角色（后端已按范围秩过滤，恒向下兼容）；
+// antd Transfer 直接读取 item.disabled：停用未绑定、跨租户应用角色禁止新勾入，已绑定的保留可移除。
+const applicationNameById = computed(() => {
+  const names = new Map<string, string>()
+  for (const application of props.applications) names.set(application.id, application.name)
+  return names
+})
 const roleTransferItems = computed<Array<RoleTransferItem & { disabled: boolean }>>(() => roles.value
-  .filter(role => role.tenant_id === roleTenantId.value)
   .map(role => {
     const active = role.status === 'active'
+    const applicationName = role.application_id
+      ? (applicationNameById.value.get(role.application_id) || '')
+      : ''
+    // 应用角色可跨租户任命（按其所属应用生效，向下兼容）：仅停用角色不可勾选，已绑定的保持可勾选以便移除。
+    const bound = boundRoleKeySet.value.has(role.id)
+    const note = !active ? ' · 已停用' : ''
     return {
       key: role.id,
       title: role.name,
       roleKey: role.key,
+      applicationName,
+      scopeLabel: role.scope_label || '',
+      note,
       active,
-      disabled: !active && !boundRoleKeySet.value.has(role.id),
+      disabled: !active && !bound,
     }
   }))
 
@@ -151,16 +209,20 @@ function filterRoleTransfer(inputValue: string, item: RoleTransferItem): boolean
   return !keyword
     || item.title.toLowerCase().includes(keyword)
     || item.roleKey.toLowerCase().includes(keyword)
+    || item.applicationName.toLowerCase().includes(keyword)
 }
 
-// 穿梭框列表项展示英文角色标识；角色名称在 title 中用于搜索与悬浮提示。
+// 列表展示中文角色名；应用角色附带应用名（避免多个「应用管理员」分不清）、范围标签让「向下兼容」可见、
+// note 携带停用态标记。
 function renderRoleTransfer(item: RoleTransferItem): string {
-  return `${item.roleKey}${item.active ? '' : ' · 已停用'}`
+  const scope = item.applicationName ? `（${item.applicationName}）` : ''
+  const scopeLabel = item.scopeLabel ? `〔${item.scopeLabel}〕` : ''
+  return `${item.title}${scope}${scopeLabel}${item.note}`
 }
 
 const columns = [
   { title: '邮箱', dataIndex: 'email', key: 'email', width: 200, ellipsis: true },
-  { title: '姓名', dataIndex: 'display_name', key: 'display_name', width: 130, ellipsis: true },
+  { title: '姓名', dataIndex: 'display_name', key: 'display_name', width: 150, ellipsis: true },
   { title: '状态', dataIndex: 'status', key: 'status', width: 88 },
   { title: '租户关系数', dataIndex: 'tenant_count', key: 'tenant_count', width: 90 },
   { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 160 },
@@ -177,7 +239,7 @@ const sessionColumns = [
 ]
 
 const createRules = {
-  tenant_id: [{ required: true, message: '请选择所属租户', trigger: 'change' }],
+  tenant_ids: [{ required: true, type: 'array' as const, min: 1, message: '至少选择一个租户', trigger: 'change' }],
   email: [
     { required: true, type: 'email', max: 254, message: '请输入有效邮箱（不超过 254 个字符）', trigger: 'blur' },
     { validator: validateReservedEmailDomain, trigger: 'blur' },
@@ -209,27 +271,115 @@ async function loadUsers(): Promise<void> {
 }
 
 function openCreate(): void {
+  // 默认选中第一个可选租户；组织/应用待租户确定后联动加载
   Object.assign(createForm, {
-    tenant_id: activeTenants.value[0]?.id || '', email: '', display_name: '', initial_password: '',
+    tenant_ids: activeTenants.value[0] ? [activeTenants.value[0].id] : [],
+    organization_ids: [],
+    application_ids: [],
+    email: '',
+    display_name: '',
+    initial_password: '',
+    role_id: '',
   })
+  createOrganizationOptions.value = []
   createOpen.value = true
+  if (createForm.tenant_ids.length) void loadCreateOrganizations()
+  // 初始角色候选：角色目录懒加载一次（与配置角色弹窗同源，后端已按操作者范围秩过滤，恒向下兼容）
+  if (!roles.value.length) {
+    void api<RoleOption[] | { items: RoleOption[] }>('/admin/roles?limit=500')
+      .then(result => { roles.value = asPagedList(result).items })
+      .catch(() => { /* 候选拉取失败不阻塞建人，提交空 role_id 即无初始角色 */ })
+  }
+}
+
+// 初始角色候选：仅启用角色，展示「名称（应用名）〔范围标签〕」与配置角色弹窗同口径。
+const createRoleOptions = computed<SelectOption[]>(() => roles.value
+  .filter(role => role.status === 'active')
+  .map(role => {
+    const applicationName = role.application_id
+      ? (applicationNameById.value.get(role.application_id) || '')
+      : ''
+    const scope = applicationName ? `（${applicationName}）` : ''
+    const scopeLabel = role.scope_label ? `〔${role.scope_label}〕` : ''
+    return { value: role.id, label: `${role.name}${scope}${scopeLabel}` }
+  }))
+
+/** 并行拉取所选租户的组织目录，按租户分组为下拉选项。 */
+async function loadCreateOrganizations(): Promise<void> {
+  if (!createForm.tenant_ids.length) {
+    createOrganizationOptions.value = []
+    return
+  }
+  createOrganizationsLoading.value = true
+  try {
+    const groups = await Promise.all(createForm.tenant_ids.map(async tenantId => {
+      const tenant = props.tenants.find(item => item.id === tenantId)
+      const organizations = await api<Array<{ id: string; key: string; name: string; status: string }>>(
+        `/admin/organizations?tenant_id=${encodeURIComponent(tenantId)}`,
+      )
+      return {
+        label: tenant?.name || tenantId,
+        options: organizations
+          .filter(organization => organization.status === 'active')
+          .map(organization => ({ value: String(organization.id), label: `${organization.name} (${organization.key})` })),
+      }
+    }))
+    createOrganizationOptions.value = groups.filter(group => group.options.length)
+  } catch (error) {
+    createOrganizationOptions.value = []
+    message.error(error instanceof Error ? error.message : '读取组织目录失败')
+  } finally {
+    createOrganizationsLoading.value = false
+  }
+}
+
+/** 应用分组选项：应用必须属于所选租户（数据源为壳层注入的应用目录，按 tenant_id 过滤分组）。 */
+const createApplicationOptions = computed(() => createForm.tenant_ids
+  .map(tenantId => {
+    const tenant = props.tenants.find(item => item.id === tenantId)
+    return {
+      label: tenant?.name || tenantId,
+      options: props.applications
+        .filter(application => application.tenant_id === tenantId)
+        .map(application => ({ value: application.id, label: application.name })),
+    }
+  })
+  .filter(group => group.options.length))
+
+/** 绑定租户变化：清掉不再属于所选题的组织/应用，并刷新组织分组选项。 */
+function onCreateTenantsChange(ids: string[]): void {
+  const selectedTenants = new Set(ids)
+  createForm.application_ids = createForm.application_ids.filter(appId =>
+    props.applications.some(application => application.id === appId && selectedTenants.has(String(application.tenant_id))))
+  createForm.organization_ids = createForm.organization_ids.filter(orgId =>
+    createOrganizationOptions.value.some(group => group.options.some(option => option.value === orgId)))
+  void loadCreateOrganizations().then(() => {
+    // 组织目录刷新后按新分组再剔除一次（移除租户对应的分组不再可选）
+    createForm.organization_ids = createForm.organization_ids.filter(orgId =>
+      createOrganizationOptions.value.some(group => group.options.some(option => option.value === orgId)))
+  })
 }
 
 async function createUser(): Promise<void> {
   try { await createFormRef.value?.validate() } catch { return }
-  if (!activeTenants.value.some(tenant => tenant.id === createForm.tenant_id)) {
-    message.error('请选择活动租户')
+  if (!createForm.tenant_ids.length) {
+    message.error('至少选择一个租户')
     return
   }
   createSaving.value = true
   try {
+    // 新契约：三类绑定一起提交；组织/应用必须属于所选租户，绑定应用会自动补 app.member
     await api('/admin/users', {
       method: 'POST',
       body: JSON.stringify({
-        tenant_id: createForm.tenant_id,
+        tenant_ids: createForm.tenant_ids,
+        organization_ids: createForm.organization_ids,
+        application_ids: createForm.application_ids,
         email: createForm.email.trim().toLowerCase(),
         display_name: createForm.display_name.trim(),
         initial_password: createForm.initial_password,
+        // 初始角色（可选）：后端挂到第一个所选租户成员上，判权与配置角色同口径
+        role_id: createForm.role_id || undefined,
       }),
     })
     message.success('用户已创建')
@@ -275,8 +425,16 @@ function changeStatus(user: UserRecord, status: UserRecord['status']): void {
   else void update()
 }
 
+// 可直加的租户 = 活动租户中尚未出现在成员列表的；disabled/departed 行内已有恢复入口，不重复列出
+const joinableTenantOptions = computed(() => {
+  const joined = new Set(memberships.value.map(item => String(item.tenant_id)))
+  return tenantOptions.value.filter(option => !joined.has(option.value))
+})
+
+/** 打开成员关系弹窗：拉取全量成员（含停用/离职），并清空上次的直加选择。 */
 async function openMemberships(user: UserRecord): Promise<void> {
   membershipUser.value = user
+  joinTenantIds.value = []
   membershipDialogOpen.value = true
   membershipLoading.value = true
   try {
@@ -285,6 +443,71 @@ async function openMemberships(user: UserRecord): Promise<void> {
     memberships.value = []
     message.error(error instanceof Error ? error.message : '读取租户成员关系失败')
   } finally { membershipLoading.value = false }
+}
+
+/** 刷新弹窗内成员列表，并同步用户列表中的租户关系数。 */
+async function refreshMemberships(user: UserRecord): Promise<void> {
+  memberships.value = await api<MembershipRecord[]>(`/admin/users/${user.id}/memberships`)
+  await loadUsers()
+  emit('changed')
+}
+
+// 直加租户成员：批量提交所选租户（新建或恢复停用/离职关系），不再只能走邀请流程
+async function joinTenants(): Promise<void> {
+  const user = membershipUser.value
+  if (!user) return
+  if (!joinTenantIds.value.length) {
+    message.warning('请选择要加入的租户')
+    return
+  }
+  joinSaving.value = true
+  try {
+    await api(`/admin/users/${user.id}/memberships`, {
+      method: 'POST',
+      body: JSON.stringify({ tenant_ids: joinTenantIds.value }),
+    })
+    message.success('已加入所选租户')
+    joinTenantIds.value = []
+    await refreshMemberships(user)
+  } catch (error) { message.error(error instanceof Error ? error.message : '加入租户失败') }
+  finally { joinSaving.value = false }
+}
+
+// 离职成员直接重新加入：后端按全新成员恢复（旧授权已在离职时清除），无需再发邀请
+async function rejoinMembership(membership: MembershipRecord): Promise<void> {
+  const user = membershipUser.value
+  if (!user) return
+  rejoiningMembershipTenantId.value = membership.tenant_id
+  try {
+    await api(`/admin/users/${user.id}/memberships`, {
+      method: 'POST',
+      body: JSON.stringify({ tenant_ids: [membership.tenant_id] }),
+    })
+    message.success(`已重新加入：${membership.tenant_name}`)
+    await refreshMemberships(user)
+  } catch (error) { message.error(error instanceof Error ? error.message : '重新加入失败') }
+  finally { rejoiningMembershipTenantId.value = '' }
+}
+
+// 彻底删除租户成员关系：与停用/离职不同，成员记录和该租户授权一并移除且不保留历史
+function removeMembership(membership: MembershipRecord): void {
+  const user = membershipUser.value
+  if (!user) return
+  Modal.confirm({
+    title: `删除 ${membership.tenant_name} 成员关系？`,
+    content: '与「标记离职」不同：删除会移除成员记录及该租户的全部角色、用户组和组织归属，并撤销该租户应用会话，不保留历史。删除后可通过「加入租户」重新添加。',
+    okText: '删除', cancelText: '取消', okButtonProps: { danger: true },
+    onOk: async () => {
+      removingMembershipTenantId.value = membership.tenant_id
+      try {
+        await api(`/admin/users/${user.id}/memberships/${membership.tenant_id}`, { method: 'DELETE' })
+        message.success(`已删除成员关系：${membership.tenant_name}`)
+        await refreshMemberships(user)
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '删除成员关系失败')
+      } finally { removingMembershipTenantId.value = '' }
+    },
+  })
 }
 
 async function openSessions(user: UserRecord): Promise<void> {
@@ -376,8 +599,8 @@ async function openRoleBinding(user: UserRecord): Promise<void> {
       .filter(membership => membership.membership_status === 'active'
         && membership.tenant_status === 'active' && tenantIds.has(String(membership.tenant_id)))
       .map(membership => ({ value: String(membership.tenant_id), label: membership.tenant_name }))
-    const membershipIds = new Set(roleTenantOptions.value.map(option => option.value))
-    roles.value = roleRows.filter(role => membershipIds.has(String(role.tenant_id)))
+    // 候选全量展示（后端已按操作者范围秩过滤，恒向下兼容）：应用角色可跨租户任命，按其所属应用生效。
+    roles.value = roleRows
     if (!roleTenantOptions.value.length) {
       message.warning('该用户没有活跃租户成员关系，无法配置租户角色')
       return
@@ -518,13 +741,13 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
       :data-source="users"
       :loading="loading"
       row-key="id"
-      :scroll="{ x: 830, y: 'calc(100vh - 430px)' }"
-      :pagination="{ pageSize: 10, showSizeChanger: true }"
+      :scroll="{ x: 850, y: 'calc(max(360px, 100vh - 430px))' }"
+      :pagination="{ pageSize: 10, showSizeChanger: true, showTotal: (count: number) => `共 ${count} 条` }"
       empty-emoji="🧑‍💼"
       empty-text="当前条件下没有用户，可创建用户或调整搜索条件"
     >
       <template #header-extra>
-        <a-button v-if="canManageUsers" type="primary" :disabled="!tenantOptions.length" @click="openCreate">＋ 新建用户</a-button>
+        <a-button v-if="canManageUsers" type="primary" :disabled="!tenantOptions.length" @click="openCreate"><PlusOutlined class="mr-1" />新建用户</a-button>
       </template>
       <AdminSearchField v-model="searchText" placeholder="搜索邮箱或姓名，回车查询" @search="loadUsers" />
       <template #actions>
@@ -585,8 +808,47 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
     <a-modal v-model:open="createOpen" title="新建用户" ok-text="创建" cancel-text="取消"
       :confirm-loading="createSaving" @ok="createUser" @cancel="createForm.initial_password = ''">
       <a-form ref="createFormRef" :model="createForm" :rules="createRules" layout="vertical">
-        <a-form-item label="所属租户" name="tenant_id">
-          <a-select v-model:value="createForm.tenant_id" :options="tenantOptions" placeholder="选择活动租户" />
+        <!-- 绑定租户：多选（至少一个），默认选中第一个可选租户 -->
+        <a-form-item label="绑定租户" name="tenant_ids" help="至少选择一个；组织与应用绑定必须属于所选租户">
+          <a-select
+            v-model:value="createForm.tenant_ids"
+            mode="multiple"
+            :options="tenantOptions"
+            placeholder="选择一个或多个活动租户"
+            @change="onCreateTenantsChange"
+          />
+        </a-form-item>
+        <!-- 绑定组织：可选多选，按所选租户分组展示 -->
+        <a-form-item label="绑定组织（可选）">
+          <a-select
+            v-model:value="createForm.organization_ids"
+            mode="multiple"
+            :options="createOrganizationOptions"
+            :loading="createOrganizationsLoading"
+            :max-tag-count="'responsive'"
+            placeholder="按租户分组选择组织"
+          />
+        </a-form-item>
+        <!-- 绑定应用：可选多选，按所选租户分组；绑定后自动授予 app.member -->
+        <a-form-item label="绑定应用（可选）" help="绑定应用会自动授予该应用的成员（app.member）角色">
+          <a-select
+            v-model:value="createForm.application_ids"
+            mode="multiple"
+            :options="createApplicationOptions"
+            :max-tag-count="'responsive'"
+            placeholder="按租户分组选择应用"
+          />
+        </a-form-item>
+        <!-- 初始角色：可选单选，候选与配置角色弹窗同源（恒向下兼容）；不选则为无角色成员 -->
+        <a-form-item label="初始角色（可选）" help="不选则创建为无角色成员；所选角色将绑定到列表第一个租户">
+          <a-select
+            v-model:value="createForm.role_id"
+            :options="createRoleOptions"
+            allow-clear
+            show-search
+            option-filter-prop="label"
+            placeholder="选择初始角色（默认无角色）"
+          />
         </a-form-item>
         <a-form-item label="邮箱" name="email"><a-input v-model:value="createForm.email" autocomplete="off" :maxlength="254" /></a-form-item>
         <a-form-item label="姓名" name="display_name"><a-input v-model:value="createForm.display_name" :maxlength="120" /></a-form-item>
@@ -597,8 +859,21 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
       </a-form>
     </a-modal>
 
-    <a-modal v-model:open="membershipDialogOpen" title="租户成员关系" :footer="null" width="680px">
-      <p class="membership-intro">{{ membershipUser?.display_name || membershipUser?.email }} 的全局身份可关联多个租户。成员操作只作用于对应租户。</p>
+    <a-modal v-model:open="membershipDialogOpen" title="租户成员关系" :footer="null" width="640px">
+      <p class="membership-intro">{{ membershipUser?.display_name || membershipUser?.email }} 的全局身份可关联多个租户。成员操作只作用于对应租户，可直加租户、彻底删除或停用/离职。</p>
+      <!-- 直加租户：从活动租户中多选尚未加入的租户，一次提交 -->
+      <div v-if="canManageUsers" class="mb-3 flex flex-wrap items-center gap-2">
+        <a-select
+          v-model:value="joinTenantIds"
+          mode="multiple"
+          class="min-w-0 flex-1"
+          :options="joinableTenantOptions"
+          :max-tag-count="'responsive'"
+          :placeholder="joinableTenantOptions.length ? '选择要加入的租户（可多选）' : '该用户已加入全部活动租户'"
+          :disabled="!joinableTenantOptions.length"
+        />
+        <a-button type="primary" :disabled="!joinTenantIds.length" :loading="joinSaving" @click="joinTenants">加入租户</a-button>
+      </div>
       <a-spin :spinning="membershipLoading">
         <AdminEmpty v-if="!membershipLoading && !memberships.length" emoji="🔗" description="该用户暂未加入任何租户" />
         <div v-else class="membership-list">
@@ -619,16 +894,21 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
                 <a-button v-if="canManageUsers" size="small" type="primary" :loading="membershipSaving === membership.tenant_id" @click="changeMembershipStatus(membership, 'active')">重新启用</a-button>
                 <a-button v-if="canManageUsers" size="small" danger :loading="membershipSaving === membership.tenant_id" @click="changeMembershipStatus(membership, 'departed')">标记离职</a-button>
               </template>
-              <a-tag v-else color="default">需重新发送邀请</a-tag>
+              <!-- 离职成员：直接重新加入（不再强制重走邀请流程） -->
+              <template v-else>
+                <a-button v-if="canManageUsers" size="small" type="primary" :loading="rejoiningMembershipTenantId === membership.tenant_id" @click="rejoinMembership(membership)">重新加入</a-button>
+              </template>
+              <!-- 彻底删除成员关系：所有状态均可用，删除后可重新「加入租户」 -->
+              <a-button v-if="canManageUsers" size="small" danger :loading="removingMembershipTenantId === membership.tenant_id" @click="removeMembership(membership)">删除</a-button>
             </a-space>
           </div>
         </div>
       </a-spin>
-      <a-alert class="membership-note" type="info" show-icon message="离职后保留身份审计记录，但清除该租户的角色、用户组和组织归属。" />
+      <a-alert class="membership-note" type="info" show-icon message="「标记离职」保留身份审计记录但清除该租户的角色、用户组和组织归属；「删除」连成员记录一并移除且不可恢复，删除后可通过「加入租户」重新添加。" />
     </a-modal>
 
     <a-modal v-model:open="sessionsOpen" :title="`${sessionUser?.display_name || sessionUser?.email || '用户'} · 活动会话`"
-      :footer="null" width="980px">
+      :footer="null" width="960px">
       <p class="membership-intro">展示当前仍有效的 IAM 管理台会话和已申请离线访问权限的业务应用会话。远程退出后，在线 IAM 校验立即拒绝该会话。</p>
       <a-spin :spinning="sessionsLoading">
         <a-table v-if="sessions.length" :data-source="sessions" :columns="sessionColumns"
@@ -657,7 +937,7 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
 
     <!-- Wave 3：配权主路径第三步升级为穿梭框（对齐蓝图 distributionRole 的 Transfer 交互）。 -->
     <a-modal v-model:open="roleDialogOpen" title="配置租户角色" ok-text="保存角色" cancel-text="取消"
-      width="760px" :confirm-loading="roleSaving" @ok="saveRoleBinding">
+      width="800px" :confirm-loading="roleSaving" @ok="saveRoleBinding">
       <a-form layout="vertical">
         <a-form-item label="目标租户">
           <a-select v-model:value="roleTenantId" :options="roleTenantOptions" placeholder="选择用户所在的活跃租户"
@@ -671,12 +951,13 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
             show-search
             :disabled="!roleTenantId"
             :titles="['可选角色', '已配置角色']"
+            :locale="{ itemUnit: '项', itemsUnit: '项', searchPlaceholder: '搜索角色名称' }"
             :filter-option="filterRoleTransfer"
             :render="renderRoleTransfer"
             :list-style="{ width: '46%', height: '300px' }"
           />
         </a-form-item>
-        <a-alert type="info" show-icon message="保存时会整表替换该用户在所选租户下的直接角色绑定（不含用户组继承）。后端按角色并集计算权限码。把角色移到右侧即完成勾选。" />
+        <a-alert type="info" show-icon message="保存时会整表替换该用户在所选租户下的直接角色绑定（不含用户组继承）。后端按角色并集计算权限码。绑定口径恒向下兼容：仅可绑定授权范围不高于你的角色。应用角色按其所属应用生效，可跨租户任命给任意租户成员。" />
       </a-form>
     </a-modal>
 

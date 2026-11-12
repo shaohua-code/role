@@ -1,0 +1,157 @@
+﻿.\.venv\Scripts\python.exe : test_admin_role_list_platform_class_excludes_business_roles (tests.test_p405_layering.P405
+LayeringTests.test_admin_role_list_platform_class_excludes_business_roles) ... ok
+At C:\Users\刘少华\AppData\Local\Temp\trae-agent-toolhost\jobs\job-2daa55850f7f42ea869cacf06bf870a6\command.ps1:15 char:51
+77
++ ... oads-test'; .\.venv\Scripts\python.exe -m unittest tests.test_p405_la ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test_admin_role...s_roles) ... ok:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+test_app_admin_access_pinned_only (tests.test_p405_layering.P405LayeringTests.test_app_admin_access_pinned_only) ... ok
+test_app_admin_cannot_appoint_app_admin (tests.test_p405_layering.P405LayeringTests.test_app_admin_cannot_appoint_app_a
+dmin) ... ok
+test_application_permission_catalog_respects_actor_level (tests.test_p405_layering.P405LayeringTests.test_application_p
+ermission_catalog_respects_actor_level) ... ok
+test_application_role_rejects_invisible_management_code (tests.test_p405_layering.P405LayeringTests.test_application_ro
+le_rejects_invisible_management_code) ... ok
+test_bind_application_role_auto_completes_member (tests.test_p405_layering.P405LayeringTests.test_bind_application_role
+_auto_completes_member) ... ok
+test_catalog_hides_codes_actor_does_not_hold (tests.test_p405_layering.P405LayeringTests.test_catalog_hides_codes_actor
+_does_not_hold) ... ok
+test_four_template_keys (tests.test_p405_layering.P405LayeringTests.test_four_template_keys) ... ok
+test_l1_custom_platform_role_accepts_all_management_codes (tests.test_p405_layering.P405LayeringTests.test_l1_custom_pl
+atform_role_accepts_all_management_codes) ... ok
+test_l2_can_grant_app_management_on_application_role (tests.test_p405_layering.P405LayeringTests.test_l2_can_grant_app_
+management_on_application_role) ... ok
+test_l2_can_replace_app_admin_template_with_own_codes (tests.test_p405_layering.P405LayeringTests.test_l2_can_replace_a
+pp_admin_template_with_own_codes) ... ok
+test_l2_cannot_create_or_delete_application (tests.test_p405_layering.P405LayeringTests.test_l2_cannot_create_or_delete
+_application) ... ok
+test_l2_cannot_list_other_app_member_candidates (tests.test_p405_layering.P405LayeringTests.test_l2_cannot_list_other_a
+pp_member_candidates) ... ok
+test_l2_cannot_manage_upward_preset_tenant_admin (tests.test_p405_layering.P405LayeringTests.test_l2_cannot_manage_upwa
+rd_preset_tenant_admin) ... ok
+test_l2_platform_role_list_hides_tenant_admin (tests.test_p405_layering.P405LayeringTests.test_l2_platform_role_list_hi
+des_tenant_admin) ... ok
+test_l3_and_l2_can_create_custom_platform_role (tests.test_p405_layering.P405LayeringTests.test_l3_and_l2_can_create_cu
+stom_platform_role) ... ok
+test_l3_can_appoint_app_admin (tests.test_p405_layering.P405LayeringTests.test_l3_can_appoint_app_admin) ... ok
+test_l3_can_grant_tenant_management_on_application_role (tests.test_p405_layering.P405LayeringTests.test_l3_can_grant_t
+enant_management_on_application_role) ... ok
+test_l3_can_replace_tenant_admin_template_with_own_codes (tests.test_p405_layering.P405LayeringTests.test_l3_can_replac
+e_tenant_admin_template_with_own_codes) ... ok
+test_l3_cannot_add_upward_code_to_tenant_admin_template (tests.test_p405_layering.P405LayeringTests.test_l3_cannot_add_
+upward_code_to_tenant_admin_template) ... ok
+test_l3_cannot_grant_unheld_management_code (tests.test_p405_layering.P405LayeringTests.test_l3_cannot_grant_unheld_man
+agement_code) ... ok
+test_list_member_candidates_marks_already_bound (tests.test_p405_layering.P405LayeringTests.test_list_member_candidates
+_marks_already_bound) ... ok
+test_list_members_can_filter_by_role_id (tests.test_p405_layering.P405LayeringTests.test_list_members_can_filter_by_rol
+e_id) ... ok
+test_member_gets_business_code_from_application_role (tests.test_p405_layering.P405LayeringTests.test_member_gets_busin
+ess_code_from_application_role) ... ok
+test_plain_member_cannot_list_member_candidates (tests.test_p405_layering.P405LayeringTests.test_plain_member_cannot_li
+st_member_candidates) ... ok
+test_platform_role_rejects_business_code (tests.test_p405_layering.P405LayeringTests.test_platform_role_rejects_busines
+s_code) ... ok
+test_workspace_role_list_excludes_templates (tests.test_p405_layering.P405LayeringTests.test_workspace_role_list_exclud
+es_templates) ... ok
+test_l2_audit_only_pinned_application_targets (tests.test_p404_visibility.P404VisibilityTests.test_l2_audit_only_pinned
+_application_targets) ... ok
+test_l2_cannot_create_application (tests.test_p404_visibility.P404VisibilityTests.test_l2_cannot_create_application) ..
+. ok
+test_l2_cannot_delete_pinned_application (tests.test_p404_visibility.P404VisibilityTests.test_l2_cannot_delete_pinned_a
+pplication) ... ok
+test_l2_cannot_read_tenant_admin_holders (tests.test_p404_visibility.P404VisibilityTests.test_l2_cannot_read_tenant_adm
+in_holders) ... ok
+test_l2_permission_catalog_hides_l3_and_foreign_app_codes (tests.test_p404_visibility.P404VisibilityTests.test_l2_permi
+ssion_catalog_hides_l3_and_foreign_app_codes) ... ok
+test_l2_role_list_only_pinned_application (tests.test_p404_visibility.P404VisibilityTests.test_l2_role_list_only_pinned
+_application) ... ok
+test_l3_permission_catalog_hides_l1_and_foreign_tenant_codes (tests.test_p404_visibility.P404VisibilityTests.test_l3_pe
+rmission_catalog_hides_l1_and_foreign_tenant_codes) ... ok
+test_l3_role_list_global_platform_and_bounded_app_roles (tests.test_p404_visibility.P404VisibilityTests.test_l3_role_li
+st_global_platform_and_bounded_app_roles) ... ok
+test_usage_l2_pinned_app_and_l3_tenant_only (tests.test_p404_visibility.P404VisibilityTests.test_usage_l2_pinned_app_an
+d_l3_tenant_only) ... ok
+test_app_admin_appointment_scoped_by_tenant (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_app_admin_ap
+pointment_scoped_by_tenant)
+任命链（P405）：应用级不能任命应用管理员（403），租户级可以。 ... ok
+test_application_role_keeps_historical_out_of_scope_on_replace (tests.test_role_hierarchy_guards.RoleHierarchyGuardTest
+s.test_application_role_keeps_historical_out_of_scope_on_replace)
+历史已持有的越域节点允许保留；新增其他应用业务码 422。 ... ok
+test_clone_keeps_authority_codes_on_custom_clone (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_clone_k
+eeps_authority_codes_on_custom_clone)
+P405：克隆自定义平台角色时保留授权权节点。 ... ok
+test_custom_application_role_allows_visible_management_codes (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.
+test_custom_application_role_allows_visible_management_codes) ... ok
+test_custom_platform_role_allows_super_min_scope_on_replace (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.t
+est_custom_platform_role_allows_super_min_scope_on_replace)
+自定义平台角色：超管范围角色可挂 super 授权下限节点（如租户写按钮）。 ... ok
+test_custom_role_allows_authority_codes_on_replace (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_custo
+m_role_allows_authority_codes_on_replace)
+P405：看得见就能配，自定义平台角色可以挂授权权节点。 ... ok
+test_is_custom_role_semantics (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_is_custom_role_semantics)
+四个模板 key 均视为模板角色，其余 key 一律自定义；apps.admin 已删除。 ... ok
+test_list_roles_filters_by_application_id (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_list_roles_fil
+ters_by_application_id) ... ok
+test_list_roles_returns_paged_wrapper (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_list_roles_returns
+_paged_wrapper)
+G29：角色列表带 total，limit 截断当前页而不是静默丢弃。 ... ok
+test_provision_tenant_admin_strips_legacy_nodes (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_provisio
+n_tenant_admin_strips_legacy_nodes)
+G32：存量 L3 上的遗留节点 button.permissions.manage 在再次预置时被剥离。 ... ok
+test_provisioned_template_roles_nodes_and_scopes (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_provisi
+oned_template_roles_nodes_and_scopes)
+预置 (应用管理员, 应用成员) 二元组：节点集与授权范围恰为模板契约，且幂等。 ... ok
+test_template_role_allows_authority_codes_on_replace (tests.test_role_hierarchy_guards.RoleHierarchyGuardTests.test_tem
+plate_role_allows_authority_codes_on_replace)
+模板角色是授权者的来源：L3 key 挂授权权节点不受限。 ... ok
+test_l1_can_replace_data_scopes (tests.test_data_scope_grading.DataScopeGradingTests.test_l1_can_replace_data_scopes) .
+.. ok
+test_l2_with_manual_org_manage_code_still_403 (tests.test_data_scope_grading.DataScopeGradingTests.test_l2_with_manual_
+org_manage_code_still_403) ... ok
+test_l2_write_data_scope_403_and_read_200 (tests.test_data_scope_grading.DataScopeGradingTests.test_l2_write_data_scope
+_403_and_read_200) ... ok
+test_l3_write_dual_writes_leaf_grant (tests.test_data_scope_grading.DataScopeGradingTests.test_l3_write_dual_writes_lea
+f_grant) ... ok
+test_replace_narrowing_mirrors_leaf_grants (tests.test_data_scope_grading.DataScopeGradingTests.test_replace_narrowing_
+mirrors_leaf_grants) ... ok
+test_business_code_without_data_leaf_is_denied (tests.test_permission_tree.DataScopeCodeTests.test_business_code_withou
+t_data_leaf_is_denied) ... ok
+test_granting_data_leaf_allows_self_scope (tests.test_permission_tree.DataScopeCodeTests.test_granting_data_leaf_allows
+_self_scope) ... ok
+test_mapping_role_data_scope_then_allows (tests.test_permission_tree.DataScopeCodeTests.test_mapping_role_data_scope_th
+en_allows) ... ok
+test_explicit_skip_missing_grants_existing_and_counts (tests.test_permission_tree.GrantCodesStrictTests.test_explicit_s
+kip_missing_grants_existing_and_counts) ... grant_codes_skip_missing 跳过缺失码 1 个：menu.not_seeded（role_id=3d5c0098-49d4-4a
+a9-a293-7c15c2755853）
+ok
+test_strict_mode_raises_on_missing_contract_codes (tests.test_permission_tree.GrantCodesStrictTests.test_strict_mode_ra
+ises_on_missing_contract_codes) ... ok
+test_button_codes_unique_and_single_parent (tests.test_permission_tree.PermissionContractTests.test_button_codes_unique
+_and_single_parent)
+按钮编码唯一，且每个按钮只挂在唯一菜单下（体检 H2 契约侧）。 ... ok
+test_button_parent_menu_mapping_converged (tests.test_permission_tree.PermissionContractTests.test_button_parent_menu_m
+apping_converged)
+F2 收口：button.roles.manage 挂 menu.roles；button.org.manage 挂组织工作台。 ... ok
+test_custom_role_menu_and_button_nodes_pass_without_template_key (tests.test_permission_tree.PermissionTreeTests.test_c
+ustom_role_menu_and_button_nodes_pass_without_template_key) ... ok
+test_l1_template_includes_menu_codes (tests.test_permission_tree.PermissionTreeTests.test_l1_template_includes_menu_cod
+es) ... ok
+test_l2_template_has_no_menu_tenants (tests.test_permission_tree.PermissionTreeTests.test_l2_template_has_no_menu_tenan
+ts) ... ok
+test_l3_template_has_workspace_menu_not_tenants_write (tests.test_permission_tree.PermissionTreeTests.test_l3_template_
+has_workspace_menu_not_tenants_write) ... ok
+test_resource_tree_matches_sidebar_and_nests_buttons (tests.test_permission_tree.PermissionTreeTests.test_resource_tree
+_matches_sidebar_and_nests_buttons) ... ok
+test_tree_meta_matches_contract_constants (tests.test_permission_tree.PermissionTreeTests.test_tree_meta_matches_contra
+ct_constants)
+tree meta（F2）：菜单映射/三模板节点集/授权范围契约齐全且与常量同源。 ... ok
+test_seed_ui_permissions_is_idempotent (tests.test_permission_tree.SeedUiIdempotentTests.test_seed_ui_permissions_is_id
+empotent) ... ok
+
+----------------------------------------------------------------------
+Ran 67 tests in 15.071s
+
+OK

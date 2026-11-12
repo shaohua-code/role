@@ -1,13 +1,13 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 // 工作台「用户组」Tab：用户组仍挂租户，这里仅在组织上下文浏览该租户的用户组，
 // 并复用共享 GroupRelationModal 快速管理成员/角色；新建、编辑、启停仍在「用户组管理」页。
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
-import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
+import AdminTable from '@/components/AdminTable.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 import GroupRelationModal from '@/components/GroupRelationModal.vue'
 
@@ -49,7 +49,7 @@ const relationGroupId = ref('')
 const relationGroupName = ref('')
 let requestSequence = 0
 
-const canManage = computed(() => cachedHas('org.group.manage'))
+const canManage = computed(() => cachedHasAny(['button.groups.manage']))
 
 const columns = [
   { title: '用户组', dataIndex: 'name', key: 'name', width: 180, ellipsis: true },
@@ -101,23 +101,23 @@ watch(() => [props.active, props.organization?.id] as const, ([active]) => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <AdminTableToolbar :hint="canManage
-      ? '用户组归属租户，不直接挂组织；成员变更会即时影响有效角色。新建与启停请到「高级管理 → 用户组」。'
-      : '当前只有读取权限；如需编辑组关系请联系管理员授予 org.group.manage。'">
+    <!-- 统一表格组件：工具条（说明 + 操作）与表格/空态一体 -->
+    <!-- 滚动条修复：去掉固定 y（同成员 Tab），溢出交给右列滚动 -->
+      <AdminTable
+        :hint="canManage
+          ? '用户组归属租户，不直接挂组织；成员变更会即时影响有效角色。新建与启停请到「高级管理 → 用户组」。'
+          : '当前只有读取权限；如需编辑组关系请联系管理员授予 button.groups.manage。'"
+        :columns="columns"
+        :data-source="groups"
+        :loading="loading"
+        row-key="id"
+        :scroll="{ x: 900 }"
+        :pagination="{ pageSize: 10, showSizeChanger: true }"
+      >
       <template #actions>
         <a-button :loading="loading" :disabled="!organization" @click="loadGroups">刷新</a-button>
         <a-button @click="router.push(PAGE_PATHS.groups)">高级用户组列表</a-button>
       </template>
-    </AdminTableToolbar>
-
-    <a-table
-      :data-source="groups"
-      :columns="columns"
-      :loading="loading"
-      row-key="id"
-      :scroll="{ x: 900, y: 'calc(100vh - 560px)' }"
-      :pagination="{ pageSize: 10, showSizeChanger: true }"
-    >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'status'">
           <a-tag :color="record.status === 'active' ? 'green' : 'default'">{{ record.status === 'active' ? '启用' : '停用' }}</a-tag>
@@ -138,7 +138,7 @@ watch(() => [props.active, props.organization?.id] as const, ([active]) => {
           <p class="m-0 text-xs text-[var(--color-text-muted)]">到「用户组管理」页创建用户组后回此查看</p>
         </AdminEmpty>
       </template>
-    </a-table>
+    </AdminTable>
 
     <GroupRelationModal
       v-model:open="relationOpen"

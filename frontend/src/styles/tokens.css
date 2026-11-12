@@ -16,6 +16,8 @@
   /* Fixed dark sider (pure black luxury) */
   --color-sider-bg: #09090b;
   --color-sider-text: #a1a1aa;
+  /* U25：折叠按钮等侧栏控件图标用——比正文灰亮半档，与菜单条目文字（72% 白）对齐 */
+  --color-sider-text-strong: rgba(255, 255, 255, 0.78);
   --color-sider-text-active: #fafafa;
   --color-sider-item-hover: rgba(255, 255, 255, 0.06);
   --color-sider-item-active: rgba(255, 255, 255, 0.1);

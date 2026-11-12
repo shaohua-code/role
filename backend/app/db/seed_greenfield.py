@@ -1,4 +1,4 @@
-"""绿场种子：平台租户、管理面权限目录、四级角色模板与引导超管绑定。
+"""绿场种子：平台租户、菜单/按钮权限目录、三管理员模板与引导超管绑定。
 
 用法（迁移完成后执行）：
     python -m app.db.seed_greenfield
@@ -19,69 +19,22 @@ from app.core.security import hash_password
 from app.db.session import get_engine
 from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import Tenant, TenantMembership, User
-from app.services.permission_namespace import derive_catalog_namespace_value
-from app.services.rbac_guards import PLATFORM_MANAGEMENT_CODES
+from app.services.permission_kinds import all_ui_codes, seed_ui_permissions
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
-    L3_ROLE_KEY,
     L4_ROLE_KEY,
+    LEGACY_REVOKED_NODE_CODES,
+    ROLE_SCOPE_SUPER,
     provision_application_platform_roles,
     provision_tenant_admin_role,
 )
 
 PLATFORM_TENANT_SLUG = "platform"
 
-# 权限码说明（绿场 §3.1）；业务码不在此种子，由应用接入时以 surface=business 注册。
-MANAGEMENT_PERMISSION_DESCRIPTIONS: dict[str, str] = {
-    "platform.overview.read": "平台总览",
-    "platform.tenant.read": "租户列表",
-    "platform.tenant.manage": "租户创建/启停/类型",
-    "platform.account.read": "全局用户列表",
-    "platform.account.manage": "创建用户/改状态/撤会话",
-    "rbac.permission.read": "权限目录读",
-    "rbac.permission.manage": "权限目录写/启停",
-    "rbac.role.read": "角色读",
-    "rbac.role.manage": "角色写、绑定/解绑（平台视角）",
-    "org.group.read": "用户组读",
-    "org.group.manage": "用户组写",
-    "org.member.read": "租户成员读",
-    "org.member.manage": "成员状态/组织归属",
-    "org.read": "组织树读",
-    "org.manage": "组织写、数据范围策略写",
-    "app.read": "应用读",
-    "app.manage": "应用写（非密钥）",
-    "app.secret.rotate": "轮换客户端密钥",
-    "rbac.app_role.read": "应用角色与成员读",
-    "rbac.app_role.manage": "应用角色 CRUD、成员 bind/unbind",
-    "rbac.app_role.assign": "任命/撤职多应用管理员或应用管理员",
-    "org.invite.manage": "邀请创建/撤销",
-    "ops.audit.read": "审计查询",
-    "ops.authz.simulate": "鉴权模拟",
-    "ops.model.read": "模型目录/用量读",
-    "ops.model.manage": "模型写/用量复核",
-    "ops.theme.manage": "登录主题",
-}
-
 
 def seed_permissions(db: Session) -> int:
-    """幂等写入管理面权限目录；业务码由应用注册接口创建（强制 requires_data_scope）。"""
-    created = 0
-    for code in PLATFORM_MANAGEMENT_CODES:
-        permission = db.scalar(select(Permission).where(Permission.code == code))
-        if permission is None:
-            permission = Permission(
-                code=code,
-                catalog_namespace=derive_catalog_namespace_value(code),
-                resource_type=code.split(".", 2)[1] if code.count(".") >= 2 else "platform",
-                scope="manage" if code.endswith(("manage", "assign", "rotate", "simulate")) else "read",
-                description=MANAGEMENT_PERMISSION_DESCRIPTIONS.get(code, code),
-                surface="management",
-                requires_data_scope=False,
-            )
-            db.add(permission)
-            db.flush()
-            created += 1
-    return created
+    """幂等写入管理面「菜单 → 按钮」目录；业务码由应用注册接口创建（强制 requires_data_scope）。"""
+    return seed_ui_permissions(db)
 
 
 def seed_platform_tenant(db: Session) -> Tenant:
@@ -95,28 +48,50 @@ def seed_platform_tenant(db: Session) -> Tenant:
 
 
 def seed_l1_role(db: Session, platform_tenant: Tenant) -> Role:
-    """L1 平台超管：持全部管理面码；不默认绑定任何业务码。"""
+    """超管角色：scope=super，持全部管理面菜单/按钮节点；不默认绑定任何业务码。"""
     role = db.scalar(select(Role).where(
         Role.tenant_id == platform_tenant.id, Role.key == L1_ROLE_KEY,
     ))
     if role is None:
         role = Role(
             tenant_id=platform_tenant.id, application_id=None, kind="platform",
-            key=L1_ROLE_KEY, name="平台超级管理员",
-            description="L1：全部 iam.* 管理面码；可代管任意租户/应用；默认无业务码",
+            key=L1_ROLE_KEY, name="平台超级管理员", scope=ROLE_SCOPE_SUPER,
+            description="超管：平台所有内容可见；全部菜单/按钮节点；可代管任意租户/应用；默认无业务码",
         )
         db.add(role)
         db.flush()
+    if role.scope != ROLE_SCOPE_SUPER:
+        role.scope = ROLE_SCOPE_SUPER
     existing_permission_ids = set(db.scalars(
         select(RolePermission.permission_id).where(RolePermission.role_id == role.id),
     ).all())
     for permission in db.scalars(select(Permission).where(
-        Permission.code.in_(PLATFORM_MANAGEMENT_CODES),
+        Permission.code.in_(all_ui_codes()),
     )).all():
         if permission.id not in existing_permission_ids:
             db.add(RolePermission(role_id=role.id, permission_id=permission.id))
     db.flush()
+    _prune_retired_catalog_codes(db)
     return role
+
+
+def _prune_retired_catalog_codes(db: Session) -> None:
+    """目录收敛：清理已下线管理面节点（LEGACY_REVOKED_NODE_CODES）的授权与目录行。
+
+    幂等重跑时防死节点复活——旧库里 permission_health 等已下线节点若不清理，
+    会继续出现在 L1 配权树但无任何页面/端点消费。
+    """
+    retired = [row for row in db.scalars(select(Permission).where(
+        Permission.code.in_(LEGACY_REVOKED_NODE_CODES),
+    )).all()]
+    if not retired:
+        return
+    retired_ids = [row.id for row in retired]
+    db.execute(delete(RolePermission).where(RolePermission.permission_id.in_(retired_ids)))
+    for row in retired:
+        db.delete(row)
+    db.flush()
+    print(f"已清理下线管理面节点：{sorted(row.code for row in retired)}")
 
 
 def seed_bootstrap_admin(db: Session, platform_tenant: Tenant, l1_role: Role) -> None:
@@ -151,14 +126,15 @@ def seed_bootstrap_admin(db: Session, platform_tenant: Tenant, l1_role: Role) ->
 
 
 def seed_demo_tenant(db: Session, *, with_demo_application: bool = False) -> None:
-    """可选演示租户：预置 L3 角色模板；演示应用可选（含 L2/L4 模板）。"""
+    """可选演示租户：模板角色全局化后仅幂等确保全局 L3；演示应用可选（含 L2/L4 模板）。"""
     tenant = db.scalar(select(Tenant).where(Tenant.slug == "demo"))
     if tenant is None:
         tenant = Tenant(name="演示租户", slug="demo", kind="organization")
         db.add(tenant)
         db.flush()
         print("已创建演示租户 demo")
-    provision_tenant_admin_role(db, tenant.id)
+    # 平台角色全局化：tenant.admin 全局一份（宿主平台租户），演示租户不再预置副本。
+    provision_tenant_admin_role(db)
     if with_demo_application:
         from app.models.application import Application
 
@@ -180,14 +156,14 @@ def seed_demo_tenant(db: Session, *, with_demo_application: bool = False) -> Non
 def run_seed(*, demo_tenant: bool = False, demo_application: bool = False) -> None:
     """绿场种子主流程；全部步骤幂等，可在任意时刻重跑。"""
     with Session(get_engine()) as db:
-        # 阶段一：幂等写入 27 个 iam.* 管理面权限码目录（业务码不在此种子）。
+        # 阶段一：幂等写入 27 个五域接口码 + 四类树（菜单/按钮/接口/数据）管理面目录（业务码不在此种子）。
         created = seed_permissions(db)
         print(f"权限目录：新增 {created} 条管理面码")
         # 阶段二：创建专用平台租户，并预置 L1 超管角色（授予全部管理面码）。
         platform_tenant = seed_platform_tenant(db)
         l1_role = seed_l1_role(db, platform_tenant)
-        # 阶段三：平台租户同样预置 L3 租户管理员模板（组织侧管理场景复用）。
-        provision_tenant_admin_role(db, platform_tenant.id)
+        # 阶段三：幂等确保全局唯一的 L3 租户管理员模板（宿主平台租户；全局生效）。
+        provision_tenant_admin_role(db)
         # 阶段四：按环境变量创建引导超管并绑定 L1；未配置则跳过。
         seed_bootstrap_admin(db, platform_tenant, l1_role)
         # 阶段五（可选）：--demo-tenant / --demo-application 追加演示租户与应用。
@@ -204,7 +180,7 @@ WALKTHROUGH_BUSINESS_CODE = "demo.document.read"
 
 
 def seed_walkthrough_accounts(db: Session) -> None:
-    """§6 浏览器四级走查演示账号：L2/L3/L4 各一名（幂等，不改动已有绑定）。
+    """走查演示账号（五级口径：L2/L3/L4 各一名，幂等，不改动已有绑定）。
 
     前置：需要 demo 租户（--demo-tenant 已建）。本函数补建演示应用、L2/L4 模板角色、
     业务码 demo.document.read 与 L4 的 self 数据范围，最后创建三个用户并完成绑定。
@@ -222,7 +198,7 @@ def seed_walkthrough_accounts(db: Session) -> None:
     if application is None:
         application = Application(
             tenant_id=demo_tenant.id, name="演示应用", client_id="demo-app",
-            permission_namespace="demo", description="绿场四级走查演示应用",
+            permission_namespace="demo", description="绿场走查演示应用",
             redirect_uris=["http://localhost:3000/callback"],
             post_logout_redirect_uris=["http://localhost:3000/"],
             trusted=False, client_secret_hash=None,
@@ -230,15 +206,16 @@ def seed_walkthrough_accounts(db: Session) -> None:
         db.add(application)
         db.flush()
         print("已创建演示应用 demo-app")
-    _, l2_role, l4_role = provision_application_platform_roles(db, demo_tenant.id, application.id)
-    l3_role = provision_tenant_admin_role(db, demo_tenant.id)
+    l2_role, l4_role = provision_application_platform_roles(db, demo_tenant.id, application.id)
+    # 平台角色全局化：走查 L3 账号绑定全局唯一的 tenant.admin（跨租户生效）。
+    l3_role = provision_tenant_admin_role(db)
 
     # 业务码登记：与应用命名空间对齐，强制行级数据范围（缺策略时 evaluate_access 拒绝）。
     business_permission = db.scalar(select(Permission).where(Permission.code == WALKTHROUGH_BUSINESS_CODE))
     if business_permission is None:
         business_permission = Permission(
             code=WALKTHROUGH_BUSINESS_CODE, catalog_namespace="demo", resource_type="document",
-            scope="read", description="演示业务码：读取文档（四级走查用）",
+            scope="read", description="演示业务码：读取文档（走查用）",
             surface="business", requires_data_scope=True,
         )
         db.add(business_permission)

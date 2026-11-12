@@ -1,4 +1,4 @@
-﻿import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { getToken } from '@/api'
 import { allCodes, getCachedCapabilities, hasAnyCode } from '@/api/capabilities'
 import { NAV_ITEMS, PAGE_PATHS, TENANT_MERGED_PAGES, type PageKey } from './navigation'
@@ -36,11 +36,12 @@ export const router = createRouter({
       meta: { requiresCapability: false },
     },
     ...adminRoutes,
-    // Wave 1：「新项目接入」已从导航下线，旧深链重定向到应用工作台。
-    { path: '/project-integration', redirect: PAGE_PATHS.application_workspace },
-    // 应用角色与成员已收口到应用工作台；保留字面路径以免旧书签 404。
-    { path: '/application-roles', redirect: PAGE_PATHS.application_workspace },
-    // 租户专属旧深链重定向到融合后的统一页面。
+    // 旧向导地址改到只读对接指南；向导本身仍留在归档目录。
+    { path: '/project-integration', redirect: PAGE_PATHS.integration_guide },
+    // 权限编码页已下线（menu.permissions 已删除）：旧深链重定向到平台角色页。
+    { path: '/permissions', redirect: PAGE_PATHS.roles },
+    // 旧深链重定向统一由 TENANT_MERGED_PAGES 注册（含已收口的应用角色 / 应用目录 /
+    // 组织目录与租户专属页），此处不再重复注册同一路径。
     ...Object.entries(TENANT_MERGED_PAGES).map(([from, to]): RouteRecordRaw => ({
       path: PAGE_PATHS[from as PageKey],
       redirect: PAGE_PATHS[to as PageKey],
@@ -56,7 +57,13 @@ export const router = createRouter({
 // 无任何管理码（L4）→ /no-access；能力尚未加载（刷新首跳）时放行，由 App 纠正。
 router.beforeEach(to => {
   if (!getToken()) return true
-  if (to.name === 'no_access') return true
+  if (to.name === 'no_access') {
+    // P2-8：能力就绪且存在可见页时不滞留 /no-access（URL/内容/侧栏高亮三态一致）；
+    // 能力未加载（刷新首跳，由 App 纠正）或确无可见页（L4）才放行。
+    if (!getCachedCapabilities()) return true
+    const fallback = firstVisiblePath()
+    return fallback === '/no-access' ? true : fallback
+  }
   const capabilities = getCachedCapabilities()
   if (!capabilities) return true
   const held = allCodes(capabilities)

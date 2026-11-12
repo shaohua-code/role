@@ -9,11 +9,12 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="admin-filter-panel mb-3 rounded-xl border border-slate-200/70 bg-slate-50/60 p-4">
+  <!-- U4 token 化：原 slate 蓝灰色板混入 zinc 中性体系且浅色下近乎隐形，改设计 token（暗色自动翻转） -->
+  <div class="admin-filter-panel mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
     <div class="grid items-end gap-3" :style="{ gridTemplateColumns: `repeat(auto-fill, minmax(${minColumnWidth}px, 1fr))` }">
       <slot />
     </div>
-    <div v-if="$slots.actions" class="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-slate-200/60 pt-3">
+    <div v-if="$slots.actions" class="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] pt-3">
       <slot name="actions" />
     </div>
   </div>

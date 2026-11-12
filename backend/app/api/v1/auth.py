@@ -59,7 +59,24 @@ def ensure_signing_key() -> None:
 
 def record_event(db: Session, action: str, target_type: str, target_id: str | None, actor: User | None,
                  request: Request, outcome: str = "success", *, tenant_id=None, details: dict | None = None) -> None:
-    """统一审计写入；请求体不会进入审计，避免口令或令牌意外落盘。"""
+    """统一审计写入；请求体不会进入审计，避免口令或令牌意外落盘。
+
+    P2-1：未显式指定租户且 actor 为真实用户时，按其全部活跃成员身份各写一行，
+    租户管理员因此能在审计页看到本租户用户的登录/改密/登出事件；无成员身份
+    （超管宿主、匿名失败尝试）保持 tenant_id=None，仅超管全域可见。
+    """
+    if tenant_id is None and actor is not None:
+        membership_tenant_ids = db.scalars(select(TenantMembership.tenant_id).where(
+            TenantMembership.user_id == actor.id,
+            TenantMembership.status == "active",
+        )).all()
+        if membership_tenant_ids:
+            for membership_tenant_id in membership_tenant_ids:
+                db.add(AuditEvent(actor_user_id=actor.id, tenant_id=membership_tenant_id, action=action,
+                                  target_type=target_type, target_id=target_id,
+                                  source_ip=client_ip_for_request(request, get_settings()), outcome=outcome,
+                                  details=details or {}))
+            return
     db.add(AuditEvent(actor_user_id=actor.id if actor else None, tenant_id=tenant_id, action=action,
                       target_type=target_type, target_id=target_id,
                       source_ip=client_ip_for_request(request, get_settings()), outcome=outcome,
@@ -404,7 +421,8 @@ def login(body: LoginRequest, request: Request, response: Response, db: Session 
         db.commit()
         raise HTTPException(429, "登录尝试过于频繁，请稍后再试。", headers={"Retry-After": str(retry_after)})
 
-    user = db.scalar(select(User).where(User.email == email).with_for_update())
+    # P2-3：与邀请/重置同口径按小写匹配，大小写混排邮箱也能登录。
+    user = db.scalar(select(User).where(func.lower(User.email) == email).with_for_update())
     # 用户不存在时仍对比一次性假哈希，抹平响应耗时差异，防止以时间侧信道探测已注册邮箱。
     valid = verify_password(body.password, user.password_hash) if user else verify_password(body.password, dummy_password_hash())
     if not user or not valid or user.status != "active":
@@ -686,7 +704,7 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db_session)
 def me_capabilities(user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """兼容旧前端：与 /auth/me.capabilities 同构；新客户端优先用 /auth/me。
 
-    - platform_admin=true 时 platform_codes 覆盖全部 iam.* 管理码（L1）；
+    - platform_admin=true 时 platform_codes 覆盖全部平台管理面码（L1）；
     - tenants 内按租户列出 L3 码与按应用归组的 L2/业务管理码；
     - 另含 roles[]（有效角色摘要）；
     - L4 纯业务用户得到空能力（no_access）。

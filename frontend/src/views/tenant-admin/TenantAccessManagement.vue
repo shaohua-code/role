@@ -2,8 +2,10 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
+import { TENANT_ADMIN_API_PREFIX } from '@/api/capabilities'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
+import AdminTable from '@/components/AdminTable.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 
@@ -94,7 +96,7 @@ async function loadMembers(page = memberPage.value): Promise<void> {
   try {
     const params = new URLSearchParams({ tenant_id: tenantId.value, limit: String(memberPageSize), offset: String((page - 1) * memberPageSize) })
     if (memberQuery.value.trim()) params.set('q', memberQuery.value.trim())
-    const result = await api<{ items: MemberRecord[]; total: number }>(`/tenant-admin/members?${params.toString()}`)
+    const result = await api<{ items: MemberRecord[]; total: number }>(`${TENANT_ADMIN_API_PREFIX}/members?${params.toString()}`)
     if (sequence !== membersSequence) return
     members.value = result.items
     memberTotal.value = result.total
@@ -108,7 +110,7 @@ async function loadOrganizations(): Promise<void> {
   if (!props.active || !tenantId.value) return
   const sequence = ++organizationsSequence
   try {
-    const rows = await api<OrganizationRecord[]>(`/tenant-admin/organizations?tenant_id=${encodeURIComponent(tenantId.value)}`)
+    const rows = await api<OrganizationRecord[]>(`${TENANT_ADMIN_API_PREFIX}/organizations?tenant_id=${encodeURIComponent(tenantId.value)}`)
     if (sequence === organizationsSequence) organizations.value = rows
   } catch (error) {
     if (sequence === organizationsSequence) message.error(error instanceof Error ? error.message : '读取组织列表失败')
@@ -120,7 +122,7 @@ async function loadRoles(): Promise<void> {
   const sequence = ++rolesSequence
   rolesLoading.value = true
   try {
-    const rows = await api<RoleRecord[]>(`/tenant-admin/roles?tenant_id=${encodeURIComponent(tenantId.value)}`)
+    const rows = await api<RoleRecord[]>(`${TENANT_ADMIN_API_PREFIX}/roles?tenant_id=${encodeURIComponent(tenantId.value)}`)
     if (sequence === rolesSequence) roles.value = rows
   } catch (error) {
     if (sequence === rolesSequence) message.error(error instanceof Error ? error.message : '读取租户角色失败')
@@ -139,7 +141,7 @@ async function openMemberOrganizations(member: MemberRecord): Promise<void> {
   if (!canManage.value || member.membership_status !== 'active' || member.user_status !== 'active') return
   try {
     const result = await api<{ organization_ids: string[]; primary_organization_id: string | null }>(
-      `/tenant-admin/users/${member.user_id}/organizations?tenant_id=${encodeURIComponent(tenantId.value)}`,
+      `${TENANT_ADMIN_API_PREFIX}/users/${member.user_id}/organizations?tenant_id=${encodeURIComponent(tenantId.value)}`,
     )
     editingMember.value = member
     memberOrganizationIds.value = result.organization_ids
@@ -164,7 +166,7 @@ async function saveMemberOrganizations(): Promise<void> {
   }
   memberSaving.value = true
   try {
-    await api(`/tenant-admin/users/${editingMember.value.user_id}/organizations`, {
+    await api(`${TENANT_ADMIN_API_PREFIX}/users/${editingMember.value.user_id}/organizations`, {
       method: 'PUT',
       body: JSON.stringify({
         tenant_id: tenantId.value,
@@ -183,8 +185,8 @@ async function openRoleScopes(role: RoleRecord): Promise<void> {
   scopeRole.value = role
   try {
     const [permissionRows, savedPolicies] = await Promise.all([
-      api<PermissionRecord[]>(`/tenant-admin/roles/${role.id}/permissions`),
-      api<DataScopeRecord[]>(`/tenant-admin/roles/${role.id}/data-scopes`),
+      api<PermissionRecord[]>(`${TENANT_ADMIN_API_PREFIX}/roles/${role.id}/permissions`),
+      api<DataScopeRecord[]>(`${TENANT_ADMIN_API_PREFIX}/roles/${role.id}/data-scopes`),
     ])
     scopeEntries.value = permissionRows.map(permission => {
       const policy = savedPolicies.find(item => item.permission_id === permission.id)
@@ -217,7 +219,7 @@ async function saveRoleScopes(): Promise<void> {
       scope_type: entry.scope_type,
       organization_ids: entry.scope_type === 'selected_organizations' ? entry.organization_ids : [],
     }))
-    await api(`/tenant-admin/roles/${scopeRole.value.id}/data-scopes`, {
+    await api(`${TENANT_ADMIN_API_PREFIX}/roles/${scopeRole.value.id}/data-scopes`, {
       method: 'PUT', body: JSON.stringify({ policies }),
     })
     message.success('角色数据范围已保存')
@@ -247,7 +249,7 @@ watch(() => [props.active, tenantId.value] as const, ([active, selectedTenant]) 
     />
 
     <a-card class="data-card" :bordered="false">
-      <AdminTableToolbar :hint="canManage ? '修改会记录审计；业务系统仍需执行 IAM 返回的数据过滤条件。' : '当前角色为只读；需要 org.manage 才能保存变更。'">
+      <AdminTableToolbar :hint="canManage ? '修改会记录审计；业务系统仍需执行 IAM 返回的数据过滤条件。' : '当前角色为只读；需要 button.org.manage 才能保存变更。'">
         <a-select v-model:value="tenantId" placeholder="选择租户" :options="tenantOptions" />
         <template #actions>
           <a-button :loading="membersLoading || rolesLoading" :disabled="!tenantId" @click="refreshAll">刷新</a-button>
@@ -256,33 +258,47 @@ watch(() => [props.active, tenantId.value] as const, ([active, selectedTenant]) 
 
       <a-tabs v-model:active-key="activeTab">
         <a-tab-pane key="members" tab="成员组织归属">
-          <AdminTableToolbar hint="仅显示当前租户成员；跨租户身份不会出现在此列表。">
+          <!-- 统一表格组件：Tab 内搜索工具条与表格一体 -->
+          <AdminTable
+            hint="仅显示当前租户成员；跨租户身份不会出现在此列表。"
+            :columns="memberColumns"
+            :data-source="members"
+            :loading="membersLoading"
+            row-key="user_id"
+            :scroll="{ x: 860, y: 'calc(max(320px, 100vh - 470px))' }"
+            :pagination="{ current: memberPage, pageSize: memberPageSize, total: memberTotal, showSizeChanger: false }"
+            @table-change="onMemberPageChange"
+          >
             <AdminSearchField v-model="memberQuery" placeholder="搜索姓名或邮箱，回车查询" @search="() => loadMembers(1)" />
-          </AdminTableToolbar>
-          <a-table :data-source="members" :columns="memberColumns" :loading="membersLoading" row-key="user_id"
-            :scroll="{ x: 860, y: 'calc(100vh - 470px)' }" :pagination="{ current: memberPage, pageSize: memberPageSize, total: memberTotal, showSizeChanger: false }"
-            @change="onMemberPageChange">
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'user_status'">
                 <a-tag :color="record.user_status === 'active' ? 'green' : 'default'">{{ statusLabel(record.user_status) }}</a-tag>
               </template>
               <template v-else-if="column.key === 'membership_status'">
-                <a-tag :color="record.membership_status === 'active' ? 'blue' : 'default'">{{ statusLabel(record.membership_status) }}</a-tag>
+                <!-- D1 语义色统一：成员状态「正常」与全站状态语义一致用 green（blue 仅用于信息类标签） -->
+                <a-tag :color="record.membership_status === 'active' ? 'green' : 'default'">{{ statusLabel(record.membership_status) }}</a-tag>
               </template>
               <template v-else-if="column.key === 'actions'">
                 <a-button type="link" size="small" :disabled="record.user_status !== 'active' || record.membership_status !== 'active'" @click="openMemberOrganizations(record)">配置组织</a-button>
               </template>
             </template>
             <template #emptyText><AdminEmpty emoji="👥" description="该租户暂无匹配成员" /></template>
-          </a-table>
+          </AdminTable>
         </a-tab-pane>
 
         <a-tab-pane key="scopes" tab="角色数据范围">
           <a-alert class="scope-notice" type="info" show-icon
             message="数据范围按角色和已授予权限配置。未配置有效范围时，业务端请求 include_data_scope 会默认拒绝。"
             description="配置只描述过滤条件。业务服务必须映射本地字段并在查询时执行，按本人 / 所属组织等策略过滤业务数据。" />
-          <a-table :data-source="roles" :columns="roleColumns" :loading="rolesLoading" row-key="id"
-            :scroll="{ x: 820, y: 'calc(100vh - 470px)' }" :pagination="{ pageSize: 10, showSizeChanger: true }">
+          <!-- 统一表格组件：裸表用法（无工具条，仅表格 + 空态） -->
+          <AdminTable
+            :columns="roleColumns"
+            :data-source="roles"
+            :loading="rolesLoading"
+            row-key="id"
+            :scroll="{ x: 820, y: 'calc(max(320px, 100vh - 470px))' }"
+            :pagination="{ pageSize: 10, showSizeChanger: true }"
+          >
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'status'">
                 <a-tag :color="record.status === 'active' ? 'green' : 'default'">{{ statusLabel(record.status) }}</a-tag>
@@ -293,7 +309,7 @@ watch(() => [props.active, tenantId.value] as const, ([active, selectedTenant]) 
               </template>
             </template>
             <template #emptyText><AdminEmpty emoji="🎭" description="该租户暂无角色" /></template>
-          </a-table>
+          </AdminTable>
         </a-tab-pane>
       </a-tabs>
     </a-card>

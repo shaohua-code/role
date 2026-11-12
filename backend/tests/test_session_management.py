@@ -131,9 +131,13 @@ class UserSessionManagementIntegrationTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as denied:
             current_user(credentials, self.db)
         self.assertEqual(denied.exception.status_code, 401)
-        audit_row = self.db.scalar(select(AuditEvent).where(AuditEvent.action == "user.session.revoke"))
+        # 只认本用例写入的审计：非隔离库可能残留历史 revoke 审计（READ COMMITTED 可见），
+        # 按 target_id 精确限定，避免环境数据干扰。
+        audit_row = self.db.scalar(select(AuditEvent).where(
+            AuditEvent.action == "user.session.revoke",
+            AuditEvent.target_id == f"management:{session.id}",
+        ))
         self.assertIsNotNone(audit_row)
-        self.assertEqual(audit_row.target_id, f"management:{session.id}")
 
     def test_oidc_family_revoke_invalidates_online_session_and_is_idempotent(self) -> None:
         now = datetime.now(timezone.utc)
@@ -171,8 +175,12 @@ class UserSessionManagementIntegrationTests(unittest.TestCase):
         self.assertEqual(result["session_id"], str(family_id))
         self.assertIsNotNone(current.revoked_at)
         self.assertFalse(oidc_session_is_active(claims, self.db))
+        # 只统计本 family 的撤销审计：非隔离库可能残留历史 revoke 审计（READ COMMITTED 可见）。
         audit_count = self.db.scalar(
-            select(func.count()).select_from(AuditEvent).where(AuditEvent.action == "user.session.revoke")
+            select(func.count()).select_from(AuditEvent).where(
+                AuditEvent.action == "user.session.revoke",
+                AuditEvent.target_id == f"oidc:{family_id}",
+            )
         )
         self.assertEqual(audit_count, 1)
 
@@ -181,7 +189,10 @@ class UserSessionManagementIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(repeated["session_id"], str(family_id))
         final_audit_count = self.db.scalar(
-            select(func.count()).select_from(AuditEvent).where(AuditEvent.action == "user.session.revoke")
+            select(func.count()).select_from(AuditEvent).where(
+                AuditEvent.action == "user.session.revoke",
+                AuditEvent.target_id == f"oidc:{family_id}",
+            )
         )
         self.assertEqual(final_audit_count, 1)
 

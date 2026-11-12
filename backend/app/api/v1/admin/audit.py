@@ -13,9 +13,9 @@ from app.models.identity import AuditEvent, User
 from app.schemas.audit import AuditEventResponse, AuditSearchResponse
 from app.services.rbac_guards import (
     actor_has_tenant_admin,
-    ensure_roles,
+    ensure_codes,
+    list_actor_bound_application_ids,
     list_actor_management_tenant_ids,
-    list_actor_pinned_application_ids,
 )
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
@@ -82,7 +82,7 @@ def _query_audit_events(
             filters.append(AuditEvent.tenant_id.in_(tenant_scope))
     elif tenant_id:
         filters.append(AuditEvent.tenant_id == tenant_id)
-    # P404：纯 L2 审计无 application_id 列，只能按应用目标尽力收敛；无法归属的租户级事件不返回。
+    # P404：应用级审计无 application_id 列，只能按应用目标尽力收敛；无法归属的租户级事件不返回。
     if application_ids is not None:
         if not application_ids:
             return AuditSearchResponse(items=[], limit=limit, offset=offset, total=0, has_more=False)
@@ -135,11 +135,12 @@ def list_audit(
     db: Session = Depends(get_db_session),
 ) -> list[AuditEventResponse]:
     """兼容旧调用方：保留最新记录数组响应和原有 limit/action 参数。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), detail="缺少管理角色（原 ops.audit.read）")
+    ensure_codes(actor, db, "menu.audit", detail="缺少管理权限：menu.audit")
     tenant_scope = list_actor_management_tenant_ids(actor, db)
     application_ids = None
     if tenant_scope is not None and not actor_has_tenant_admin(actor, db):
-        application_ids = list_actor_pinned_application_ids(actor, db)
+        # 应用级数据边界：绑定的全部应用（含成员），审计按应用目标收敛。
+        application_ids = list_actor_bound_application_ids(actor, db)
     return _query_audit_events(
         limit=min(max(limit, 1), 500),
         offset=0,
@@ -174,11 +175,12 @@ def search_audit(
     db: Session = Depends(get_db_session),
 ) -> AuditSearchResponse:
     """按精确字段及 ISO 8601 时间范围查询审计事件；action_prefix 支持类别前缀聚合。"""
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), detail="缺少管理角色（原 ops.audit.read）")
+    ensure_codes(actor, db, "menu.audit", detail="缺少管理权限：menu.audit")
     tenant_scope = list_actor_management_tenant_ids(actor, db)
     application_ids = None
     if tenant_scope is not None and not actor_has_tenant_admin(actor, db):
-        application_ids = list_actor_pinned_application_ids(actor, db)
+        # 应用级数据边界：绑定的全部应用（含成员），审计按应用目标收敛。
+        application_ids = list_actor_bound_application_ids(actor, db)
     return _query_audit_events(
         limit=limit,
         offset=offset,

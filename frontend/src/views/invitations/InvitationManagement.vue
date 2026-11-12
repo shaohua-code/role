@@ -2,12 +2,14 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { isReservedEmailHost } from '@/utils/emailValidation'
+import { PlusOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 
 interface TenantOption { id: string; name: string; status: string; slug?: string }
-interface RoleOption { id: string; tenant_id: string; name: string; status: string }
+// 平台角色全局化后 tenant_id 可能为空（全局角色）、application_id 区分平台/应用角色
+interface RoleOption { id: string; tenant_id: string; application_id?: string | null; name: string; status: string }
 interface Invitation {
   id: string
   tenant_id: string
@@ -30,9 +32,11 @@ const props = defineProps<{
 }>()
 
 const invitations = ref<Invitation[]>([])
-const canManageInvites = computed(() => cachedHas('org.invite.manage'))
+const canManageInvites = computed(() => cachedHasAny(['button.invitations.manage']))
 // undefined 才能触发 Select 的 placeholder；'' 会被当作已选值导致空框无占位文案
-const selectedTenantId = ref<string | undefined>(undefined)
+// U17：「全部租户」改为真实选中值（黑色实值），不再用占位灰表达「全部」语义
+const ALL_TENANTS = 'ALL'
+const selectedTenantId = ref<string>(ALL_TENANTS)
 const loading = ref(false)
 const errorText = ref('')
 const createOpen = ref(false)
@@ -56,12 +60,15 @@ let requestSequence = 0
 const tenantOptions = computed(() => props.tenants
   .filter(tenant => tenant.status === 'active')
   .map(tenant => ({ value: tenant.id, label: tenant.name })))
+// U17：筛选器首项 = 真实「全部租户」选项
+const tenantOptionsWithAll = computed(() => [{ value: ALL_TENANTS, label: '全部租户' }, ...tenantOptions.value])
 // 平台引导租户不参与业务邀请，创建下拉排除；筛选器保留以便查看其下数据
 const creatableTenantOptions = computed(() => props.tenants
   .filter(tenant => tenant.slug !== 'platform' && tenant.status === 'active')
   .map(tenant => ({ value: tenant.id, label: tenant.name })))
+// 角色候选全局口径：未钉应用的平台角色全局可选；应用角色仍限其宿主租户
 const roleOptions = computed(() => props.roles
-  .filter(role => role.status === 'active' && role.tenant_id === form.tenant_id)
+  .filter(role => role.status === 'active' && (!role.application_id || role.tenant_id === form.tenant_id))
   .map(role => ({ value: role.id, label: role.name })))
 
 const columns = [
@@ -84,7 +91,7 @@ async function loadInvitations(): Promise<void> {
   errorText.value = ''
   try {
     const query = new URLSearchParams()
-    if (selectedTenantId.value) query.set('tenant_id', selectedTenantId.value)
+    if (selectedTenantId.value && selectedTenantId.value !== ALL_TENANTS) query.set('tenant_id', selectedTenantId.value)
     const suffix = query.size ? `?${query.toString()}` : ''
     const result = await api<Invitation[]>(`/admin/invitations${suffix}`)
     if (sequence === requestSequence && props.active) invitations.value = result
@@ -162,8 +169,9 @@ async function createInvitation(): Promise<void> {
 }
 
 // G21 批量邀请弹窗：租户/角色/邮箱列表一次提交；单邮箱冲突跳过不阻断其余。
+// 角色候选同单邀请口径：全局平台角色 + 该租户应用角色
 const batchRoleOptions = computed(() => props.roles
-  .filter(role => role.status === 'active' && role.tenant_id === batchTenantId.value)
+  .filter(role => role.status === 'active' && (!role.application_id || role.tenant_id === batchTenantId.value))
   .map(role => ({ value: role.id, label: role.name })))
 
 function openBatch(): void {
@@ -299,26 +307,24 @@ watch(() => props.active, (active) => {
     :data-source="invitations"
     :loading="loading"
     row-key="id"
-    :scroll="{ x: 1330, y: 'calc(100vh - 430px)' }"
-    :pagination="{ pageSize: 10, showSizeChanger: true }"
+    :scroll="{ x: 1330, y: 'calc(max(360px, 100vh - 430px))' }"
+    :pagination="{ pageSize: 10, showSizeChanger: true, showTotal: (count: number) => `共 ${count} 条` }"
     :error-text="errorText"
-    empty-emoji="✉️"
-    :empty-text="selectedTenantId ? '当前租户暂无邀请记录' : '暂无邀请记录'"
+    empty-emoji="📨"
+    :empty-text="selectedTenantId !== ALL_TENANTS ? '当前租户暂无邀请记录' : '暂无邀请记录'"
   >
     <template #header-extra>
       <a-space :size="8">
         <!-- G21 批量邀请：一次多邮箱，冲突跳过不阻断。 -->
         <a-button v-if="canManageInvites" @click="openBatch">批量邀请</a-button>
-        <a-button v-if="canManageInvites" type="primary" @click="openCreate">＋ 新建邀请</a-button>
+        <a-button v-if="canManageInvites" type="primary" @click="openCreate"><PlusOutlined class="mr-1" />新建邀请</a-button>
       </a-space>
     </template>
     <a-select
       v-model:value="selectedTenantId"
-      allow-clear
       show-search
       option-filter-prop="label"
-      placeholder="全部租户"
-      :options="tenantOptions"
+      :options="tenantOptionsWithAll"
       @change="loadInvitations"
     />
     <template #actions>
@@ -358,7 +364,7 @@ watch(() => props.active, (active) => {
   </a-modal>
 
   <!-- G21 批量邀请弹窗：多邮箱一次提交；结果区列出每邮箱状态与一次性链接。 -->
-  <a-modal v-model:open="batchOpen" title="批量邀请成员" width="680px"
+  <a-modal v-model:open="batchOpen" title="批量邀请成员" width="640px"
     ok-text="生成邀请链接" cancel-text="取消" :confirm-loading="batchSaving" @ok="submitBatch">
     <a-form layout="vertical">
       <a-form-item label="所属租户" required>
@@ -393,11 +399,8 @@ watch(() => props.active, (active) => {
     <a-alert v-if="linkDelivery === 'email_sent'" message="邮件服务已接受投递；此处仅提供一次性备用链接。" description="最终入箱情况由收件方邮件服务决定。系统只保存令牌摘要，请勿将备用链接放入公开群聊或工单。" type="success" show-icon />
     <a-alert v-else-if="linkDelivery === 'email_failed'" message="邀请已创建，但邮件投递失败。" description="请使用下方一次性备用链接通过可信渠道交付；链接关闭后不会再次显示。" type="warning" show-icon />
     <a-alert v-else message="链接只展示这一次，系统仅保存令牌摘要。请通过可信渠道发送，不要放入公开群聊或工单。" type="warning" show-icon />
-    <a-input class="client-secret-field invitation-link-field" :value="createdUrl" readonly />
+    <a-input class="client-secret-field my-3.5 mb-2.5" :value="createdUrl" readonly />
     <a-button block @click="copyInviteUrl">复制邀请链接</a-button>
   </a-modal>
 </template>
 
-<style scoped>
-.invitation-link-field { margin: 14px 0 10px; }
-</style>

@@ -1,4 +1,4 @@
-"""P404：四级可见范围收口——L2 不能新建应用、看不见上级码与外应用；L3 看不见外租户。"""
+"""P404：五级可见范围收口——L2 不能新建应用、看不见上级节点与外应用；L3 看不见外租户。"""
 
 import unittest
 from uuid import uuid4
@@ -15,14 +15,15 @@ from app.api.v1.admin.audit import search_audit
 from app.api.v1.admin.model_usage import list_model_usage_events
 from app.db.base import Base
 from app.models.application import Application
-from app.models.authorization import Permission, Role
+from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import AuditEvent, Tenant, User
 from app.models.model_catalog import ModelCatalog, ModelUsageEvent
 from app.schemas.applications import ApplicationCreate
+from app.services.permission_kinds import ROLE_SCOPE_TENANT
 from app.services.role_provisioning import (
-    L2_PERMISSION_CODES,
+    L2_GRANT_NODE_CODES,
     L2_ROLE_KEY,
-    L3_PERMISSION_CODES,
+    L3_GRANT_NODE_CODES,
     L3_ROLE_KEY,
 )
 from tests.greenfield_fixture import make_tenant_role_binding
@@ -53,12 +54,9 @@ class P404VisibilityTests(unittest.TestCase):
         )
         self.db.add_all([self.app_a, self.app_b, self.other_app])
         self.db.flush()
-        # 管理码：L1 专属 + L3 模板 + L2 模板；业务码分属三个命名空间。
+        # 管理节点目录：L3 模板 + L2 模板；业务码分属三个命名空间。
         self.catalog: dict[str, Permission] = {}
-        for code in sorted(
-            set(L3_PERMISSION_CODES) | set(L2_PERMISSION_CODES)
-            | {"platform.overview.read", "rbac.permission.manage"},
-        ):
+        for code in sorted(set(L3_GRANT_NODE_CODES) | set(L2_GRANT_NODE_CODES)):
             row = Permission(
                 code=code, catalog_namespace="platform",
                 resource_type=code.split(".", 1)[0], scope=code.rsplit(".", 1)[-1],
@@ -85,21 +83,27 @@ class P404VisibilityTests(unittest.TestCase):
         )
         self.other_tenant_admin_role = Role(
             tenant_id=self.other_tenant.id, kind="tenant", key=L3_ROLE_KEY,
-            name="外租户管理员", status="active",
+            name="外租户管理员", status="active", scope=ROLE_SCOPE_TENANT,
         )
         self.db.add_all([self.app_b_custom_role, self.other_tenant_admin_role])
         self.db.flush()
         self.l2 = self._user("l2")
         self.l3 = self._user("l3")
+        # 判权只认节点：模板角色必须显式挂节点，模拟「种子已授权」的真实状态；
+        # 节点 ID 从目录常量解析，禁止手抄。L3 模板显式带 scope=tenant（范围过滤依据）。
         self.l2_role = make_tenant_role_binding(
             self.db, tenant_id=self.tenant.id, actor=self.l2,
             role_key=L2_ROLE_KEY, role_name="应用管理员",
             application_id=self.app_a.id,
+            permission_ids=[self.catalog[code].id for code in L2_GRANT_NODE_CODES],
         )
         self.l3_role = make_tenant_role_binding(
             self.db, tenant_id=self.tenant.id, actor=self.l3,
             role_key=L3_ROLE_KEY, role_name="租户管理员",
+            permission_ids=[self.catalog[code].id for code in L3_GRANT_NODE_CODES],
         )
+        # fixture 不写 scope 列：这里按模板语义回填，供角色列表的范围过滤使用。
+        self.l3_role.scope = ROLE_SCOPE_TENANT
         self.db.commit()
         self.request = Request({
             "type": "http", "method": "POST", "path": "/api/v1",
@@ -144,26 +148,23 @@ class P404VisibilityTests(unittest.TestCase):
     def test_l2_permission_catalog_hides_l3_and_foreign_app_codes(self) -> None:
         payload = list_permissions(actor=self.l2, db=self.db)
         codes = self._codes(payload)
-        self.assertIn("app.manage", codes)
+        self.assertIn("menu.application_workspace", codes)
         self.assertNotIn("appa.doc.read", codes)
-        self.assertNotIn("org.read", codes)
-        self.assertNotIn("rbac.role.read", codes)
-        self.assertNotIn("platform.overview.read", codes)
-        self.assertNotIn("rbac.permission.manage", codes)
+        self.assertNotIn("menu.organization_workspace", codes)
+        self.assertNotIn("menu.tenants", codes)
         self.assertNotIn("appb.doc.read", codes)
         self.assertNotIn("other.doc.read", codes)
-        self.assertTrue(codes.issubset(set(L2_PERMISSION_CODES)))
+        self.assertTrue(codes.issubset(set(L2_GRANT_NODE_CODES)))
 
     def test_l3_permission_catalog_hides_l1_and_foreign_tenant_codes(self) -> None:
         payload = list_permissions(actor=self.l3, db=self.db)
         codes = self._codes(payload)
-        self.assertIn("org.read", codes)
+        self.assertIn("menu.organization_workspace", codes)
         self.assertNotIn("appa.doc.read", codes)
         self.assertNotIn("appb.doc.read", codes)
-        self.assertNotIn("platform.overview.read", codes)
-        self.assertNotIn("rbac.permission.manage", codes)
+        self.assertNotIn("button.tenants.manage", codes)
         self.assertNotIn("other.doc.read", codes)
-        self.assertTrue(codes.issubset(set(L3_PERMISSION_CODES)))
+        self.assertTrue(codes.issubset(set(L3_GRANT_NODE_CODES)))
 
     def test_l2_role_list_only_pinned_application(self) -> None:
         payload = list_roles(
@@ -176,15 +177,22 @@ class P404VisibilityTests(unittest.TestCase):
         self.assertNotIn((L3_ROLE_KEY, None), keys)
         self.assertNotIn(("custom.b", str(self.app_b.id)), keys)
 
-    def test_l3_role_list_stays_in_tenant(self) -> None:
+    def test_l3_role_list_global_platform_and_bounded_app_roles(self) -> None:
+        # 平台角色全局化：平台类角色（application_id IS NULL）全局可见，不再按租户收口——
+        # 本租户与外租户宿主的平台类角色（tenant.admin）都出现在 L3 列表中；
+        # 应用类角色仍按数据边界收口，只会出现本租户（绑定租户）的应用角色。
         payload = list_roles(
             q=None, kind=None, tenant_id=None, application_id=None, status=None,
             actor=self.l3, db=self.db,
         )
-        tenant_ids = {item["tenant_id"] for item in payload["items"]}
-        self.assertEqual(tenant_ids, {str(self.tenant.id)})
+        platform_rows = [item for item in payload["items"] if item["application_id"] is None]
+        application_rows = [item for item in payload["items"] if item["application_id"] is not None]
         keys = {item["key"] for item in payload["items"]}
         self.assertIn(L3_ROLE_KEY, keys)
+        self.assertTrue(platform_rows)
+        self.assertEqual(
+            {item["tenant_id"] for item in application_rows}, {str(self.tenant.id)},
+        )
 
     def test_l2_cannot_read_tenant_admin_holders(self) -> None:
         with self.assertRaises(HTTPException) as ctx:
@@ -223,6 +231,12 @@ class P404VisibilityTests(unittest.TestCase):
         self.assertEqual(payload.items[0].target_id, str(self.app_a.id))
 
     def test_usage_l2_pinned_app_and_l3_tenant_only(self) -> None:
+        # 应用级模板不含模型用量菜单；为验证「应用级按钉住应用收敛」的边界，
+        # 给 L2 模板角色补挂 menu.model_usage 节点（min_scope=app 允许）。
+        self.db.add(RolePermission(
+            role_id=self.l2_role.id, permission_id=self.catalog["menu.model_usage"].id,
+        ))
+        self.db.commit()
         model_a = ModelCatalog(
             tenant_id=self.tenant.id, key="m-a", provider="test",
             model_name="m-a", display_name="模型A",

@@ -3,24 +3,31 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { TablePaginationConfig } from 'ant-design-vue'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas, getCachedCapabilities } from '@/api/capabilities'
-import { DownOutlined } from '@/plugins/icons'
+import { OPERATOR_SCOPE_RANK, cachedHasAny, getCachedCapabilities, hasButton, operatorScope, type OperatorScope } from '@/api/capabilities'
+import { DownOutlined, PlusOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import RolePermissionGrantModal from '@/components/RolePermissionGrantModal.vue'
+import { ensurePermissionContract } from '@/utils/permissionContract'
+import type { PermissionScopeOption, PermissionTemplateSizes } from '@/utils/permissionTree'
 import { asPagedList } from '@/utils/paged'
 
 interface TenantOption { id: string; name: string; status: string }
 interface ApplicationOption { id: string; tenant_id: string; name: string; status: string; permission_namespace?: string }
 interface RoleRecord {
   id: string
-  tenant_id: string
+  /** 平台角色全局化后可能没有明确租户归属（全局一份）；应用角色仍带宿主租户 */
+  tenant_id: string | null
   application_id: string | null
   kind: 'platform' | 'tenant' | 'application'
   key: string
   name: string
   description: string | null
   status: string
+  /** 授权范围（super/tenant/app/member）与中文标签；后端新契约下发。 */
+  scope?: string
+  scope_label?: string
+  is_template?: boolean
   permission_codes: string[]
 }
 interface PermissionRecord { id: string; code: string; description?: string | null; resource_type: string; scope: string; status: 'active' | 'disabled' }
@@ -37,13 +44,11 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ changed: [] }>()
 const isPlatformSuperAdmin = computed(() => getCachedCapabilities()?.platform_admin === true)
-// 前四级都可新建自定义平台角色，并给自己看得见的管理码挂权。
-const canCreateRoles = computed(() => isPlatformSuperAdmin.value || cachedHas('org.manage') || cachedHas('rbac.app_role.manage'))
+// 前四级都可新建自定义平台角色，并给自己看得见的管理码挂权；L1 放行语义收进 hasButton。
+const canCreateRoles = computed(() => hasButton('button.roles.manage'))
 const canMutateRoleMeta = computed(() => isPlatformSuperAdmin.value)
 
 const roles = ref<RoleRecord[]>([])
-// undefined 才能触发 Select 的 placeholder；'' 会被当作已选值导致空框无占位文案
-const tenantFilter = ref<string | undefined>(undefined)
 const statusFilter = ref<string | undefined>(undefined)
 const statusOptions = [
   { value: 'active', label: '启用' },
@@ -60,7 +65,8 @@ const listTotal = ref(0)
 const editorOpen = ref(false)
 const savingRole = ref(false)
 const editingRole = ref<RoleRecord | null>(null)
-const form = reactive({ tenant_id: '', application_id: '', key: '', name: '', description: '' })
+// scope 纳入角色表单：新建必选（默认租户级），编辑仅自定义角色可改；平台角色全局宿主，不再有所属租户字段
+const form = reactive({ application_id: '', key: '', name: '', description: '', scope: '' })
 const cloneDialogOpen = ref(false)
 const cloningRole = ref(false)
 const cloneSourceRole = ref<RoleRecord | null>(null)
@@ -70,14 +76,24 @@ const cloneForm = reactive({ key: '', name: '', description: '', copy_authorizat
 const grantOpen = ref(false)
 const grantRoleId = ref('')
 const grantRoleName = ref('')
-// P390 作用域收敛：弹窗按角色 kind 隐藏越域码组；应用角色业务码只显示本命名空间
-const grantRoleKind = ref<'' | 'platform' | 'tenant' | 'application'>('')
-const grantRoleNamespace = ref('')
+// 角色当前授权范围与模板标记：弹窗据此渲染范围下拉与节点下限禁用
+const grantRoleScope = ref<'' | OperatorScope>('')
+const grantRoleIsTemplate = ref(false)
 // 管理员不能管理管理员：非模板角色（自定义「管理员」）禁选授权权码，与后端 422 同口径。
 const TEMPLATE_ROLE_KEYS = new Set(['platform.admin', 'tenant.admin', 'apps.admin', 'app.admin', 'app.member'])
 
+// 模板判定：优先后端下发的 is_template，缺省按预置 key 兜底
 function isTemplateRole(role: RoleRecord): boolean {
-  return TEMPLATE_ROLE_KEYS.has(role.key)
+  return role.is_template === true || TEMPLATE_ROLE_KEYS.has(role.key)
+}
+
+// 授权范围标签：D5 重设计为「墨阶层级」——solid ink(超管) > 重描边(租户) > 细描边(应用) > 虚线(成员)，
+// 不再占用语义色相（蓝/绿/金仅留给状态反馈），与名称列 kind-chip 同语言，深浅主题自适应。
+function scopeChipClass(scope: string): string {
+  if (scope === 'super') return 'scope-chip scope-super'
+  if (scope === 'tenant') return 'scope-chip scope-tenant'
+  if (scope === 'app') return 'scope-chip scope-app'
+  return 'scope-chip scope-member'
 }
 
 function roleClassLabel(role: RoleRecord): string {
@@ -88,22 +104,12 @@ function canGrantRole(role: RoleRecord): boolean {
   if (isPlatformSuperAdmin.value) return true
   // 预置模板只能改本级及以下：超管改全部，租户改租户及以下，多应用改多应用及以下，应用改应用及成员。
   if (role.key === 'platform.admin') return false
-  if (role.key === 'tenant.admin') return cachedHas('org.manage')
-  if (role.key === 'apps.admin') return cachedHas('org.manage') || cachedHas('rbac.app_role.assign')
+  if (role.key === 'tenant.admin') return cachedHasAny(['button.roles.manage'])
+  if (role.key === 'apps.admin') return cachedHasAny(['button.app_role.assign'])
   if (role.key === 'app.admin' || role.key === 'app.member') {
-    return cachedHas('org.manage') || cachedHas('rbac.app_role.manage')
+    return cachedHasAny(['button.app_role.manage'])
   }
-  return cachedHas('org.manage') || cachedHas('rbac.app_role.manage')
-}
-
-// 模板按层级藏码；自定义平台角色按操作者可见集，超管不再被 kind=tenant 藏掉 L1 专属码。
-function grantKindForRole(role: RoleRecord): '' | 'platform' | 'tenant' | 'application' {
-  if (role.key === 'platform.admin') return 'platform'
-  if (role.key === 'tenant.admin') return 'tenant'
-  if (isTemplateRole(role)) return 'application'
-  if (isPlatformSuperAdmin.value) return 'platform'
-  if (cachedHas('org.manage')) return 'tenant'
-  return 'application'
+  return cachedHasAny(['button.roles.manage', 'button.app_role.manage'])
 }
 
 const resourceGrantDialogOpen = ref(false)
@@ -124,23 +130,52 @@ const savingDataScopes = ref(false)
 
 let requestSequence = 0
 
-const tenantOptions = computed(() => props.tenants.map(tenant => ({ value: tenant.id, label: tenant.name })))
 // 服务端筛选是否生效：有任一条件就不能复用壳层全量 500 条
 function hasServerFilters(): boolean {
-  return Boolean(submittedQuery.value || tenantFilter.value || statusFilter.value)
+  return Boolean(submittedQuery.value || statusFilter.value)
 }
+
+// F2 契约渲染：三管理员模板节点数来自 tree meta.template_sizes，不再硬编码口径。
+const templateSizes = ref<PermissionTemplateSizes | null>(null)
+// 契约下发授权范围下拉（value/label/rank）；按操作者 scope 过滤后供新建/编辑用
+const contractScopes = ref<PermissionScopeOption[]>([])
+const listHint = computed(() => {
+  const sizes = templateSizes.value
+  const summary = sizes
+    ? `超管 ${sizes.platform_admin} 节点，租户管理员 ${sizes.tenant_admin} 节点，应用管理员 ${sizes.app_admin} 节点`
+    : '各级模板节点数以权限契约为准'
+  return `${summary}；看不见的上级码不会出现。共 ${listTotal.value} 条角色`
+})
+
+/** 拉取权限契约（tree meta）：模板节点数渲染统计文案，scopes 供授权范围下拉，失败不阻断角色列表。 */
+async function loadContractMeta(): Promise<void> {
+  try {
+    const contract = await ensurePermissionContract()
+    templateSizes.value = contract.meta.template_sizes
+    contractScopes.value = contract.meta.scopes
+  } catch {
+    templateSizes.value = null
+    contractScopes.value = []
+  }
+}
+
+// 可选授权范围：契约 scopes 按操作者 scope 的秩过滤（只能向下建角色）
+const scopeOptions = computed(() => contractScopes.value
+  .filter(option => option.rank <= OPERATOR_SCOPE_RANK[operatorScope()])
+  .map(option => ({ value: option.value, label: option.label })))
 
 const columns = [
   { title: '角色名称', dataIndex: 'name', key: 'name', width: 168, ellipsis: true },
   { title: '角色标识', dataIndex: 'key', key: 'key', width: 150, ellipsis: true },
-  { title: '租户', dataIndex: 'tenant_id', key: 'tenant_id', width: 110, ellipsis: true },
-  { title: '应用范围', dataIndex: 'application_id', key: 'application_id', width: 110, ellipsis: true },
+  { title: '授权范围', dataIndex: 'scope', key: 'scope', width: 92 },
+  // 平台角色全局唯一一份，不再展示租户归属维度
+  { title: '归属', dataIndex: 'application_id', key: 'application_id', width: 110, ellipsis: true },
   { title: '权限', dataIndex: 'permission_codes', key: 'permission_codes', width: 140 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 88 },
   { title: '说明', dataIndex: 'description', key: 'description', width: 140, ellipsis: true },
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 170, fixed: 'right' as const },
 ]
-// 列宽合计 = 168+150+110+110+140+88+140+170 = 1076
+// 列宽合计 = 168+150+92+110+140+88+140+170 = 1058
 
 // 操作列「更多」菜单（P350 对齐用户页收敛模式）：高频直达 + 低频收纳。
 type RoleRowMenuKey = 'resource' | 'dataScope' | 'clone' | 'toggle' | 'delete' | 'holders'
@@ -207,9 +242,8 @@ async function loadRoles(): Promise<void> {
   try {
     const params = new URLSearchParams()
     if (submittedQuery.value) params.set('q', submittedQuery.value)
-    // P405：高级管理只出平台角色（五级模板 + 未钉应用的自定义角色）。
+    // P405：高级管理只出平台角色（五级模板 + 未钉应用的自定义角色）；平台角色全局化，不再按租户筛选
     params.set('role_class', 'platform')
-    if (tenantFilter.value) params.set('tenant_id', tenantFilter.value)
     if (statusFilter.value) params.set('status', statusFilter.value)
     params.set('limit', String(listPageSize.value))
     params.set('offset', String((listPage.value - 1) * listPageSize.value))
@@ -243,21 +277,24 @@ function onTableChange(pagination: TablePaginationConfig): void {
 
 function openCreate(): void {
   editingRole.value = null
-  form.tenant_id = props.tenants.find(tenant => tenant.status === 'active')?.id || ''
   form.application_id = ''
   form.key = ''
   form.name = ''
   form.description = ''
+  // 默认租户级；操作者范围不足时回退为可选项里的第一档
+  form.scope = scopeOptions.value.some(option => option.value === 'tenant')
+    ? 'tenant'
+    : (scopeOptions.value[0]?.value || 'tenant')
   editorOpen.value = true
 }
 
 function openEdit(role: RoleRecord): void {
   editingRole.value = role
-  form.tenant_id = role.tenant_id
   form.application_id = role.application_id || ''
   form.key = role.key
   form.name = role.name
   form.description = role.description || ''
+  form.scope = role.scope || ''
   editorOpen.value = true
 }
 
@@ -271,10 +308,16 @@ function validateRoleForm(): boolean {
       message.error('角色说明不能超过 500 个字符')
       return false
     }
+    // 仅自定义角色可改范围；可选时校验取值合法
+    if (!isTemplateRole(editingRole.value) && form.scope && !scopeOptions.value.some(option => option.value === form.scope)) {
+      message.error('授权范围超出你的操作范围')
+      return false
+    }
     return true
   }
-  if (!props.tenants.some(tenant => tenant.id === form.tenant_id && tenant.status === 'active')) {
-    message.error('请选择活动租户')
+  // 平台角色全局宿主，新建不再要求选择所属租户
+  if (!form.scope || !scopeOptions.value.some(option => option.value === form.scope)) {
+    message.error('请选择授权范围')
     return false
   }
   if (!/^[a-z0-9][a-z0-9._-]{1,99}$/.test(form.key.trim())) {
@@ -296,13 +339,19 @@ async function saveRole(): Promise<void> {
   if (!validateRoleForm()) return
   const editing = editingRole.value
   // 新建成功后要立刻挂码，先记下作用域，避免关弹窗后表单被清空
+  // 编辑时仅自定义角色可携带 scope（模板角色范围固定，后端拒绝修改）
   const payload = editing
-    ? { name: form.name.trim(), description: form.description.trim() || null }
+    ? {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        ...(!isTemplateRole(editing) ? { scope: form.scope } : {}),
+      }
     : {
-        tenant_id: form.tenant_id,
+        // 平台角色全局唯一一份，新建不再携带 tenant_id
         key: form.key.trim(),
         name: form.name.trim(),
         description: form.description.trim() || null,
+        scope: form.scope,
       }
   savingRole.value = true
   try {
@@ -326,6 +375,9 @@ async function saveRole(): Promise<void> {
             kind: created.kind || 'tenant',
             description: created.description ?? null,
             status: created.status || 'active',
+            scope: created.scope || form.scope,
+            scope_label: created.scope_label || '',
+            is_template: false,
             permission_codes: created.permission_codes || [],
           })
         },
@@ -423,10 +475,9 @@ function confirmStatusChange(role: RoleRecord): void {
 function openGrantEditor(role: RoleRecord): void {
   grantRoleId.value = role.id
   grantRoleName.value = role.name
-  grantRoleKind.value = grantKindForRole(role)
-  grantRoleNamespace.value = role.application_id
-    ? props.applications.find(application => application.id === role.application_id)?.permission_namespace || ''
-    : ''
+  // 传入角色当前授权范围与模板标记：弹窗据此渲染范围下拉并按节点下限禁选
+  grantRoleScope.value = (role.scope || '') as '' | OperatorScope
+  grantRoleIsTemplate.value = isTemplateRole(role)
   grantOpen.value = true
 }
 
@@ -539,7 +590,10 @@ async function openDataScopeEditor(role: RoleRecord): Promise<void> {
   try {
     const [permissions, organizations, configured] = await Promise.all([
       api<PermissionRecord[] | { items: PermissionRecord[] }>('/admin/permissions?limit=1000').then(result => asPagedList(result).items),
-      api<{ id: string; key: string; name: string; status: string }[]>(`/admin/organizations?tenant_id=${encodeURIComponent(role.tenant_id)}`),
+      // 平台角色全局宿主：无明确租户归属时不拉组织目录（数据范围组织选项留空）
+      role.tenant_id
+        ? api<{ id: string; key: string; name: string; status: string }[]>(`/admin/organizations?tenant_id=${encodeURIComponent(role.tenant_id)}`)
+        : Promise.resolve([] as { id: string; key: string; name: string; status: string }[]),
       api<{ permission_id: string; scope_type: string; organization_ids: string[] }[]>(`/admin/roles/${role.id}/data-scopes`),
     ])
     dataScopeOrganizationOptions.value = organizations
@@ -590,10 +644,6 @@ async function saveDataScopes(): Promise<void> {
   }
 }
 
-function tenantName(id: string): string {
-  return props.tenants.find(tenant => tenant.id === id)?.name || id
-}
-
 function applicationName(id: string | null): string {
   if (!id) return '全部应用'
   return props.applications.find(application => application.id === id)?.name || id
@@ -602,9 +652,11 @@ function applicationName(id: string | null): string {
 watch(() => props.active, active => {
   if (!active) return
   void loadRoles()
+  // 统计文案依赖 tree meta，页面激活时顺带刷新契约缓存（共享单例，重复调用零成本）。
+  void loadContractMeta()
 }, { immediate: true })
 
-watch([tenantFilter, statusFilter], () => {
+watch(statusFilter, () => {
   listPage.value = 1
   if (props.active) void loadRoles()
 })
@@ -612,16 +664,16 @@ watch([tenantFilter, statusFilter], () => {
 
 <template>
   <AdminListPage
-    eyebrow="平台角色"
+    eyebrow="ROLE DIRECTORY"
     title="平台角色"
     subtitle="四个管理员都可给本级及以下预置角色配权，只能勾自己已有的码，不能配上级权限。应用角色请到「应用工作台 → 角色」。"
-    :hint="`超管 27 码，租户管理员 20 码，多应用管理员 16 码，应用管理员 15 码；看不见的上级码不会出现。共 ${listTotal} 条角色`"
+    :hint="listHint"
     :columns="columns"
     :data-source="roles"
     :loading="loading"
     row-key="id"
     class="scroll-actions-on-mobile"
-    :scroll="{ x: 1076, y: 'calc(100vh - 430px)' }"
+    :scroll="{ x: 1058, y: 'calc(max(360px, 100vh - 430px))' }"
     :pagination="{ current: listPage, pageSize: listPageSize, total: listTotal, showSizeChanger: true, showTotal: (total: number) => `共 ${total} 条` }"
     @table-change="onTableChange"
     :error-text="errorText"
@@ -629,10 +681,9 @@ watch([tenantFilter, statusFilter], () => {
     :empty-text="hasServerFilters() ? '没有匹配条件的角色' : '暂无角色，可创建角色后配置权限'"
   >
     <template #header-extra>
-      <a-button v-if="canCreateRoles" type="primary" @click="openCreate">＋ 新建平台角色</a-button>
+      <a-button v-if="canCreateRoles" type="primary" @click="openCreate"><PlusOutlined class="mr-1" />新建平台角色</a-button>
     </template>
     <AdminSearchField v-model="searchText" placeholder="搜索角色名称、标识或说明" @search="onSearch" />
-    <a-select v-model:value="tenantFilter" allow-clear show-search option-filter-prop="label" placeholder="全部租户" :options="tenantOptions" class="admin-filter-wide" />
     <a-select v-model:value="statusFilter" allow-clear placeholder="全部状态" :options="statusOptions" />
     <template #actions>
       <a-button :loading="loading" @click="loadRoles">刷新</a-button>
@@ -645,8 +696,14 @@ watch([tenantFilter, statusFilter], () => {
           <span class="kind-chip" :class="isTemplateRole(record as RoleRecord) ? 'kind-platform' : 'kind-application'">{{ roleClassLabel(record as RoleRecord) }}</span>
         </div>
       </template>
-      <template v-else-if="column.key === 'tenant_id'">{{ tenantName(String(record.tenant_id)) }}</template>
-      <template v-else-if="column.key === 'application_id'">{{ applicationName(record.application_id ? String(record.application_id) : null) }}</template>
+      <template v-else-if="column.key === 'scope'">
+        <span :class="scopeChipClass(String(record.scope || 'member'))">{{ record.scope_label || record.scope || '成员' }}</span>
+      </template>
+      <template v-else-if="column.key === 'application_id'">
+        <!-- 归属列：平台角色全局唯一一份（未钉应用）；应用角色显示宿主应用 -->
+        <span v-if="!record.application_id" class="kind-chip">全局</span>
+        <span v-else>{{ applicationName(String(record.application_id)) }}</span>
+      </template>
       <template v-else-if="column.key === 'permission_codes'">
         <a-tooltip :title="Array.isArray(record.permission_codes) ? record.permission_codes.join('、') || '尚未授予权限' : ''">
           <a-button type="link" size="small" class="px-0" @click="openGrantEditor(record as RoleRecord)">
@@ -686,18 +743,25 @@ watch([tenantFilter, statusFilter], () => {
     <a-form layout="vertical" class="create-form">
       <template v-if="editingRole">
         <a-form-item label="角色分类"><a-input :value="editingRole ? roleClassLabel(editingRole) : ''" disabled /></a-form-item>
-        <a-form-item label="所属租户"><a-input :value="tenantName(form.tenant_id)" disabled /></a-form-item>
-        <a-form-item label="应用范围"><a-input :value="applicationName(form.application_id || null)" disabled /></a-form-item>
+        <!-- 平台角色全局唯一一份，归属只区分「全局 / 钉在某个应用」 -->
+        <a-form-item label="归属"><a-input :value="form.application_id ? applicationName(form.application_id) : '全局'" disabled /></a-form-item>
         <a-form-item label="角色标识"><a-input v-model:value="form.key" disabled /></a-form-item>
+        <!-- 自定义角色可调整授权范围；模板角色范围固定置灰 -->
+        <a-form-item label="授权范围" :help="isTemplateRole(editingRole) ? '系统模板角色的授权范围由平台固定，不可修改' : ''">
+          <a-select v-model:value="form.scope" :options="scopeOptions" :disabled="isTemplateRole(editingRole)" placeholder="选择授权范围" />
+        </a-form-item>
       </template>
       <template v-else>
-        <a-alert type="info" show-icon message="这里只建自定义平台角色" description="系统五级模板不可新建。应用角色（财务 / 只读）请到应用工作台 → 角色。" class="mb-4" />
-        <a-form-item label="所属租户" required><a-select v-model:value="form.tenant_id" :options="tenantOptions.filter(option => props.tenants.find(tenant => tenant.id === option.value)?.status === 'active')" /></a-form-item>
+        <a-alert type="info" show-icon message="这里只建自定义平台角色" description="系统五级模板不可新建；平台角色全局唯一一份，无需选择所属租户。应用角色（财务 / 只读）请到应用工作台 → 角色。" class="mb-4" />
         <a-form-item label="角色标识" required help="2–100 位小写字母、数字、点、下划线或连字符"><a-input v-model:value="form.key" :maxlength="100" placeholder="ops.reviewer" /></a-form-item>
+        <!-- 授权范围决定角色能被授予的节点上限（默认租户级，选项按操作者范围过滤） -->
+        <a-form-item label="授权范围" required help="范围越高的角色可被授予的权限节点越多">
+          <a-select v-model:value="form.scope" :options="scopeOptions" placeholder="选择授权范围" />
+        </a-form-item>
       </template>
       <a-form-item label="角色名称" required><a-input v-model:value="form.name" :maxlength="120" /></a-form-item>
       <a-form-item label="说明"><a-textarea v-model:value="form.description" :rows="3" :maxlength="500" show-count /></a-form-item>
-      <a-alert v-if="editingRole" message="租户、应用范围和角色标识创建后不可修改；编辑只更新名称和说明，授权关系保持不变。" type="info" show-icon />
+      <a-alert v-if="editingRole" message="应用范围和角色标识创建后不可修改；自定义角色的授权范围与名称说明可在此调整。" type="info" show-icon />
     </a-form>
   </a-modal>
 
@@ -714,7 +778,7 @@ watch([tenantFilter, statusFilter], () => {
       <a-form-item label="源角色">
         <a-input :value="cloneSourceRole ? `${cloneSourceRole.name}（${cloneSourceRole.key}）` : ''" disabled />
       </a-form-item>
-      <a-form-item label="新角色标识" required help="同一租户/应用范围内必须唯一">
+      <a-form-item label="新角色标识" required help="平台角色标识全局唯一，2–100 位小写字母、数字、点、下划线或连字符">
         <a-input v-model:value="cloneForm.key" :maxlength="100" />
       </a-form-item>
       <a-form-item label="新角色名称" required>
@@ -728,26 +792,25 @@ watch([tenantFilter, statusFilter], () => {
         class="clone-policy-note"
         type="info"
         show-icon
-        :message="cloneSourceRole?.status === 'disabled' ? '源角色已停用，副本也会保持停用' : '新副本沿用源角色的租户和应用范围'"
+        :message="cloneSourceRole?.status === 'disabled' ? '源角色已停用，副本也会保持停用' : '新副本沿用源角色的授权范围'"
         description="默认不复制授权。勾选后只复制权限编码目录当前启用的授权及其数据范围；直接成员绑定和用户组角色绑定永远不会复制。"
       />
     </a-form>
   </a-modal>
 
-  <!-- 挂码编辑：共享弹窗负责目录加载、影响预览与原子保存（平台模式：停用码禁选）。 -->
+  <!-- 挂码编辑：共享弹窗负责目录加载、影响预览与两段保存（范围 PATCH + 权限原子替换）。 -->
   <RolePermissionGrantModal
     v-model:open="grantOpen"
     :role-id="grantRoleId"
     :role-name="grantRoleName"
-    :lock-authority-codes="false"
-    :role-kind="grantRoleKind"
-    :role-namespace="grantRoleNamespace"
+    :role-scope="grantRoleScope"
+    :role-is-template="grantRoleIsTemplate"
     catalog-path="/admin/permissions?limit=1000"
     :grants-path="grantRoleId ? `/admin/roles/${grantRoleId}/permissions` : ''"
     @saved="onGrantsSaved"
   />
 
-  <a-modal v-model:open="resourceGrantDialogOpen" title="配置实例资源授权" width="820px" :footer="null">
+  <a-modal v-model:open="resourceGrantDialogOpen" title="配置实例资源授权" width="800px" :footer="null">
     <div class="resource-grant-editor">
       <a-alert
         type="info"
@@ -803,7 +866,7 @@ watch([tenantFilter, statusFilter], () => {
     </div>
   </a-modal>
 
-  <a-modal v-model:open="dataScopeDialogOpen" title="配置角色数据范围" width="760px" ok-text="保存范围" cancel-text="取消" :confirm-loading="savingDataScopes" @ok="saveDataScopes">
+  <a-modal v-model:open="dataScopeDialogOpen" title="配置角色数据范围" width="800px" ok-text="保存范围" cancel-text="取消" :confirm-loading="savingDataScopes" @ok="saveDataScopes">
     <a-alert class="scope-modal-help" type="info" show-icon message="策略按同一权限的多角色结果取并集。未配置有效数据范围的业务请求默认拒绝。" />
     <div v-if="!dataScopeEntries.length" class="scope-empty">请先为该角色配置至少一项权限，再添加对应的数据范围。</div>
     <div v-for="entry in dataScopeEntries" :key="entry.permission_id" class="scope-policy-row">
@@ -817,7 +880,7 @@ watch([tenantFilter, statusFilter], () => {
   </a-modal>
 
   <!-- G22 角色持有者反查弹窗：直连绑定与组继承来源标注，改/停/删角色前的影响面评估。 -->
-  <a-modal v-model:open="holdersOpen" :title="`角色持有者 — ${holdersRole?.name || ''}`" :footer="null" width="720px">
+  <a-modal v-model:open="holdersOpen" :title="`角色持有者 — ${holdersRole?.name || ''}`" :footer="null" width="800px">
     <a-spin :spinning="holdersLoading">
       <p class="mb-2 text-xs text-[var(--color-text-muted)]">
         共 {{ holders.length }} 名成员持有该角色（{{ holdersRole?.key }}）；「组继承」表示经用户组获得，停用组即失效。
@@ -855,9 +918,7 @@ watch([tenantFilter, statusFilter], () => {
 <style scoped>
 .role-toolbar { flex-wrap: wrap; }
 .role-search { width: min(100%, 360px); }
-.role-tenant-filter { width: min(100%, 260px); }
-/* P386 作用域筛选器与名称列三级 tag（中性灰阶 token，深浅主题自适应） */
-.role-kind-filter { width: min(100%, 180px); }
+/* P386 名称列三级 tag（中性灰阶 token，深浅主题自适应） */
 .role-name-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .role-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kind-chip {
@@ -872,21 +933,21 @@ watch([tenantFilter, statusFilter], () => {
 }
 .kind-chip.kind-platform { color: var(--color-text-primary); border-color: var(--color-border-strong); font-weight: 600; }
 .kind-chip.kind-application { border-style: dashed; }
-.scope-hint { margin-bottom: 16px; }
-/* P390 作用域向导三卡：平台禁选置灰，选中黑边浅底（与授权弹窗卡片语言一致） */
-.scope-wizard { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
-.scope-card {
-  display: flex; flex-direction: column; gap: 3px; padding: 12px 14px;
-  border: 1px solid var(--color-border); border-radius: 10px;
-  background: transparent; cursor: pointer; text-align: left;
-  transition: border-color .15s, background .15s;
+/* D5 范围墨阶 chip：与 kind-chip 同底，四级层级用墨量区分（solid > 重描边 > 细描边 > 虚线） */
+.scope-chip {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
 }
-.scope-card:hover:not(:disabled) { border-color: var(--color-border-strong); }
-.scope-card.active { border-color: var(--color-text-primary); background: var(--color-border); box-shadow: inset 3px 0 0 var(--color-text-primary); }
-.scope-card:disabled { cursor: not-allowed; opacity: .55; background: transparent; }
-.scope-card-name { font-weight: 600; font-size: 13.5px; color: var(--color-text-primary); }
-.scope-card-hint { font-size: 11.5px; color: var(--color-text-muted); }
-@media (max-width: 700px) { .scope-wizard { grid-template-columns: 1fr; } }
+.scope-chip.scope-super { background: var(--color-brand); border-color: var(--color-brand); color: var(--color-bg-elevated); font-weight: 600; }
+.scope-chip.scope-tenant { color: var(--color-text-primary); border-color: var(--color-border-strong); font-weight: 600; }
+.scope-chip.scope-member { border-style: dashed; }
+.scope-hint { margin-bottom: 16px; }
 .clone-policy-note { margin-top: 12px; }
 /* 资源级授权表单在桌面横向排列，窄屏折叠为单列，长资源 ID 自动换行。 */
 .resource-grant-editor { display: grid; gap: 16px; }
@@ -898,7 +959,7 @@ watch([tenantFilter, statusFilter], () => {
 .resource-grant-identity code { overflow-wrap: anywhere; color: var(--color-text-secondary); }
 .resource-grant-empty { padding: 24px 12px; color: var(--color-text-secondary); text-align: center; }
 @media (max-width: 650px) {
-  .role-search, .role-tenant-filter, .role-kind-filter { width: 100%; }
+  .role-search { width: 100%; }
   .resource-grant-form { grid-template-columns: 1fr; }
 }
 </style>

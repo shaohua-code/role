@@ -1,17 +1,17 @@
 <script setup lang="ts">
-// 应用工作台（对齐 user-center-sys appAndRoleManagement 信息架构）：
-// 左树选应用 + 右侧「角色 / 权限编码」两个 Tab；未选应用时展示中文空态与配权三步主路径。
-// 列表页入口在侧栏「高级管理」组（默认折叠）；本页是日常配权主入口。
+// 应用工作台：左树选应用 + 右侧「角色 / 权限编码 / 资源权限」Tab。
+// 树顶「新建应用」；节点「更多」也可新建，并承接编辑 / 密钥 / 启停 / 删除。
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
-import { getCachedCapabilities } from '@/api/capabilities'
-import { PAGE_PATHS } from '@/router/navigation'
+import { getCachedCapabilities, TENANT_ADMIN_API_PREFIX } from '@/api/capabilities'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 import AdminPathGuide from '@/components/AdminPathGuide.vue'
-import AppTree, { type AppTreeApplication } from './components/AppTree.vue'
+import AppTree, { type AppMoreAction, type AppTreeApplication } from './components/AppTree.vue'
+import CreateApplicationModal from './components/CreateApplicationModal.vue'
+import ApplicationMoreHost from './components/ApplicationMoreHost.vue'
 import RolesTab from './tabs/RolesTab.vue'
 import PermissionsTab from './tabs/PermissionsTab.vue'
 import MenuTab from './tabs/MenuTab.vue'
@@ -20,9 +20,11 @@ interface TenantOption {
   id: string
   name: string
   status: string
+  kind?: 'organization' | 'consumer'
   can_read_applications?: boolean
   can_manage_applications?: boolean
   can_create_applications?: boolean
+  can_rotate_application_secret?: boolean
 }
 interface ApplicationRecord {
   id: string
@@ -30,8 +32,18 @@ interface ApplicationRecord {
   name: string
   client_id: string
   permission_namespace: string
+  description?: string | null
+  trusted?: boolean
   status: 'active' | 'disabled'
+  redirect_uris?: string[]
+  post_logout_redirect_uris?: string[]
+  registration_policy?: 'disabled' | 'open'
+  registration_role_id?: string | null
+  registration_terms_version?: string | null
+  registration_privacy_version?: string | null
+  backchannel_logout_uri?: string | null
   can_manage?: boolean
+  can_rotate_secret?: boolean
 }
 
 // 三步配权主路径：页头副标题与空态引导共用；业务码由应用管理员在工作台登记，不必找 L1。
@@ -42,6 +54,10 @@ const MAIN_PATH_STEPS = [
 ] as const
 
 const router = useRouter()
+const createOpen = ref(false)
+const createTenantId = ref('')
+const moreAction = ref<AppMoreAction | ''>('')
+const moreApplicationId = ref('')
 
 const props = withDefaults(defineProps<{
   active: boolean
@@ -58,16 +74,56 @@ const props = withDefaults(defineProps<{
 })
 
 // P404：仅 L1 / L3 可新建应用；L2 即使能管已钉住的应用也不能创建。
+// 平台模式 /admin/tenants 不带 can_create_applications，用 consoleMode 判定，避免按钮被藏掉。
 const canCreateApplication = computed(() => {
-  if (getCachedCapabilities()?.platform_admin) return true
+  if (props.consoleMode === 'platform' || getCachedCapabilities()?.platform_admin) return true
   return props.tenants.some(tenant => tenant.can_create_applications === true)
 })
 
-function goApplicationManagement(): void {
-  void router.push(PAGE_PATHS.applications)
+const emit = defineEmits<{ changed: [] }>()
+
+const creatableTenants = computed(() => props.tenants.filter(tenant => {
+  if (tenant.status !== 'active') return false
+  if (props.consoleMode === 'platform' || getCachedCapabilities()?.platform_admin) return true
+  return tenant.can_create_applications === true
+}))
+
+const treeTenants = computed(() => props.tenants
+  .filter(tenant => tenant.can_read_applications !== false)
+  .map(tenant => ({
+    id: tenant.id,
+    name: tenant.name,
+    canCreate: creatableTenants.value.some(item => item.id === tenant.id),
+  })))
+
+function openCreate(tenantId?: string): void {
+  createTenantId.value = tenantId || creatableTenants.value[0]?.id || ''
+  createOpen.value = true
 }
 
-const emit = defineEmits<{ changed: [] }>()
+async function onApplicationCreated(payload: { id: string }): Promise<void> {
+  emit('changed')
+  await loadApplications()
+  selectedId.value = payload.id
+}
+
+function onApplicationMore(payload: { id: string; action: AppMoreAction }): void {
+  selectedId.value = payload.id
+  moreApplicationId.value = payload.id
+  moreAction.value = payload.action
+}
+
+function onSettingsChanged(): void {
+  emit('changed')
+  void loadApplications()
+}
+
+function onApplicationDeleted(): void {
+  emit('changed')
+  selectedId.value = ''
+  moreApplicationId.value = ''
+  void loadApplications()
+}
 
 const applications = ref<ApplicationRecord[]>([])
 const selectedId = ref('')
@@ -75,7 +131,7 @@ const loading = ref(false)
 let requestSequence = 0
 let hydratedCatalogGeneration = -1
 
-// ===== P397 应用概览统计条：三个 Tab 加载后各自上报计数，父级聚合展示 =====
+// ===== P397/D4 应用概览计数：各 Tab 加载后上报，以小徽标并入 Tab 标签（不再单设统计条与 Tab 重名） =====
 const tabStats = ref<{ roles: number | null, permissions: number | null, resources: number | null }>({
   roles: null, permissions: null, resources: null,
 })
@@ -84,14 +140,11 @@ function onTabStats(key: 'roles' | 'permissions' | 'resources', count: number): 
   tabStats.value[key] = count
 }
 
-const overviewItems = computed(() => [
-  { key: 'roles', label: '角色', count: tabStats.value.roles },
-  { key: 'permissions', label: '权限码', count: tabStats.value.permissions },
-  { key: 'resources', label: '资源', count: tabStats.value.resources },
-] as const)
-
 const selectedApplication = computed(() =>
   applications.value.find(item => item.id === selectedId.value) || null)
+
+const moreApplication = computed(() =>
+  applications.value.find(item => item.id === moreApplicationId.value) || null)
 
 // 左树展示用：补齐租户分组名（租户字典可能在应用之后就绪，computed 自动跟随）。
 const treeApplications = computed<AppTreeApplication[]>(() => applications.value.map(item => ({
@@ -100,10 +153,15 @@ const treeApplications = computed<AppTreeApplication[]>(() => applications.value
   name: item.name,
   client_id: item.client_id,
   status: item.status,
+  trusted: item.trusted === true,
   tenant_name: props.tenants.find(tenant => tenant.id === item.tenant_id)?.name || '未知租户',
 })))
 
 // 把壳层字典行换算成工作台需要的字段，避免对 Row 的不确定类型直接断言。
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(item => String(item)) : []
+}
+
 function toApplicationRecords(rows: Array<Record<string, unknown>>): ApplicationRecord[] {
   return rows.map(row => ({
     id: String(row.id),
@@ -111,8 +169,18 @@ function toApplicationRecords(rows: Array<Record<string, unknown>>): Application
     name: String(row.name),
     client_id: String(row.client_id ?? ''),
     permission_namespace: String(row.permission_namespace ?? ''),
+    description: typeof row.description === 'string' ? row.description : null,
+    trusted: row.trusted === true,
     status: row.status === 'disabled' ? 'disabled' : 'active',
+    redirect_uris: asStringArray(row.redirect_uris),
+    post_logout_redirect_uris: asStringArray(row.post_logout_redirect_uris),
+    registration_policy: row.registration_policy === 'open' ? 'open' : 'disabled',
+    registration_role_id: row.registration_role_id ? String(row.registration_role_id) : null,
+    registration_terms_version: typeof row.registration_terms_version === 'string' ? row.registration_terms_version : null,
+    registration_privacy_version: typeof row.registration_privacy_version === 'string' ? row.registration_privacy_version : null,
+    backchannel_logout_uri: typeof row.backchannel_logout_uri === 'string' ? row.backchannel_logout_uri : null,
     can_manage: row.can_manage === true,
+    can_rotate_secret: row.can_rotate_secret === true,
   }))
 }
 
@@ -151,7 +219,7 @@ async function loadApplications(): Promise<void> {
       // 租户模式：逐个可读租户请求并合并；个别租户权限刚被撤销不影响其它目录。
       const readable = props.tenants.filter(tenant => tenant.can_read_applications)
       const responses = await Promise.all(readable.map(tenant =>
-        api<Array<Record<string, unknown>>>(`/tenant-admin/applications?tenant_id=${encodeURIComponent(tenant.id)}`).catch(() => [] as Array<Record<string, unknown>>),
+        api<Array<Record<string, unknown>>>(`${TENANT_ADMIN_API_PREFIX}/applications?tenant_id=${encodeURIComponent(tenant.id)}`).catch(() => [] as Array<Record<string, unknown>>),
       ))
       result = responses.flatMap(rows => toApplicationRecords(rows))
     }
@@ -210,9 +278,13 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
       <AppTree
         class="max-h-80 w-full shrink-0 overflow-y-auto lg:h-full lg:max-h-none lg:w-64"
         :applications="treeApplications"
+        :tenants="treeTenants"
+        :can-create="canCreateApplication"
         :selected-id="selectedId"
         :loading="loading"
         @select="onSelect"
+        @create="openCreate"
+        @more="onApplicationMore"
       />
       <div class="min-w-0 flex-1 lg:h-full lg:min-h-0 lg:overflow-y-auto">
         <!-- 无任何应用：给出三步主路径 + 创建出口（Wave 4 空态强化）。 -->
@@ -220,7 +292,7 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
           <AdminEmpty emoji="🧩" description="还没有可管理的应用">
             <div class="flex flex-col items-center gap-4">
               <AdminPathGuide :steps="MAIN_PATH_STEPS" title="创建应用后，按以下三步完成日常配权" />
-              <a-button v-if="canCreateApplication" type="primary" @click="goApplicationManagement">前往应用管理创建</a-button>
+              <a-button v-if="canCreateApplication" type="primary" @click="openCreate()">新建应用</a-button>
               <p v-else class="m-0 text-sm text-[var(--color-text-muted)]">请联系租户管理员创建应用，并任命你为应用管理员。</p>
             </div>
           </AdminEmpty>
@@ -235,23 +307,25 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
             <span class="inline-flex min-w-0 items-center gap-2">
               <span class="truncate">{{ selectedApplication.name }}</span>
               <a-tag v-if="selectedApplication.status === 'disabled'" color="default">已停用</a-tag>
+              <!-- U29：详情头与组织台结构统一——名称 + 灰标；client_id 用等宽灰标呈现，替代纯长描述 -->
+              <a-tag color="default" class="max-w-[180px] truncate font-mono">{{ selectedApplication.client_id }}</a-tag>
             </span>
           </template>
-          <!-- P397 应用概览统计条：角色 / 权限码 / 资源 三项计数，由各 Tab 加载后上报 -->
-          <div class="mb-3 flex flex-wrap items-center gap-2">
-            <span class="text-xs text-[var(--color-text-muted)]">应用概览</span>
-            <span v-for="item in overviewItems" :key="item.key"
-              class="inline-flex items-center gap-1.5 border border-solid border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 py-0.5 rounded-full text-xs text-[var(--color-text-secondary)]">
-              {{ item.label }}
-              <span class="font-mono font-medium text-[var(--color-text-primary)] tabular-nums">{{ item.count ?? '—' }}</span>
-            </span>
-          </div>
+          <!-- D4 重设计：概览计数并入 Tab 标签（小型徽标），消除「统计条胶囊与 Tab 重名」的双层混淆 -->
           <!-- 提示降噪 P399：两层权限规则全文只保留这一处弱化小字，Tab 内不再重复横幅 -->
+          <!-- U19 文案去歧义：「管管理台」连读易误读为错字，改「控制管理台」 -->
           <p class="mb-3 text-xs text-[var(--color-text-muted)]">
-            权限码管管理台菜单/按钮显隐 · 接口鉴权看角色（多角色并集） · 资源树只管业务端菜单/按钮
+            权限码控制管理台菜单/按钮显隐 · 接口鉴权看角色（多角色并集） · 资源树只管业务端菜单/按钮
           </p>
         <a-tabs>
-            <a-tab-pane key="roles" tab="角色">
+            <a-tab-pane key="roles">
+              <template #tab>
+                <span class="inline-flex items-center gap-1.5">
+                  角色
+                  <span v-if="tabStats.roles != null"
+                    class="inline-flex min-w-5 justify-center bg-[var(--color-bg-subtle)] px-1.5 rounded-full font-mono text-[11px] leading-4 text-[var(--color-text-secondary)] tabular-nums">{{ tabStats.roles }}</span>
+                </span>
+              </template>
               <RolesTab
                 :active="active"
                 :application="selectedApplication"
@@ -260,7 +334,14 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
                 @stats="count => onTabStats('roles', count)"
               />
             </a-tab-pane>
-            <a-tab-pane key="permissions" tab="权限编码">
+            <a-tab-pane key="permissions">
+              <template #tab>
+                <span class="inline-flex items-center gap-1.5">
+                  权限编码
+                  <span v-if="tabStats.permissions != null"
+                    class="inline-flex min-w-5 justify-center bg-[var(--color-bg-subtle)] px-1.5 rounded-full font-mono text-[11px] leading-4 text-[var(--color-text-secondary)] tabular-nums">{{ tabStats.permissions }}</span>
+                </span>
+              </template>
               <PermissionsTab
                 :active="active"
                 :application="selectedApplication"
@@ -270,7 +351,14 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
               />
             </a-tab-pane>
             <!-- P357 资源权限：应用显式资源树（菜单/按钮/数据规则），替代 P356 权限码推导视图 -->
-            <a-tab-pane key="menus" tab="资源权限">
+            <a-tab-pane key="menus">
+              <template #tab>
+                <span class="inline-flex items-center gap-1.5">
+                  资源权限
+                  <span v-if="tabStats.resources != null"
+                    class="inline-flex min-w-5 justify-center bg-[var(--color-bg-subtle)] px-1.5 rounded-full font-mono text-[11px] leading-4 text-[var(--color-text-secondary)] tabular-nums">{{ tabStats.resources }}</span>
+                </span>
+              </template>
               <MenuTab
                 :active="active"
                 :application="selectedApplication"
@@ -283,6 +371,21 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
         </a-card>
       </div>
     </div>
+    <CreateApplicationModal
+      v-model:open="createOpen"
+      :api-prefix="apiPrefix"
+      :tenants="creatableTenants"
+      :preset-tenant-id="createTenantId"
+      @created="onApplicationCreated"
+    />
+    <ApplicationMoreHost
+      v-model:action="moreAction"
+      :application="moreApplication"
+      :tenants="tenants"
+      :api-prefix="apiPrefix"
+      @changed="onSettingsChanged"
+      @deleted="onApplicationDeleted"
+    />
   </section>
 </template>
 

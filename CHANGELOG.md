@@ -1,4 +1,557 @@
+#﻿# 变更日志
+
+## 2026-11-12 重设计「项目对接指南」页：契约文档 → 人话旅程（墨韵编辑风，2 文件）
+
+针对「要简化、让非开发者也能看懂 + 高级审美」：把 OIDC 契约文档页重写为面向所有人的接入旅程，技术细节折叠保底。
+
+- **信息架构重排：** AdminPageHeader+6 章节文档体 → 「深色渐变封面（恒近黑，双主题成立，超大编号装饰 + 网格纹理）→ 三句话看懂（是什么/谁来接/怎么用）→ 五步旅程垂直时间线（emoji 节点圆片 + 连接线 + 执行者徽章：管理员配置/开发者接入）→ 上线检查清单 → 页脚范围说明」。
+- **内容人话化（guideContent.ts 全量重写）：** 每步一句大白话 + 比喻（验票进园、身份证、问一句能不能做），要点 3 条内；原契约条款与 check / my-resources 代码示例全部保留但收进每步「契约细节」折叠区（原生 details，无 JS），开发者按需展开，事实不丢失。
+- **视觉（frontend-design + aesthetic-usability 原则）：** 墨韵编辑风——zinc 黑白体系、超大标题紧凑字距、等宽编号、emoji 图形锚点（符合用户偏好）、IntersectionObserver 进场上浮渐显（staggered，尊重 prefers-reduced-motion）、卡片 hover 阴影微升。
+- **踩坑与修复：** 封面按钮文字色被 Tailwind v4 无层表单 reset（button{color:inherit}）压掉（与侧栏折叠按钮同根因），按项目先例改无层 scoped 规则固定；首验 FAIL → 修复 → 复验 PASS（浅/深主题 computed color 佐证：主按钮白底 #18181b 深字、ghost 近黑底白 75%）。
+- **验证：** lint/build 双绿；浏览器验收两轮（首轮 4/6 PASS + 按钮缺陷，复验全 PASS，浅/深双主题、折叠交互、控制台无报错）。
+
+## 2026-11-11 管理台新增只读「项目对接指南」页
+
+按现行 OIDC + SDK 2.x 契约新增侧栏页，不恢复已归档的接入向导，不新增菜单权限码，不做业务联调。
+
+- **页面：** `frontend/src/views/integration-guide/`。页头唯一主按钮进入应用工作台；正文六节（准备应用、权限与范围、OIDC、在线判权、资源树、交接清单），步骤条跟随滚动高亮，示例只含 check 与 my-resources，可复制。
+- **入口：** 「应用与权限」组，排在应用工作台之后，复用 `menu.application_workspace`。路径 `/integration-guide`。旧地址 `/project-integration` 改重定向到本页。
+- **文档：** 产品需求 §2.2 / §4.1 / §7，应用对接开头与第 10 节，根 README 与 frontend README。
+- **验证：** 宿主机 `npm run build`（vue-tsc + Vite）exit 0。浏览器以走查账号登录 `http://127.0.0.1:5175`：侧栏「应用与权限」可见本页；步骤「在线判权」滚动并高亮；主按钮进入 `/application-workspace`；`/project-integration` 先落到 `/integration-guide`。浅色与深色、1440 与 375 均无页级横向溢出，375 步骤条可横滑、主按钮可见。复制在该自动化浏览器被剪贴板策略拒绝，按钮显示「复制失败」（选区回退同样失败）；人工剪贴板未再测。租户模式刷新后仍回侧栏第一项，属既有 `initializeConsole` 行为，本轮未改。后端测试未运行。
+
+## 2026-11-11 修复租户工作台「用户管理」连弹「缺少当前租户组织查看权限」：组织读判权与菜单入口码同源（1 源码 + 1 测试）
+
+用户实测（hahaha / sss@qq.com，演示租户）：侧栏「用户管理」可见可进，页面加载即连弹 3 个 403 toast（成员列表 / 组织列表 / 角色目录三个接口全部被拒）。
+
+- **根因（口径漂移）：** 绿场 §6.6 用户管理融合后，租户模式「用户管理」菜单（入口码 `menu.users`）渲染的就是 TenantAccessManagement（成员组织归属/角色数据范围页）；但该页三个数据源接口（/tenant-admin/members、/organizations、/roles）走 `has_organization_admin_access(read)`，旧实现只认「tenant.admin/app.admin 角色 key」——持 `menu.users` 自定义角色（ceshi.ss）但无模板管理角色的用户被菜单放行、被接口成批拒绝。且数据范围端点把同一读检查复用为「L1/L3/L2 任一可见」的角色可见性语义（F4 写分级：L2 只读），两套语义耦合在一个判权里。
+- **修复（admin_authorization.py has_organization_admin_access）：** 读分支改为「any-of 菜单码（menu.organization_workspace 组织工作台 ∪ menu.users 租户模式用户管理）→ 放行；兜底 CONSOLE_ADMIN_ROLE_KEYS 角色可见性（保 L2 只读，L2 模板不含租户级菜单码）」；manage 分支不变（button.org.manage，L2 手工挂码也进不了写路径）。判权单元对齐产品口径「后端接口按菜单/按钮节点判权」。
+- **测试：** test_admin_authorization 重写读判权用例（any-of 两码 + 角色兜底 + 双无拒绝 fail-closed）；test_data_scope_grading 的 L2 只读两用例随兜底分支恢复通过。全量 355 用例全绿（含本轮新增 2 项）。
+- **数据佐证：** hahaha（sss@qq.com）在演示租户持 ceshi.ss（15 码含 menu.users，无 menu.organization_workspace、无 button.org.manage）——修复后页面三个接口 read 在演示租户放行；组织归属/成员状态等写操作仍被 button.org.manage 收口（其无此码，前端操作列同步隐藏）。
+- **验证：** 容器内 unittest 全量 355 全绿；浏览器未复验（无 hahaha 登录凭据），待用户刷新租户工作台用户管理页确认 toast 消失、成员/组织/角色三表正常出数。
+
+## 2026-11-11 新建用户支持「初始角色（可选）」：前端下拉 + 后端 L4 自动补齐对齐 bind_role（2 文件）
+
+针对「新建用户没有指定他是什么级别」——后端 AdminUserCreate.role_id 早已支持（挂第一个所选租户，判权与 bind_role 同口径），但前端表单未暴露，本轮补齐：
+
+- **前端（UserManagement.vue）：** 新建用户弹窗在「绑定应用」后新增「初始角色（可选）」单选下拉——候选复用角色目录（/admin/roles，后端按操作者范围秩过滤，恒向下兼容），展示「名称（应用名）〔范围标签〕」与配置角色弹窗同口径；支持搜索与清除；不选则创建为无角色成员；提交体带 role_id（空串转 undefined）。
+- **后端（users.py create_user）：** 初始角色为自定义应用角色时自动补该应用的成员（L4）模板角色，与 bind_role 的 is_application_class_role 口径一致。**口径说明（验收确认）**：L2 模板「应用管理员 app.admin」按既有设计不触发 L4 补齐（is_application_class_role 排除四模板 key，bind_role 手动任命 L2 同样不补）——L2 为管理角色非业务成员角色；自定义应用角色（如「文档只读」「测试用户级别角色」）才自动补 L4。
+- **验证：** 前端 lint/build 双绿；后端相关 unittest 26 项全绿（test_walkthrough_fixes / test_global_platform_roles / test_p404_visibility）；浏览器验收——弹窗出现初始角色下拉、候选 8 项带范围标签（超管/租户级/应用级/成员）、选「应用管理员（演示应用）〔应用级〕」+ 演示租户创建成功（init-role-check@example.com，保留作验收证据），用户详情「角色（1）= 应用管理员」初始角色生效；「L4 自动补齐」预期对 L2 模板不成立系验收指令口径写错（同前「登录主题」偏差），非缺陷。
+
+## 2026-11-11 应用角色跨租户任命放开：候选可勾选 + 后端生效语义同步放宽（4 源码 + 3 测试 + 1 前端）
+
+针对「不是要展示出来，要能选，向下兼容的」——上一轮「置灰展示」方案被否定，本轮把跨租户应用角色真正放开为可勾选可绑定，后端生效语义同步改写，保证绑定真实生效：
+
+- **生效语义（effective_roles.py）：** `authorized_role_ids_statement` 直连分支删除「成员与角色同租户」匹配；`list_effective_roles` 删除应用类角色的同租户条件——应用角色按其所属应用生效（application_id 精确匹配，不跨应用泄漏），跨租户任命后在该应用上下文命中。
+- **写入口放宽（access_control.py bind_role / unbind_role / replace_user_role_bindings + users.py create_user）：** 删除「应用角色必须与目标成员同租户」校验（422 口径作废）；改为按操作者数据边界校验（非超管仅可绑定可见应用内的角色，403；超管全量放行）；L4 自动补齐、任命天花板、平台租户隔离防呆等既有守卫不变。
+- **顺带修复真实 bug（rbac_guards.py operator_scope）：** 上一轮改动引入的 `Role.application_id.is_(None)` 过滤把应用类角色排除出操作者范围推导——L2/L4 的范围恒降级为 member，导致 list_roles 连操作者自己的 app.admin 都不可见（test_p404_visibility 失败根因）。修复为看全部有效角色（含钉应用角色），test_p404_visibility / p405 / role_guards 等 63 项随之恢复。
+- **前端（UserManagement.vue）：** 删除 crossTenant 置灰与「· 需{租户}成员资格」标注，disabled 恢复「仅停用角色不可勾（已绑定可移除）」；弹窗提示改为「应用角色按其所属应用生效，可跨租户任命给任意租户成员」。
+- **测试：** test_global_platform_roles 跨租户用例由「422 断言」改写为「绑定成功 + 应用上下文生效 + 租户上下文不泄漏」三段断言；test_user_group_role_scope 修复复合主键模型误用 `UserGroupRole.id` 的断言（改 func.count()，上轮遗留）；test_session_management 两处审计断言按 target_id 限定本用例写入（开发库残留 revoke 审计在 READ COMMITTED 下可见导致误报，非代码缺陷）。
+- **验证：** 容器内 `python -m unittest discover`（iam-platform-api-1）全量 **353 用例全绿**；前端 lint/build 双绿；浏览器验收 PASS——admin 给 leleleya0105221@gmail.com（平台管理租户）勾选「应用管理员（演示应用）〔应用级〕」无置灰、保存成功（PUT role-bindings 200，toast「已保存 3 个角色」）、重开弹窗确认持久化，弹窗提示已是新口径。已知小瑕疵（与本轮无关）：该弹窗保存成功后偶发关闭动画停在中间态（遮罩残留、刷新恢复），数据不受影响，待另行跟进。
+
+## 2026-11-11 「配置租户角色」候选全量可见：跨租户应用角色置灰标注（替代隐藏，1 文件）
+
+针对「超管候选不全」（应用角色被按租户归属隐藏）的反馈，按「可见全集 + 不可绑即置灰」重做候选口径：
+
+- **候选放开（UserManagement.vue）：** 移除「应用角色仅显示用户所在租户」的前端隐藏（两处 filter），候选 = 操作者可见全量角色（后端 /admin/roles 已按范围秩过滤，恒向下兼容；低权操作者因数据边界天然只见子集，不受影响）。
+- **跨租户应用角色置灰：** `role.application_id` 宿主租户 ≠ 目标租户时 checkbox 禁用并标注「· 需{租户名}成员资格」——依据后端生效语义（应用角色仅对其宿主租户成员生效，跨租户绑定 422 拒绝，access_control.py replace_user_role_bindings），已绑定项保留可移除。
+- **文案：** 弹窗提示改为「应用角色仅对其宿主租户的成员生效——跨租户应用角色已置灰，如需绑定请先为用户添加对应租户成员关系」。
+- **验收：** 浏览器实测 PASS（见下方条目：候选 6 项全量、4 项置灰不可勾、切演示租户后全部可勾并实测勾选/复原）；lint/build 双绿。pytest 未运行（纯前端改动）。
+
+## 2026-11-11 「配置租户角色」候选全量可见 + 跨租户应用角色置灰浏览器验收：PASS
+
+admin 会话浏览器实测（a11y 快照 + DOM 取证 + 网络请求核验），对 leleleya0105221@gmail.com（绑定租户二+平台管理租户+组织12应用deer）验证「配置租户角色」穿梭框候选不再按租户隐藏、跨租户应用角色置灰不可勾选。全程只读未保存。
+
+- **条件 1 PASS（候选清单）：** 弹窗目标租户=平台管理租户，左列「6 项可选角色」含全部角色，其中 4 项演示租户角色置灰并标注「· 需演示租户成员资格」（11111（weqe）、应用成员（演示应用）〔成员〕、应用管理员（演示应用）〔应用级〕、文档只读（演示应用）〔应用级〕），可勾选 2 项为「测试用户级别角色〔应用级〕」「平台超级管理员〔超管〕」；右列「2 项已配置角色」（平台租户管理员〔租户级〕/租户管理员〔租户级〕）展示不受影响。
+- **条件 2 PASS（置灰不可勾选）：** 置灰项 checkbox 带 `disabled` 属性、label 含 `ant-checkbox-wrapper-disabled`；模拟点击 label 与 input 后 checked 仍为 false，左列无勾选计数，右列数量不变。
+- **条件 3 PASS（提示文案）：** 弹窗提示含「应用角色仅对其宿主租户的成员生效——跨租户应用角色已置灰，如需绑定请先为用户添加对应租户成员关系。」
+- **条件 4 PASS（切演示租户可勾选）：** 目标租户下拉共 3 项（平台管理租户/演示租户/租户二），切「演示租户」后左列变「8 项可选角色」全部可勾选（input.disabled=false，应用角色不再带成员资格标注），右列「0 项已配置角色」；实测勾选「应用管理员（演示应用）〔应用级〕」成功（header 1/8 项可选角色），随后取消勾选恢复原状。
+- **只读核验：** 未点击「保存角色」，会话内 79 个网络请求全部 GET、无写请求；目标租户切换为弹窗内 UI 状态未持久化。弹窗经 X 触发关闭（离屏渲染致关闭动画帧节流、DOM 停留 zoom-leave，不影响数据）。
+
+## 2026-11-11 用户配置角色「向下兼容」口径显性化：穿梭框范围标签 + 组候选 scope 字段（3 文件）+ 一次导入错误事故修复
+
+针对「用户配置角色恒向下兼容、不能向上」的口径要求，审计确认后端写入口已全守（users.py:477 / groups.py / invitations.py 均 ensure_scope，候选数据源 /admin/roles 已按操作者秩过滤），本轮补齐表达层让口径可见：
+
+- **groups.py `list_user_group_roles`：** 候选响应补 `scope`/`scope_label`（effective_role_scope 推导，秩过滤不变）。
+- **UserManagement「配置租户角色」穿梭框：** RoleOption/RoleTransferItem 补范围字段，选项渲染「角色名（应用名）〔范围标签〕· 停用态」；弹窗提示补「绑定口径恒向下兼容：仅可绑定授权范围不高于你的角色，应用角色仅可绑定该用户所在租户」。
+- **GroupRelationModal 组角色候选：** 选项 description 拼 scope_label（与用户配置弹窗同口径）。
+- **事故与修复：** groups.py 曾误从 `rbac_guards` 导入 `effective_role_scope_label`（实际定义在 `permission_kinds`），uvicorn reload 导入失败致 API 进程短暂不可用（health/ready 超时）；改为从 `permission_kinds` 导入后 reload 恢复，ready 200。
+- **验收（浏览器实测 PASS）：** admin 会话——平台管理租户候选「测试用户级别角色〔应用级〕/平台超级管理员〔超管〕」；演示租户 7 项覆盖全部四类标签（含「应用管理员（演示应用）〔应用级〕」）；提示文案逐字命中；三个租户均无用户组，GroupRelationModal 以代码佐证。前端 lint/build 双绿。pytest 未运行（本机无 python）。
+
+## 2026-11-11 角色配置越权可见性收口（spec: harden-role-visibility-scoping）：总纲 + 0007 迁移执行 + 四渠道端到端验收
+
+针对用户实测四项越权可见（应用级角色看到所有角色/新建可选超管租户级/挂码树见向上菜单/用户分配角色见所有角色），按 [spec](.trae/specs/harden-role-visibility-scoping/spec.md) 完成三线修复（明细见下方四条实现记录）并完成端到端验收。
+
+- **迁移执行（已授权，门禁齐备）：** `deploy/backup-postgres.ps1` 受保护备份完成（`D:\secure-backups\iam-dev\iam-postgres-20261111T065955Z-bf4c3169.dump` + SHA-256 sidecar `3bedeec8…`，pg_restore --list 校验通过）；`docker compose --profile migrate run` 执行 Alembic `0006→0007_role_scope_backfill`——回填 roles.scope IS NULL 共 **1 行**（即「平台租户管理员 platform.tem」，推导为租户级；该行正是 NULL 旁路下应用级操作者越权可见的实锤数据），回填后 NULL 残留 0；`alembic current=head=0007`、`/api/v1/ready` 200（登录门禁解除）。手册命令中的 `--build` 在本机因 docker-credential-desktop 不在 PATH 失败，开发环境源码 bind-mount 下省略不影响迁移正确性。
+- **渠道 1 角色列表 PASS（关键实证）：** 纯应用级账号 applevel-t1@demo.example.com（仅绑 ceshi.ss）登录后侧栏仅 4 菜单；`GET /admin/roles` 返回 total=0——管理员视角可见的「租户管理员（租户级）/平台租户管理员（租户级）/平台超级管理员（超管）」全部不可见。
+- **渠道 2 新建角色 PASS：** 补挂 button.roles.manage 后新建弹窗「授权范围」下拉仅「应用级」一项（a11y listbox + DOM 下拉双证据），无超管/租户级。
+- **渠道 3 挂码树 PASS：** L1 配置 ceshi.ss（应用级）树 15 节点，「组织工作台/成员邀请/用户组/租户管理」等租户级菜单整树不渲染；范围切租户级展开 24 节点、切回应用级收窄并 toast「已按新授权范围移除 1 个超出节点」；保存流程正常（0→4→5 项两次原子更新成功）。
+- **渠道 4 用户分配角色 PASS：** applevel-t1 无用户写操作按钮码，「配置角色」入口正确不可见（最小权限）；无任何越权角色列表出现。
+- **L3 用户组渠道：** 演示租户无任何用户组，弹窗无法打开（BLOCKED）；同口径佐证通过——L3 角色目录 7 项最高租户秩、无超管（platform.admin 未出现），groups.py 秩过滤 + pytest 用例（未运行）兜底。
+- **偏差澄清：** 「登录主题 menu.themes」在应用级树可见——后端 MENU_CATALOG 中其 min_scope 本为 app（按应用维度的主题配置），过滤行为正确，系验收指令预期写错，非缺陷。
+- **观察（产品口径待定，非越权）：** ① app 级操作者角色列表为空——其自身持有的 ceshi.ss 也不可见，疑与「管理租户边界」口径相关（方向过严安全）；② app 级账号 consoleMode 落租户模式，角色页数据源与平台端点的可见口径差异待产品确认。
+- **验证：** 前端 lint/build 双绿；后端 pytest 未运行（本机无 python/docker CLI，用例已就绪）；Alembic 迁移已在开发库执行并验证；浏览器验收 5 轮（明细见下方四条记录）。
+
+## 2026-11-11 L3 用户组「分配角色」超管角色不可见浏览器验收：BLOCKED（租户无任何用户组，弹窗无法打开；候选口径经 API+代码佐证通过）
+
+以 l3-admin@demo.example.com（走查·L3 租户管理员）登录浏览器实测，验证用户组分配角色候选不再出现超管角色。全程只读未保存。
+
+- **登录与入口：** 原会话「纯应用级测试一号」退出后以 L3 账号登录成功；组织工作台（/organization-workspace）用户组标签显示「该租户还没有用户组」，「高级管理 → 用户组」（/groups）显示「当前租户还没有用户组」，组织树全部节点（演示租户/组织/1212/21313）均无组。
+- **候选 API 证据：** 登录态 fetch GET /api/v1/admin/groups → 200 `[]`（演示租户 0 组）；GET /api/v1/admin/groups/00000000-0000-0000-0000-000000000000/roles → 404 `{"detail":"用户组不存在"}`。无真实组导致分配角色弹窗（GroupRelationModal → GET /admin/groups/{id}/roles）无法打开，弹窗内候选清单未取得。
+- **同口径佐证（通过）：** GET /api/v1/admin/roles?limit=500 → 200，L3 可见角色目录共 7 项：11111(22211,app)、测试用户级别角色(ceshi.ss,app)、应用成员(app.member,member)、应用管理员(app.admin,app)、文档只读(demo.reader,app)、租户管理员(tenant.admin,tenant)、平台租户管理员(platform.tem,tenant)；最高范围为 tenant 秩，无任何超管/平台秩角色（platform.admin 未出现）。
+- **代码佐证：** groups.py list_user_group_roles 按 ROLE_SCOPE_RANK[effective_role_scope(role)] <= actor_rank 过滤候选；tests/test_user_group_role_scope.py 覆盖 L3 组角色目录隐藏 super 角色与 PUT 绑定 403。
+- **结论与建议：** 无法在 UI 直接完成弹窗候选清单核对（无组可开弹窗）；如需端到端证据，需先在演示租户创建任一用户组（本次只读约束下未创建）后重开弹窗核对。
+
+## 2026-11-11 ceshi.ss 补挂「平台角色写操作」按钮码浏览器验收：PASS（0 → 4 → 5 项）
+
+admin 会话浏览器实测（a11y 快照 + DOM 取证 + 网络请求），对「测试用户级别角色 ceshi.ss」（应用级，已挂 4 菜单码）补挂按钮码，全程只改该角色。
+
+- **退出换号：** 原会话为「纯应用级测试一号」（无管理权限视角），点「退出」回登录页后以 admin@example.com 重新登录进入 /roles（ceshi.ss 列表行显示 4 项，与上轮保存结果一致）。
+- **弹窗勾选 PASS：** 打开 ceshi.ss「配置权限」弹窗，已有勾选保持（运营总览/用户管理/应用工作台/平台角色 4 菜单，「已选 4」）；勾选「平台角色」菜单下「平台角色写操作 button.roles.manage」按钮后「已选 5」，5 个勾选节点 DOM 级确认。
+- **预览与保存 PASS：** 「预览影响」出现「新增 平台角色写操作（button.roles.manage）：潜在影响 1 名，其他通用角色已覆盖 0 名」与「角色关联 1 名活动成员」估算，「保存授权」由 disabled 转 enabled；确认弹窗「新增 1 项授权；撤销 0 项授权」→「确认并保存」→ toast「角色权限已原子更新」，弹窗关闭。
+- **落地验证 PASS：** 列表行 ceshi.ss 权限「4 项 → 5 项」。网络证据：GET /admin/roles/fbe7d8eb…/permissions、POST …/permissions/preview、PUT …/permissions 均发出且无失败标记。
+- **验证方式说明：** 树复选框继续用等价用户 click 事件派发（已验证可靠），其余操作全部走原生控件交互；新会话弹窗 ref 需重新快照获取。
+
+## 2026-11-11 挂码树按角色范围过滤浏览器回归验收：条件 2/3/4 PASS，条件 1 部分通过（1 处与预期偏差）
+
+admin 会话浏览器实测（a11y 快照 + DOM 取证 + 网络请求），对 ceshi.ss（测试用户级别角色，应用级）执行「配置权限」弹窗全流程回归。
+
+- **条件 1（应用级树过滤）部分 PASS：** 应用级授权范围下树渲染 15 节点，租户级菜单「组织工作台 menu.organization_workspace」「成员邀请 menu.invitations」「用户组 menu.groups」「租户管理 menu.tenants」均不渲染；应用级可达的「运营总览 menu.overview」「用户管理 menu.users」「应用工作台 menu.application_workspace」「平台角色 menu.roles」「审计日志 menu.audit」「鉴权模拟 menu.authz」等正常可见。**偏差：**「登录主题 menu.themes」及「登录主题写操作 button.themes.manage」在应用级树中仍可见（验收预期其不出现，需核对 min_scope 口径）。
+- **条件 2（切租户级展开）PASS：** 授权范围切「租户级」后树由 15 节点立即展开为 24 节点，「组织工作台 + button.org.manage」「成员邀请 + button.invitations.manage」「用户组 + button.groups.manage」「租户管理 menu.tenants」「用户写操作 button.users.manage」「任命应用管理员 button.app_role.assign」等租户级节点全部出现。
+- **条件 3（切回应用级收窄 + 提示）PASS：** 勾选「组织工作台」后切回「应用级」：树收窄回 15 节点、该勾选被清除（checked 1→0），toast「已按新授权范围移除 1 个超出节点」出现。
+- **条件 4（勾 4 菜单 + 预览 + 保存）PASS：** 应用级树勾选运营总览/用户管理/应用工作台/平台角色四个菜单（按钮均未勾，「已选 4」）；「预览影响」展示 4 条新增估算（各潜在影响 1 名）；确认弹窗「新增 4 项授权；撤销 0 项授权」→「确认并保存」→ toast「角色权限已原子更新」，弹窗关闭，列表 ceshi.ss 权限「0 项 → 4 项」。网络证据：POST /api/v1/admin/roles/fbe7d8eb…/permissions/preview 与 PUT /api/v1/admin/roles/fbe7d8eb…/permissions 均成功。
+- **验证方式说明：** antd Tree 复选框为无 role 纯 span、不在 a11y 可交互集，自动化勾选通过派发等价用户 click 事件完成；范围切换与保存/确认全部走原生控件交互（Select 的 a11y listbox 是 0×0 隐藏辅助层，点击其 option 无效，需操作可见 rc-virtual-list 项或键盘 ArrowDown/Enter）。
+
+## 2026-11-11 挂码树按角色授权范围收口：超范围节点不渲染（1 文件）
+
+产品决策调整：「配置角色权限」弹窗不再用「禁用 + 勾选自动调升范围」交互，改为对包括超管在内的所有操作者一致——节点授权下限（min_scope）高于被配角色当前范围的一律不渲染。
+
+- **树过滤（RolePermissionGrantModal.vue）：** 新增 `withinRoleScope`（内嵌无范围场景或节点无码放行，否则比较 selectedScope 秩 >= min_scope 秩）与 `scopedTree`（对 displayTree 递归 filter+map，超范围节点连子树剔除，父菜单剔除时按钮自然消失）；`checkableTree` 改基于 `scopedTree`，`disableCheckbox` 仅保留 `!node.selectable || !node.code`。
+- **范围联动剔除：** 新增 `watch(selectedScope)`——对 selectedIds 逐项经 optionsById→code→minScopeByCode 求下限，秩高于新范围的勾选项剔除并 `message.info` 提示移除数量；打开弹窗 loadGrants 先设 selectedIds 再设 selectedScope 触发一次 watch，存量越范围授予会被清掉并提示（期望行为）。
+- **移除旧交互：** 删除 `maybeRaiseScope`（含 onTreeCheck 调用）、`requiredScopeRank`、`scopeShortfall`（computed/告警 a-alert/保存按钮 disabled/confirmSave 拦截四处）、`upgradeCeilingRank`、`minScopeUnreachable`、`minScopeHint`（含节点「需租户级范围」span）、`MIN_SCOPE_LABELS`；`scopeOptions` 还原为 {value,label} 映射；头部说明改为「先预览再保存。菜单与按钮独立勾选；树内节点已按角色授权范围收口，需要更高范围的能力请先调整授权范围。」
+- **验证：** 前端 `npm run lint` exit 0（--max-warnings 0）、`npm run build` exit 0（vue-tsc + vite，11.4s，仅 ant-design-vue chunk >500kB 体积 warning 属正常）；浏览器交互未运行。
+
+## 2026-11-11 安全修复：用户组挂角色渠道「范围只能向下」收口（2 文件）
+
+用户组角色列表/替换此前只校验租户归属，L3 及以下操作者可经 PUT /user-groups/{id}/roles 绑定 scope=super 角色提权，或经 GET 看见越秩角色。
+
+- **list_user_group_roles（groups.py）：** 查出后在 Python 侧按 `ROLE_SCOPE_RANK[effective_role_scope(role)] <= ROLE_SCOPE_RANK[operator_scope(actor, db)]` 过滤，存量 scope 为 NULL 行经 effective_role_scope 推导后同样参与秩比较。
+- **replace_user_group_roles（groups.py）：** 租户归属校验后、写入前逐角色 `ensure_scope(actor, db, effective_role_scope(role), detail="不能绑定高于自己授权范围的角色")`，与 users.py:477 同口径；越秩抛 403，删除/写入/审计均不发生。
+- **新增测试（tests/test_user_group_role_scope.py）：** 隔离 SQLite unittest，仿 test_user_group_admin.py 夹具（L3 直写 membership+RoleBinding、挂 menu.groups/button.groups.manage 节点、同租户建 super/tenant 两角色）：① `test_l3_cannot_bind_super_role_via_group`——PUT 含 super 角色 → 403 且 UserGroupRole 保持为空；② `test_l3_group_role_listing_hides_super_role`——GET 目录不含 super 角色、同秩角色 assigned 标记正确。
+- **验证：** pytest 未运行（本机无 python）；静态自查通过——groups.py 新增 import（ROLE_SCOPE_RANK/effective_role_scope/ensure_scope/operator_scope）无重复且均存在于 rbac_guards，测试 import 符号与 handler 签名逐一对现有套件核实，operator_scope/ensure_codes 对直写 RoleBinding 夹具的识别口径经 effective_roles.py/permissions 查询链核实。
+
+## 2026-11-11 安全修复：GET /admin/roles NULL-scope 旁路 + 存量 scope 空值回填迁移（2 文件）
+
+低权操作者可借 `Role.scope IS NULL` 的无条件放行看到范围秩高于自己的存量角色。
+
+- **判权修复（access_control.py list_roles）：** 空值行改为按 `effective_role_scope` 同口径推导过滤——非模板 key 未钉应用 → tenant、钉应用 → app、四个模板 key → 模板固定范围，与 `services/rbac_guards.py::effective_role_scope` 逐条对齐；`or_(*null_scope_ok)` 空列表不可达（member 秩 0 恒在 allowed_scopes，至少含 app.member 模板分支），另加兜底分支防回归；`TEMPLATE_ROLE_SCOPES` 复用既有 import，`notin_` 用 `tuple()` 显式取 key。
+- **回填迁移（migrations/versions/0007_role_scope_backfill.py，Alembic，revises 0006）：** 先打印待回填行数，再按推导口径 CASE 幂等回填（仅命中 scope IS NULL 行，可重放），执行后打印残留 NULL 数（应为 0）；头注声明 docs/部署与运维.md 备份门禁、执行后 roles.scope 不应有 NULL、回填验证后 list_roles 空值兼容条件可简化为 `Role.scope.in_(allowed_scopes)`。
+- **验证：** 未运行（本机无 python/docker）；静态自查通过——import 无重复、or_/and_ 条件组合正确、空列表边界有保护、CASE 输出仅四合法值不触发 ck_role_scope、迁移链 0006→0007 正确。
+
+## 2026-11-11 挂权交互改造：报错中文化 + 勾选自动调升范围（替代硬禁用）（4 文件）
+
+针对「配置角色权限」弹窗两个问题：① 报错 toast 暴露裸编码；② 需更高范围的节点被直接禁用不可选。
+
+- **问题一（后端）：** `_assert_role_permission_scope` 新增 `_permission_label`（优先权限目录中文名），四条挂权 422 文案统一改「节点「任命应用管理员」的授权下限高于角色范围（应用级）」等中文格式（access_control.py）。
+- **问题二根因（契约漏下发）：** 后端 `NODE_MIN_SCOPE` 本是按钮级，但 tree meta 只下发菜单级 min_scope，前端让按钮继承菜单下限——`button.app_role.assign`（按钮=租户级）挂在 `menu.application_workspace`（菜单=应用级）下被漏标，勾选后保存才被 422 拒绝。meta 菜单项新增 `button_scopes` 按钮级下限映射（加法字段，tree 旧断言不受影响），前端 `PermissionMenuMeta` 同步类型。
+- **问题二交互（前端 RolePermissionGrantModal）：** 不再按 min_scope 一刀切禁用——勾选下限高于当前范围的节点时自动把「授权范围」下拉调升到满足要求的最小选项（message.info 提示，两段保存仍先 PATCH 范围再写授权）；仅当范围无法升到位（模板角色固定范围 / 操作者自身秩不足）才保持禁用。护栏：手动调低范围致勾选集合超出范围时，`scopeShortfall` warning 告警 + 保存按钮禁用 + confirmSave 拦截；节点「需租户级范围」提示改为随所选范围动态显隐；头部说明文案同步。
+- **验证：** 前端 `npm run lint` exit 0、`npm run build` exit 0（35.6s）；后端 pytest 未运行（本机无 python/docker CLI），后端经 bind-mount reload 后线上实测——`button_scopes` 已生效（勾选任命应用管理员自动升租户级），浏览器双轮验收全 PASS 见下方两条记录。遗留观察：首次勾选偶发勾选态被清空（同弹窗二次勾选稳定，疑与离屏 rAF 节流相关），见下方验收条目。
+
+## 2026-11-11 「配置角色权限」后端 422 报错 toast 中文化验收 PASS
+
+admin 会话、/roles 浏览器实测（a11y 快照 + DOM/computed 取证），未点「确认保存」：
+
+- **场景：** 「测试用户级别角色 ceshi.ss」（应用级）弹窗勾选「任命应用管理员」→范围自动升租户级→手动改回应用级（warning 告警与保存禁用同前轮）→点「预览影响」。
+- **toast PASS：** 红色 error toast（icon anticon-close-circle，computed color rgb(220,38,38)）文案为「节点「任命应用管理员」的授权下限高于角色范围（应用级）」——含中文节点名、不含 `button.app_role.assign` 编码，与后端新文案格式「节点「中文描述」的授权下限高于角色范围（…）」一致。网络面板见 POST `/admin/roles/{id}/permissions/preview` 确已发出（内置工具无响应体详情，422 状态码以前端 error toast 呈现服务端文案间接确证，console 无额外输出）。
+- **过程观察：** 首次勾选「任命应用管理员」时勾选一度被清空（已选 0、checkbox 失 checked class，范围升租户级成功）——疑为范围升级触发树重渲染的时序问题；同弹窗内第二次勾选即稳定保留（已选 1，1.2s 观察窗口内无变化）。非本轮验收目标，留待后续关注。
+- **收尾：** 点「取 消」关闭弹窗，ceshi.ss 仍为 应用级/0 项，数据未变。
+- **验证：** 纯浏览器验收未改源码；未运行构建与后端测试（不涉及）。
+
+## 2026-11-11 「配置角色权限」弹窗新交互验收：范围自动调升 / 降回告警禁存 全 PASS
+
+1059×855 视口、admin 会话，/roles 浏览器实测（a11y 快照 + DOM class 取证），未点「确认保存」：
+
+- **复选框解锁 PASS：** 自定义角色「测试用户级别角色 ceshi.ss」（应用级）弹窗内 26 个树节点复选框全部 ENABLED，含「组织写操作 button.org.manage」「邀请写操作 button.invitations.manage」「任命应用管理员 button.app_role.assign」等原「需租户级范围」置灰节点。注意：系统模板「应用管理员 app.admin」弹窗的授权范围下拉为 ant-select-disabled、需租户级节点仍置灰，属系统模板范围锁定的预期行为，验证走自定义角色。
+- **自动调升 PASS：** 勾选「任命应用管理员」后授权范围下拉即时 应用级→租户级，出现 info 提示「授权范围已调整：保存时会先更新角色范围，再写入权限授权」（与预期「已自动调整授权范围为…」语义一致，落地文案措辞不同）。
+- **降回告警 PASS：** 下拉手动改回「应用级」后出现 warning「部分勾选节点的授权下限高于当前授权范围，请调高授权范围或取消勾选对应节点」，「保存授权」按钮 disabled。
+- **收尾：** 未点确认保存；点「取 消」关闭弹窗，列表 ceshi.ss 仍为 应用级/0 项，数据未变。环境注意：浏览器标签页离屏时 antd 弹窗动画因 rAF 节流卡在 leave/enter 态（按钮 pointer-events:none），激活标签页后恢复。
+- **验证：** 纯浏览器验收未改源码；未运行构建与后端测试（不涉及）。
+
+## 2026-11-11 UI 走查修复批次三：P2×16（U15–U30）全闭环（19 文件）
+
+按[走查报告](docs/prototypes/ui-audit-2026-11-11/UI走查报告.html)批次三路线执行，P2 十六项全部落地：
+
+- **U15 按钮排印：** 6 个列表页「＋ 新建」全角加号统一换 PlusOutlined 图标（roles/users/tenants/groups/invitations/models，补 icons import）。
+- **U16 工具栏骨架对齐：** 应用台角色 Tab 补左槽搜索（keyword ref + filteredRoles computed，按名称/标识过滤），与组织台同构。
+- **U17 下拉实值：** 邀请页「全部租户」改真实 value（ALL_TENANTS='ALL' + tenantOptionsWithAll computed，load 请求过滤 `!== ALL`），不再以占位灰表达「全部」。
+- **U18 空态规范：** AdminEmpty emoji 统一 `grayscale opacity-90`；邀请空态 ✉️→📨。
+- **U21 弹窗三档：** 8 处弹窗宽度散值（680/720/760/820/980）收敛为 640/800/960。
+- **U22 themes 细节：** 取色器圆角 + 细边框（AdminColorField）、分段控件首尾胶囊 999px、preview-heading 补底部分隔线、「欢迎文案」补占位。
+- **U23 面包屑与页脚：** AppBreadcrumb 去「描边 chip + 纯文本」混排，统一两段纯文本层级（次级墨模式段/主墨页面段）；App.vue 移除模拟器页脚免责特判（顶部「只读预演」alert 已有同义说明）。
+- **U24 sticky 接缝：** fixed 列单元格显式对齐 token（表体=elevated、表头=subtle，浅/深各一套），消纵向色差。
+- **U25 侧栏与灰标：** 折叠按钮图标提亮至 `--color-sider-text-strong`（78% 白，新增 token）；菜单滚动容器加上下缘 mask 渐隐；`.ant-tag-default`（antd 只给类名不给样式）补 subtle 底 + strong 描边 + 次级墨文字。
+- **U26 主按钮阴影：** 全站统一无阴影——antd-bridge primaryShadow 改 'none'，并以 `.ant-layout .ant-btn-primary`（含 hover/focus/active 链）无层 CSS 兜底（桥接 token 实测未生效，computed 仍为默认 `0 2px 0`）。
+- **U27 列宽微调：** tenants 成员/应用计数列 90→72（x 860→826）；组织台成员姓名 200→220、邮箱 260→240。
+- **U28 模拟器开关：** 「判定选项」去 checked-children 内嵌文字，改 36px flex 容器 + 裸开关 + 外置 13px 次级说明（随状态切换「解析数据范围/仅检查 RBAC」）。**U28a 澄清：** 4 个下拉实测均有「请选择」类占位，走查误报不改。
+- **U29 工作台详情头：** 应用台卡标题补 client_id 等宽灰标，与组织台「名称+灰标」结构统一。
+- **U30 对比度：** 「统计口径…」11px 说明 muted→secondary（浅色 7.4:1、深色约 6.5:1）。
+- **层叠坑澄清（本轮新发现，3 处以无层 CSS 兜底）：** ① Tailwind v4 utilities 位于 @layer 内，输给无层表单 reset（`button{color:inherit}`）——按钮上的 text-* 颜色类恒不生效，侧栏折叠按钮改 `.mgmt-sider .sider-toggle-btn` 无层规则；② antd cssinjs（无层）把 token 字体写在 `.ant-tag` 上，font-mono 类打不过，补 `.ant-tag.font-mono`；③ primaryShadow 桥接 token 未生效（见 U26）。
+- **验证：** `npm run lint` exit 0、`npm run build` exit 0；浏览器逐项验收全 PASS（见下方条目），浅/深双主题 computed 取证，结束态 data-theme=light。未运行：后端测试（纯前端改动）。
+
+## 2026-11-11 批次三修复浏览器验收（P2×16 逐项实测）：U15–U30 全 PASS
+
+1059×720 视口、admin 会话，浅色起步→深色抽查→还原浅色。Chrome DevTools computed 取证：
+
+- **U23 PASS：** 面包屑模式段透明底/无边框/圆角 0（浅 rgb(82,82,91)、深 rgb(161,161,170)）；模拟器页脚文案与全站一致。
+- **U24 PASS：** 浅色 fixed td #ffffff=卡底、fixed th #f4f4f5=普通表头；深色 fixed td rgb(24,24,27)、th 4% 白——纵缝消除。
+- **U25 PASS：** 折叠按钮双主题 rgba(255,255,255,0.78)；菜单容器 mask linear-gradient(透明→8px 实→calc(100%-12px) 实→透明) 生效；「停用」tag computed #a1a1aa on #1f1f23、边 #3f3f46（≈6.5:1）。
+- **U26 PASS：** 主按钮 boxShadow 'none'（双主题）；同页 disabled/loading 态不再与常态两副面孔。
+- **U27 PASS：** tenants 计数列渲染比例收窄（72 配比生效）；MembersTab 姓名/邮箱 220/240 生效。
+- **U28 PASS：** 开关本体无内嵌文字（44×22px 标准触控）、外置说明 36px 行高、次级墨随状态切换。
+- **U29 PASS：** 应用台卡头 client_id 等宽灰标（ui-monospace 生效、次级墨、max-w-180 截断）。
+- **U30 PASS：** 统计口径说明 computed rgb(161,161,170)=text-secondary。
+- **U15/U17/U22 抽检 PASS：** 「新建邀请」anticon-plus 在列；「全部租户」为 selection-item 实值 rgb(250,250,250) 非 placeholder；取色器圆角 12px、欢迎语占位「欢迎语，例如：安全访问您的工作空间」、分段控件首尾 999px 胶囊、preview-heading 0.67px 分隔线。
+- **验证：** 纯浏览器验收未改源码；主题结束态 light；未运行构建（上条目已覆盖）与后端测试（不涉及）。
+
+## 2026-11-11 UI 走查修复第二轮（批次二 / P1 收口）：5 项修复 + 2 项误报澄清（7 文件）
+
+P1 十项全部闭环——其中 U4/U5/U7/U10/U11/U12 已随第一轮落地，本轮修剩余 5 项：
+
+- **U6 分页统一：** users/tenants/groups/invitations 四页补 `showTotal 共 N 条`，与 audit/roles 形态对齐。**U6b 澄清：** 走查报告「分页当前页两种皮肤（audit 黑底 vs 组织台白底描边）」实测为观察误差——两处 `.ant-pagination-item-active` 的 class 与 computed background/border 完全一致。
+- **U8 环形图暗色墨阶：** `palette()` 暗色分支整体上移一档（#fafafa→#52525b，亮度下限 zinc-600），修复最深两段压 #18181b 卡不可见；实测最小扇区 rgb(82,82,91) 清晰可辨，切主题即重绘。
+- **U9 外观面板 Esc：** Popover 改受控 `v-model:open` + 内容区/触发键 `@keydown.esc`（原版无键盘关闭路径）；顶栏「外观」按钮改 `type="text"`（原描边 chip 在深色顶栏常亮突兀）。实测 Esc 300ms 内关闭。
+- **U13 审计 UUID 列：** 操作者 ID 换 AdminMonoValue（mono + 悬停完整值 + 一键复制），替代「切在连字符上形似乱码」的裸截断。
+- **U14 澄清：** 「深色次级按钮两套皮肤」实测误报——/users「刷新」与 /overview「刷新概览」computed background 均为 rgb(24,24,27)；走查观感差异实为当时顶栏「外观」白底 chip 造成（本次已改 text 型）。
+- **验证：** `npx eslint src --max-warnings 0` exit 0、`npm run build` exit 0（10s）；浏览器六项验收全 PASS（见下方验收条目），主题已还原浅色。未运行：后端测试（纯前端改动）。
+
+## 2026-11-11 批次二修复浏览器验收（6 项实测）：分页共 N 条 / UUID 悬停复制 / 环形图深色 / U14 / U6b / 面板 Esc 全 PASS
+
+1059×720 视口、admin 会话；浅色起步→外观面板切深色→结尾还原浅色（结束态 data-theme=light、面板关闭）。逐项实测：
+
+- **(1) 分页总条数 PASS：** /users「共 9 条」、/tenants「共 3 条」均为 li.ant-pagination-total-text 实测在列；users/tenants/groups 三页模板均已带 showTotal 共 N 条（GroupManagement.vue:229 等）。/groups 三个租户均 0 数据，空态不渲染分页组件（antd 行为，非缺陷）；临时新建用户组后分页即显「共 1 条」，验证后已删除该测试组。
+- **(2) /audit 操作者 ID 悬停复制 PASS（机制验证）：** 单元格为 AdminMonoValue 结构（span.group/mono > font-mono.truncate[title=完整 36 位 UUID] + anticon-copy 图标），图标基线 opacity 0、cursor pointer、150ms 过渡；编译规则 group-hover/mono:opacity-100（:where(.group/mono):hover * 时 opacity:1）确认存在。图标 click 处理器可触发并弹 message；自动化 webview document.hasFocus()=false 致 clipboard.writeText 抛错（clipboard-write 权限=granted），组件按设计提示「复制失败，请手动复制」，属环境限制非缺陷。限制：自动化悬停为单元素强制伪类实现、:hover 不向父级传播，group-hover 视觉未能在自动化内直接演示。
+- **(3) 环形图深色重渲染 PASS：** /overview 同页经外观面板切主题、无导航，canvas 圆周弧采样（圆心 243.5,184 r=118，360° 全覆盖）配色整体反转——浅色主扇区 72.8% rgb(24,24,27)→深色 rgb(250,250,250)；小扇区灰阶 82/113/161/212（深）vs 228/212/161/82（浅），弧长占比与指标 62/9/6/5/3（总计 85）吻合；深色下最小扇区（租户 2.7% rgb(82,82,91)）清晰可见，截图存档。
+- **(4) U14 深色次级按钮 PASS：** /users「刷新」与 /overview「刷新概览」computed backgroundColor 同为 rgb(24,24,27)（同为 ant-btn ant-btn-default），完全一致；顶栏「外观」按钮 bg rgba(0,0,0,0)+边框透明（ant-btn ant-btn-text），为文字型非白色块。
+- **(5) U6b 分页当前页 PASS（零差异）：** /audit 与组织工作台成员 Tab 激活页项 class 同为 ant-pagination-item ant-pagination-item-1 ant-pagination-item-active，bg 同 rgb(24,24,27)、border 同 0.666667px solid rgb(216,216,216)。
+- **(6) 外观面板 Esc PASS：** 面板开（display:block）→真实 Escape 键→300ms 内 display:none、1100ms 仍关；实现为 @keydown.esc 同时绑定触发按钮与面板内容 div（App.vue:474/494），覆盖焦点在按钮与面板内控件两种场景。注意：该 antd 版本关闭时不变更 ant-popover-hidden 类，判定需用 computed display。
+- **验证：** 本会话纯浏览器验收，未改源码；临时测试数据（用户组）已清理；未运行构建与后端测试（不涉及）。
+
+## 2026-11-11 UI 走查修复第一轮：P0×3（暗色侧栏/编号闭环/滚动地板）+ 批次一全局小修（12 文件）
+
+按[走查报告](docs/prototypes/ui-audit-2026-11-11/UI走查报告.html)执行批次一与全部 P0：
+
+- **U1 暗色侧栏（P0，根因坐实）：** 运行时实测 darkAlgorithm + Menu `theme="dark"` 组合把条目色错算成 rgba(24,24,27,.65)（65% 黑压 #09090b，对比度 ~1.2:1）。style.css 以 `html[data-theme]` 作用域 + 高特异性覆盖 cssinjs（:where 前缀特异性为 0）：非选中项 72% 白、hover 纯白、子菜单箭头 45% 白；选择器同时覆盖移动端抽屉（teleport 到 body）。
+- **U2 用量页编号闭环（P0）：** 章节编号改位置序动态计算——无聚合数据时待核对=03、账目=04（空态序列 01→02→03→04），有数据恢复 04/05。
+- **U3 滚动地板（P0）：** 全站 10 处表格静态 y 加下限 `calc(max(360px,100vh-430px))`（tenant-access 两处 320px 档），首帧不再塌小；列宽重预算（users 姓名 130→150、x 830→850）。**架构澄清：** 运行期表体高度由 `useTableFit` 实测收口（收敛轮均摊扣除、极矮视口 72px 保底），静态 y 仅为首帧回退——720p 下表体 ~247px 属「工具条+分页常驻、页面不滚」的有意取舍，行缘裁切为滚动表格固有形态，非回归。
+- **批次一全局小修：** U4 AdminFilterPanel slate→token（删除暗色补丁）；U5 工具栏圆角 rounded-2xl→xl（12px 不超外层卡片）；U7 空表横滚条隐藏（`.ant-table-empty` 作用域）；U10 roles eyebrow→"ROLE DIRECTORY"；U11 两处指标卡带 `lg:grid-cols-5`（3+2 孤位消除）；U12 汇总脚注去 mono 收为常规说明行；U19 应用台文案「管管理台」→「控制管理台」；U20 groups 常驻 info 横幅并入 hint 气泡 + 两页汇总卡去 01–05 卡内编号（消双编号体系）。
+- **验证：** `npx eslint src --max-warnings 0` exit 0、`npm run build` exit 0（8.9s）；浏览器四项验收（见下方验收条目）——暗色菜单色值/编号连续/空表滚动条/工具栏圆角全 PASS，users 表体 247px 为 useTableFit 设计内行为。未运行：后端测试（纯前端改动）。
+
+## 2026-11-11 P0 修复浏览器验收（4 项实测）：暗色侧栏 / model-usage 编号 / 空表滚动条 PASS，users 表体 y 地板 FAIL
+
+1059×720 视口、admin 会话逐项实测上轮 P0 修复；暗色项经「外观」面板切深色取证后还原浅色（结束态 data-theme=light）。
+
+- **(1) 暗色侧栏 PASS：** data-theme=dark 下 `.ant-menu-sub` 内 12 个非选中项 computed color 全部为 rgba(255,255,255,0.72)（修复前 rgba(24,24,27,0.65)）；侧栏截图存档，随后经面板点「浅色」还原。
+- **(2) /model-usage 编号 PASS：** h3 序列为 页题「模型用量」/ 01 用量汇总 / 02 用量与分布 / 03 待核对调用 / 04 调用账目；「03 待核对调用 0」尾部 0 为 ant-badge 计数（空态 display:none），编号 01→04 连续无跳号（M1 闭环）。
+- **(3) 空待核对表 PASS：** 表根 `.ant-table` 含 `ant-table-empty` 类；该表为 fixed-header 变体不渲染 `.ant-table-content`，实际滚动容器 `.ant-table-body` computed scrollbar-width=none（表头 thin 但 overflow:hidden 不出条）。
+- **(4) /users 表体高度 FAIL：** `.ant-table-body` offsetHeight=247（预期 ≥360）；根因为 useTableFit.ts 量测式 inline 覆盖（cardBody 471 − topInCard 141 − 分页 35，收敛轮再扣）了模板 scroll.y `calc(max(360px, 100vh-430px))`，360 地板被 inline max/min-height=247 压制。工具栏 `.admin-table-toolbar` borderRadius=12px PASS（P1 圆角倒置已闭环）。
+- **验证：** 本会话纯浏览器验收，未改源码、未运行构建/测试/后端。
+
+## 2026-11-11 全项目 UI 走查第二轮（八维度）：P0×3 / P1×10 / P2×16 走查报告交付
+
+上轮 D1–D6 与表格体系收口后的全量复检。方式：三批浏览器逐页取证（浅色 14 页 + 深色复检 2 页，1059×720 与 1440×900 双档）+ 静态代码全扫 + 代码级根因核实；每条发现按八维度定级（设计语言/布局空间/组件工艺/导航IA/反馈状态/可访问性/响应式/文案）。交付物：[UI走查报告](docs/prototypes/ui-audit-2026-11-11/UI走查报告.html)（含评分卡、30 项发现、4 项核实不修、三批次修复路线图）。
+
+- **P0：** ①暗色侧栏非激活项近乎隐形（可访问性）；②/model-usage 空态编号仍跳 03（M1 未闭环）；③列表页固定 y 滚动模型在 720p 笔记本视口三页同症状（行拦腰截断+横滚条压行+固定列割裂）。
+- **P1 要点：** AdminFilterPanel 残留 slate 色板（audit「空白圆角条」根因）；工具栏圆角倒置 16>12；分页三形态+当前页两种皮肤；空表全宽横滚条；环形图暗色墨阶两段隐形；外观面板 Esc 不关闭；roles eyebrow 唯一中文；5 卡 lg 档 3+2 孤位；汇总脚注观感溢出；UUID 截断；深色次级按钮两套皮肤。
+- **核实不修：** 授权范围墨阶层级（D5 有意设计）；表头截断为读图误差（并入 U3 回归点）；裸 hex 均合法回退；滚动条箭头为 Fluent 环境差异。
+- **验证：** 本轮纯走查取证，未修改源码、未运行构建与后端测试；间距纪律实测通过（24/12/16 全落 4px 网格）；零 JS error。
+
+## 2026-11-11 滚动条修复：页脚移出滚动流 + 工作台 Tab 表去掉固定 y
+
+用户截图反馈组织工作台右侧常驻纵向滚动条。浏览器量化定位根因：页面本身没滚动（html scrollHeight=clientHeight），看到的是 `main.mgmt-shell-content` 的内部滚动条——29px 页脚在 h-screen 壳层的滚动流内把内容顶出折叠线 55px，形似页面滚动条；同时成员表固定 `y: calc(100vh - 560px)` 在矮视口塌缩（表体仅 62px）产生第二条内嵌滚动条。
+
+- **App.vue：** 页脚移出 `a-layout-content` 滚动流，作为壳层固定底行（`shrink-0` 边框行 + 内容区 flex-1 自动让位），页脚恒贴底可见且不贡献滚动高度；style.css 骨架注释同步。
+- **工作台三 Tab 表（MembersTab/GroupsTab/RolesTab）：** 去掉固定 `y`，只保留横向 `x`——固定高是脆弱的 magic-number 预算（两轮翻车），溢出交给右列 `lg:overflow-y-auto`。
+- **验证：** eslint 4 文件 0 问题、build exit 0（35.6s）；浏览器实测——组织台成员 tab main scrollHeight=clientHeight（diff=0）、`.ant-table-body` 数量=0（antd 不再生成固定高滚动体）、`.app-footer` 贴视口底完整可见、截图无滚动条；用户组 tab 残余 42px main 滚动（内容真实超高，属诚实滚动，矮视口下可接受）；/users 列表页固定 y 为 AdminListPage 有意设计（工具条+分页常驻）未动。零 JS error。未运行：后端测试（纯前端）。
+
+## 2026-11-10 模型用量页重设计（M1–M4）：修跳号、砍常驻警示、日期范围选择器、空态统一
+
+浏览器取证驱动（L3 空态 + 布局坐标量化）的五项修复，前端 2 文件（ModelGovernancePage.vue / ModelUsageCharts.vue）：
+
+- **M1 编号连续：** 无数据时图表空档带补「02 用量与分布」编号头（原 01→04→05 跳号），空态统一为居中 AdminEmpty + 口径说明子行（原横排左对齐图标）。
+- **M2 待核对降噪：** 超时预留橙色警示条改为仅队列非空时渲染（原空队列常驻）；核对队列表迁 AdminTable（error-text 托管错误态）。
+- **M3 账目区：** 开始/结束日期两个裸文本框合并为一个 a-range-picker（value-format=YYYY-MM-DD，computed 桥接既有 createdFrom/createdTo 与 UTC 校验，占位「开始日期→结束日期」）；调用账目表迁 AdminTable，删除 v-if 三分支自定义空态与 table-empty-state 废弃 CSS。
+- **M4 杂项：** 估算费用卡零请求时显示 —（原长文本「暂无用量」破坏五卡节奏）；日期错误提示 red-400 → var(--color-error)。
+
+**验证：** eslint 2 文件 0 问题、`npm run build` exit 0（8.3s）；浏览器实测——编号序列 01→02→04→05 无跳号、04 区域 .ant-alert 数=0、范围选择器渲染且旧双输入移除、/models 目录视图表格正常；两页 JS error=0。未运行：后端测试（纯前端改动）。**遗留备注：** 侧栏加载即滚底截断顶部菜单、隐藏 0×0 ant-modal 残留（「仨s」组织归属）为全局壳层问题，不属本页。
+
+## 2026-11-10 表格操作列链接静音灰（D6 补充）：动作列不再是一排黑色粗字
+
+用户截图反馈表格操作列视觉过重（品牌黑 link 按钮在密集行中呈黑色粗字、喧宾夺主）。style.css D6 区块追加：表格 tbody 内 link 按钮常态 `var(--color-text-secondary)`、hover/focus-visible 转主墨（暗色主题用 brand-hover），`:not(.ant-btn-dangerous)` 保证 danger 红不受影响；仅作用于表格，工具条/页面链接不变。
+
+- **验证：** `npm run build` exit 0（34.5s）；浏览器 computed 实测——/users 操作列「详情/配置角色/会话」常态 rgb(82,82,91)、font-weight 400，悬停变 rgb(24,24,27)，与数据文本 rgb(24,24,27) 形成清晰层级；应用台角色 Tab「应用权限/配置成员」同为静音灰。两页 JS error=0（仅既有 favicon 404）。未运行：eslint、后端测试（本次仅 style.css 追加）。
+
+## 2026-11-09 表格体系收口：新抽取 AdminTable 统一组件（10 张裸表迁移 + D6 全站表格质感）
+
+按「表格相关封装成组件、后续页面复用」要求完成三层收口：新组件 `AdminTable.vue`（工具条 / 错误提示 / a-table / emoji 空态核心，$attrs 全透传，不含页头与卡片外壳）；`AdminListPage.vue` 重构为组合 AdminTable（对外插槽与行为不变，6 个已用页面零感知）；手写 `AdminTableToolbar + a-table + AdminEmpty` 的场景全部迁移——组织台成员/用户组 Tab、应用台角色 Tab、权限编码面板、租户访问两张 Tab 表、主题版本历史、RoleMembersModal 弹窗两表（共 7 文件 10 表）。**遗留：** ModelGovernancePage 3 表自带 v-if 条件空态分支（table-empty-state 自定义态），强迁会改变空/加载行为，待该页专项改造。
+
+- **D6 质感升级（style.css 全站 a-table，含弹窗）：** 表头改 12px 次级灰 + 0.02em 字距 + border-strong 底线（「列头是注释、数据是主体」层级）；单元格纵向 padding 16px → 12px（密而不挤）；分页数字 tabular-nums。
+- **迁移要点：** 裸表场景按「hint/插槽存在才渲染工具条」约定接入；@change 统一为 @table-change；size/row-selection 经 $attrs 透传；AdminEmpty 仅在自定义空态内容时保留导入。
+- **验证：** `npx eslint src --max-warnings 0` exit 0、`npm run build` exit 0（10.3s）；浏览器实测（vite dev bind-mount 实时生效）——/users 表格计算样式确认表头 12px/灰/字距生效、行高约 51px 变紧，搜索过滤（9→3 行）与刷新正常；组织台成员/用户组 Tab 渲染与空态正常；应用台角色/权限编码 Tab、配置成员抽屉、增加成员弹窗（复选框、getCheckboxProps 禁用态、确定按钮联动）全通；L3 登录租户访问成员/数据范围两 Tab 渲染正常；各页 JS error=0。未运行：后端测试（本次纯前端改动）。
+
+## 2026-11-09 UI 高级设计走查：6 项系统性重设计落地（黑白灰体系统一口径）
+
+以高级设计视角全项目审美走查（aesthetics-and-emotion-principles + form-follows-function 判据：工具型界面、功能成 form、克制出轻奢），落地 6 项重设计，前端 5 文件：
+
+- **D1 语义色统一：** `TenantAccessManagement.vue` 租户成员状态 active 的 blue → **green**，对齐全站「成员/账号状态=green」语义。
+- **D2 总览图表墨阶：** `OverviewDashboardCharts.vue` 环形图色板去掉蓝/绿/琥珀语义色，改 5 级石墨墨阶（text-primary → border，暗色主题自动翻转）；数据用明度而非色相区分，与条形图黑色渐变同语言。
+- **D3 登录页工艺：** `style.css` 黑画布改「舞台式布光」（卡片后方主聚光 + 两角环境光）；白卡片加发丝亮边（rgba(255,255,255,.14)）+ 顶部内高光 + 三层接地阴影；ID 品牌方块改石墨渐变（zinc-700→zinc-900）。**修复过程：** 首验发现 `.login-card` box-shadow 被 antd cssinjs 默认卡影（boxShadowTertiary）同权重后插覆盖，提权为 `.login-shell .login-card`（0-2-0）后 computed 生效（含 48px 96px 接地层）。
+- **D4 应用工作台去重：** 删除与 Tab 重名的「应用概览」胶囊统计条，计数以圆角小徽标并入三个 Tab 标签（角色 N / 权限编码 N / 资源权限 N，各 Tab 懒加载后上报）。
+- **D5 范围标签墨阶化：** `RoleManagement.vue` 授权范围 gold/blue/green 彩虹 tag 改四级墨阶 chip（超管=实心黑 / 租户=重描边 / 应用=细描边 / 成员=虚线，与名称列 kind-chip 同语言、深浅主题自适应）；归属列「全局」blue tag 改中性 chip。语义色（蓝/绿/金）从此仅服务状态反馈。
+- **全站语义色复扫：** 启用/停用 green/default 全站一致；ModelGovernance 配额状态（enforced=orange 警示 / configured_only=blue 信息）语义成立保留；全站不再有彩色类别标签。
+
+**验证：** `npm run build` exit 0（36s → 10s 两轮）、eslint 5 个改动文件 0 问题；console 容器为 vite dev + bind-mount（源码改动实时生效，无需重建）；浏览器实测四轮——登录页 computed box-shadow 四层含 `48px 96px` 接地层 PASS、角色表 8 个 chip DOM 级校验全墨阶且彩色残留=0、应用工作台三 Tab 徽章正常且无独立统计行、L3 隔离上下文实测成员状态 `ant-tag-green` 且页面无任何 `ant-tag-blue`；运营总览环形图截图确认全石墨墨阶。各页 JS error=0（仅 favicon 404 与表单 id/name 最佳实践提示两条既有项）。
+
+## 2026-11-09 登录卡分层接地阴影复验：.login-shell .login-card 提权后运行时生效（PASS）
+
+- **背景：** 前次浏览器检查发现 `.login-card` 的 box-shadow 被 antd 默认值（`0 1px 2px rgba(0,0,0,.03)...`）覆盖，已将选择器特异性提升为 `.login-shell .login-card`；本次为修复后的运行时复验。
+- **验证步骤：** http://localhost:5175 已登录态点击「退出」→ 打开 `/login` 截图 → DevTools 执行 `getComputedStyle(document.querySelector('.login-card')).boxShadow`。
+- **结果（PASS）：** computed box-shadow = `rgba(255, 255, 255, 0.65) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.4) 0px 1px 2px 0px, rgba(0, 0, 0, 0.5) 0px 24px 48px -12px, rgba(0, 0, 0, 0.45) 0px 48px 96px -24px`，包含 `48px 96px` 深层接地层，antd 默认单层阴影不再生效；截图目视卡片下方接地扩散清晰。
+- **留档：** 截图 `.trae/verification/login-card-shadow.png`；验证后已用 `admin@example.com` 重新登录恢复会话。未运行其他验证。
+
+## 2026-11-09 走查报告全量修复：P0×1 / P1×6 / P2×12 落地并运行时复验
+
+按 [走查报告](docs/prototypes/walkthrough-2026-11-09/走查报告.html) 全量修复，后端 351 tests（新增 12 项回归用例，仅剩主题上传沙箱受限已知项）、前端 build + eslint 双绿、主栈运行时复验全部通过。
+
+**后端（10 文件）：**
+- **P0-1/P1-1：** `users.py` 新增 `_assert_user_within_actor_boundary`（数据边界 + 平台类角色层级保护，404 隐藏存在性），挂到 status/password/session revoke/profile/sessions 五个读写路径；L3 对超管账号 PATCH status 空操作实测 200 → **404**。
+- **P1-2：** `admin_authorization.has_organization_admin_access` manage 分支改判 `button.org.manage` 节点（any-of + min_scope 同源）；L2 建组织实测 201 → **403**，L3 正常建组织。
+- **P1-3：** `groups.py` / `invitations.py` / `models.py` 列表不传 tenant_id 时按 `list_actor_management_tenant_ids` 收敛（超管全域）。
+- **P1-4：** `_validate_invitation_target` 加 actor 任命天花板（对齐 bind_role：平台/租户管理员仅超管、app.admin 需租户级、自定义角色范围只能向下），单发与批量共用。
+- **P2-1：** `record_event` 未显式指定租户时按 actor 全部活跃成员身份各写一行——L3 审计页实测 auth.* 从 0 → 可见本租户登录事件。
+- **P2-2：** `overview.py` 按数据边界统计（L3 实测 tenants=1/apps=4/users=6，不再全域 3/9）。
+- **P2-3：** 登录改 `func.lower(User.email)` 匹配；**P2-4：** simulate 校验目标用户为请求租户活跃成员（404）；**P2-5：** 目录移除 `menu.permission_health`（MENU_CATALOG/MENU_GROUPS/L1_ONLY_MENU_CODES 收敛，LEGACY_REVOKED_NODE_CODES + seed 幂等清理，开发库残留行已清零，权限树实测无该节点）；**P2-11：** uploads Content-Length 容错、users 搜索 ilike 通配符转义；**P2-12：** 应用对接.md 判权表述更新为 ensure_codes 口径。
+
+**前端（11 文件）：**
+- **P1-5：** `App.vue` 租户模式角色字典兼容 `/admin/roles` 分页 `{items}` 形态（登录初始化不再 TypeError 白屏）；**P1-6：** loadPage 放开租户模式（后端已按范围过滤，总览有数）；**P2-6：** 主题应用字典按全部可读租户并发合并。
+- **P2-7：** `capabilities.ts` 新增 `ADMIN_API_PREFIX`，审计/鉴权模拟/模型/主题 4 页字面量全部收敛；**P2-8：** 路由守卫对 `/no-access` 做可见页纠正（URL/内容/高亮三态一致）；**P2-9：** RoleMembersModal 批量绑定加 open/roleId 取消标记；**P2-10：** RolePermissionGrantModal 删除 3 个未用变量（eslint 0 警告）、AuditLogPage/ModelGovernancePage 未定义 CSS 变量改 tokens（`--color-text-muted` 等）、InvitationManagement 单规则迁 Tailwind；**遗留：** 其余 5 视图的结构性 scoped CSS（媒体查询 + :deep）保留，需配套 UI 走查逐步迁移。
+
+**测试：** 新增 `tests/test_walkthrough_fixes.py` 12 用例（内存 SQLite：边界 404×4 场景、L2 建组织 403/L3 201、三列表收敛、邀请天花板、record_event 多租户、总览范围、simulate 归属）；适配 `test_admin_authorization`（manage 改节点判权契约）与 `test_audit_client_ip`（Mock db 补 scalars 桩）。全量 **351 tests，errors=1（主题上传沙箱写受限，沙箱外 OK），skipped=43**；前端 `npm run build` exit 0、`npx eslint src --max-warnings 0` exit 0。
+
+**运行时复验（主栈 bind-mount 新代码）：** L3→L1 status/profile/sessions 全 404；L2 建组织 403；L3 总览 tenants=1/users=6；L3 审计 auth.* total=1（新登录事件带租户）；权限树无 permission_health；seed 幂等清理 DB 残留（`menu.permission_health` 行归零）。**浏览器复验（console 容器重建后，真实 Chromium 两轮登录）：** L3 登录首次进入即完整渲染、控制台无 `roleRows.filter` TypeError（P1-5 确认修复）；运营总览无需手动刷新自动显示 租户 1 / 应用 4 / 平台用户 6（自动发出 `/admin/overview`，P1-6 确认修复，含补记的租户分支 `loadPage()` 收尾）；登录路径零应用 error。
+
+## 2026-11-09 项目全量走查：19 项缺陷清单 + 运行时验证（走查报告交付）
+
+三路并行静态深读（后端认证/RBAC、后端管理 API/模型、前端全量）→ 逐项亲自读码复核 → 主栈运行时越权验证 → 真实浏览器 L3 走查 → 测试基线。交付物：[走查报告](docs/prototypes/walkthrough-2026-11-09/走查报告.html)（1 P0 / 6 P1 / 12 P2 + 流程走通清单 + 修复优先级）。
+
+- **P0（运行时坐实）：** `admin/users.py` 三个写接口（status:481 / password:527 / session revoke:119）仅判 `button.users.manage`，无数据边界与目标层级保护——L3 对超管账号 PATCH status 空操作实测返回 200，构成「重置 L1 密码→平台接管」完整链。
+- **P1（4 项运行时/浏览器坐实）：** ① profile/sessions 接口跨租户跨层级读取（L2/L3 可读超管档案与 19 条会话）；② 组织台按角色 key 判权（admin_authorization.py:24-43），应用级实测可在宿主租户建删组织（越权临时组织已删）；③ groups/invitations/models 可选 tenant_id 列表无范围过滤（静态）；④ 邀请兑换发角色无任命天花板（静态）；⑤ App.vue:294 对已分页化的 `/admin/roles` 仍按数组 `.filter` → 租户模式登录初始化 TypeError、总览首屏白屏（浏览器控制台坐实）；⑥ 运营总览 loadPage 仅 platform 模式，L2/L3 永远显示「—」占位（浏览器截图）。
+- **P2 摘要：** auth.* 审计事件 tenant_id=NULL 致租户管理员看不到本租户登录审计（search 实测 total=0）；overview 全平台计数对 L2/L3 泄漏（实测 3 租户/9 用户）；登录邮箱精确匹配不一致；simulate 不校验目标用户归属；menu.permission_health 死节点残留；主题应用字典只取首租户；4 页硬编码 /admin 前缀；/no-access 三态不一致；批量绑定串行 PUT 不可取消；8 视图 style 原生 CSS + eslint 3 warnings（exit 1）；uploads int() 500 与 ilike 通配符；应用对接.md:91 文档漂移。
+- **走通验证：** L1 登录/27 码/租户用户角色全通；L3 浏览器走查侧栏裁剪与三页渲染正常；OIDC/认证链路静态走查无短板；alembic=0006 head、ready=200；后端 339 tests（1 error=主题上传沙箱写受限，已知基线；43 skipped）；前端 build exit 0、eslint 3 warnings。
+- **环境处置：** 开发库走查账号角色绑定历史测试中被清空，已用幂等 `manage.py seed-walkthrough` 恢复（建演示应用角色/业务码/绑定）；验证期间 L2 建删临时组织留 2 条审计、L3 空操作 PATCH 无状态变更；未执行破坏性验证与生产库操作。
+
+## 2026-11-09 5175 租户管理员视角 UI 走查（运营总览/用户管理/应用工作台）
+
+- **账号与环境：** http://localhost:5175/，`l3-admin@demo.example.com`（L3 租户管理员）登录成功，进入 `/overview` 控制台。
+- **步骤1 侧栏（通过）：** 完整可见项 = 租户管理/运营总览；身份与组织：组织工作台、用户管理、成员邀请；应用与权限：应用工作台；高级管理、平台治理、审计与验证（三组默认折叠）。
+- **步骤2 三页走查（部分通过）：**
+  - **运营总览：登录后首次进入主体区域整页空白**（仅页脚，累计等待约 6 秒仍不渲染）；侧栏二次进入后可渲染（指标快照/规模与构成/快速上手/管理入口），但「01 指标快照」5 张卡片（租户/应用/平台用户/角色/近期审计）**全部显示「—」占位符而非数字**，「数据更新于 —」，图表为空环与 0 值。
+  - **用户管理（通过）：** 演示租户、成员组织归属/角色数据范围两 Tab、成员表格 6 行（含走查 L2/L3/L4 账号）、配置组织操作、分页 1 页；「租户成员状态」列需横向滚动可见。
+  - **应用工作台（通过）：** 左树「演示租户 4」含 weqe/12123/第三方/演示应用，weqe 概览 角色 0/权限码 —/资源 —，角色 Tab 空状态提示正常。
+- **步骤3 控制台报错（有红色 error）：** 登录时触发一次，共 2 条——`[error] TypeError: roleRows.filter is not a function`（`src/App.vue:258:34` `initializeConsole`，由 `src/App.vue:283:4` `onAuthenticated` 调用，与运营总览首次空白直接相关）；`[warn] [Vue warn]: Unhandled error during execution of component event handler`（AuthEntry）。后续页面切换未新增报错。
+- **结论：FAIL** —— 登录/用户管理/应用工作台通过；运营总览首次渲染失败 + 统计卡片占位符 + 控制台 TypeError。
+- **截图：** `C:\Users\刘少华\AppData\Local\Temp\trae\screenshots\` 下 `iam-walkthrough-01-console-sidebar.png`、`iam-walkthrough-02-overview.png`（空白）、`iam-walkthrough-03-users.png`、`iam-walkthrough-04-app-workspace.png`、`iam-walkthrough-05-overview-revisit.png`（占位符）。
+
+## 2026-10-30 平台角色全局化：前端适配（Task 6）
+
+按 `.trae/specs/globalize-platform-roles` 契约完成前端全局化改造（不动 backend/、tests/、docs/）：
+
+- **`views/roles/RoleManagement.vue`：** 新建角色弹窗移除「所属租户」必选下拉与「请选择活动租户」校验，`POST /admin/roles` 不再携带 `tenant_id`；列表删除租户列与「全部租户」筛选器（`role_class=platform` 固定），「应用范围」列升级为「归属」列（未钉应用显示「全局」tag，钉应用显示应用名）；编辑弹窗「所属租户」改「归属」只读项；数据范围组织目录仅在角色有租户归属时拉取；克隆弹窗文案改「全局唯一」「沿用源角色的授权范围」；`RoleRecord.tenant_id` 放宽为可空。
+- **`App.vue`：** `tenantRowFromCapabilities`/`loadTenantNameLookups` 透传租户 slug（memberships 契约未下发 `tenant_slug` 时保持 undefined 兜底）；租户模式角色字典改拉 `GET /admin/roles?limit=500` 并按「未钉应用=全局平台角色 + 首租户应用角色」过滤（不再走 `/tenant-admin/roles?tenant_id=`）；传给邀请页的 roles 带上 `application_id` 且空租户兜底空串。
+- **`views/users/UserManagement.vue`：** 配角色穿梭框候选改全局口径——平台角色始终列出，应用角色按当前绑定租户过滤。
+- **`views/invitations/InvitationManagement.vue`：** 单邀请/批量邀请的角色候选同口径（平台角色全局可选，应用角色限宿主租户）。
+- **`components/RolePermissionGrantModal.vue` / `components/RoleMembersModal.vue`：** 无租户入参与角色候选逻辑，确认无需改动。
+- **验证：** `npm run build`（vue-tsc -b + vite build）通过；`npm run lint:main` 通过；改动面三视图（roles/users/invitations）单独 eslint 通过。浏览器端到端未运行（后端全局化由并行代理实施中）。
+
+## 2026-10-30 新权限模型浏览器端到端走查（5173 / iam-e2e-api 环境）
+
+- **环境判明：** 5173 vite 代理的实际后端为 `iam-e2e-api` 容器（8003→8000，bind-mount `backend/{app,manage.py,migrations}`，库 `iam_e2e_scratch`@iam-platform-postgres-1，已迁移 0006）；compose 主栈 api-1 仍为 0005 旧库（`roles` 无 `scope` 列），两套环境勿混淆。
+- **步骤1–4 通过：** 超管登录；侧栏「高级管理」仅 平台角色/权限体检/用户组（无「权限编码」），工作台/治理/审计菜单齐全；平台角色列表含「授权范围」列且 platform.admin 行显示「超管」；新建角色弹窗无「资源权限/数据权限」Tab、「授权范围」下拉含 超管/租户级/应用级、「配置权限」为单棵菜单→按钮树（28 节点）；新建用户表单含 绑定租户（默认已选「演示租户」）/绑定组织/绑定应用 多选。
+- **步骤5 部分通过：** 走查账号原不在 `iam_e2e_scratch`（l3-admin 首次登录 401「账号或密码错误」，用户列表仅 admin@example.com）；经用户同意在 `iam-e2e-api` 容器执行幂等命令 `python -B manage.py seed-walkthrough`（仅补建 L2/L3/L4 账号与绑定）后登录成功：侧栏无「权限体检」、高级管理仅 平台角色/用户组、新建角色「授权范围」下拉仅 租户级/应用级（无「超管」）。**失败项：** 租户管理页列表同时显示「演示租户」与「平台管理租户」（预期仅自己租户），「＋ 新建租户」按钮可见且可用（预期不可见），行内「转为 ToC 消费」写按钮亦可见——L3 前端入口未收口；后端判权未实测（未点击提交，避免写入数据）。
+- **步骤6 通过：** 退出登录回到登录页。
+- **截图：** `%LOCALAPPDATA%\Temp\trae\screenshots\walkthrough-01…11-*.png`（01 登录页、02 超管总览、03 超管侧栏、04 角色列表、05 新建角色弹窗、06 超管范围下拉、07 权限树、08 新建用户表单、09 退出后、10 L3 范围下拉、11 L3 租户管理）。
+
+## 2026-10-30 开发库 0006 迁移执行（经用户授权，主栈恢复）
+
+用户明确授权后按部署与运维门禁完成开发库 `iam` 的 0006 迁移，主栈 8002/5175 恢复可用：
+
+1. **受保护备份：** `pg_dump -Fc` → `D:\backup\iam-postgres\iam-pre-0006-20261030-233445.dump`（132,139 字节，280 TOC 条目，`pg_restore --list` 可读校验通过），SHA-256=`3DF7FBB2…601A0`（同目录 `.sha256`）。
+2. **迁移：** `docker compose --profile migrate run --rm migrate`（现有镜像 + 挂载最新代码，Docker Hub 不可达故免 build）——`0005_permission_kind → 0006_role_scope_nodes` 成功，`alembic_version=0006_role_scope_nodes`。
+3. **种子同步：** `docker compose --profile seed run --rm seed-greenfield` 幂等重跑，新增 2 条管理面节点（`button.authz.simulate` 等），L1 补挂全量节点、三模板节点集与 scope 就位。
+4. **验证：** api 容器重启后 `GET /api/v1/ready` **200**；超管登录冒烟——`capabilities.scope=super`、`platform_codes` 27 个节点码、权限树 7 组、租户 3 个（全域可见）、角色列表带范围列（`platform.admin:super` / `tenant.admin:tenant` / 自定义 `platform.tem:tenant`）。5173 走查 scratch 环境保留未清理。
+
+
+## 2026-10-30 走查缺口修复：租户级数据边界收口（列表过滤 + 前端按钮）
+
+修复走查步骤 5 的失败项（L3 租户管理页泄漏与写入口未收口）：
+
+- **后端 `api/v1/admin/tenants.py`：** `list_tenants` 增加数据边界——超管全域；租户级/应用级只返回操作者活跃成员身份所在租户（`list_actor_management_tenant_ids` 过滤，空集合返回空列表）。「＋ 新建租户」类写操作后端本已有 L1 角色 + `ensure_scope(SUPER)` 双闸，未改。
+- **前端 `views/tenants/TenantManagement.vue`：** 「＋ 新建租户」按钮加 `v-if="canManageTenants"`（`button.tenants.manage`，min_scope=super，非超管不持有即隐藏）；行内「转为 ToC 消费」按钮补 `canManageTenants` 条件（「停用/启用」「删除」原本已收口）。
+- **验证：** 前端 `npm run build` exit 0；后端 `tests.test_platform_tenant_guards` 7 项 OK；scratch 栈（iam-e2e-api/iam_e2e_scratch，已迁移 0006）API 实测——L3 登录 `GET /admin/tenants` 仅返回「演示租户」1 条（不再出现平台管理租户）、`POST /admin/tenants` 返回 **403**、`GET /auth/me/capabilities` 返回 `scope=tenant`。
+
+- **验证口径：** 真实浏览器（Trae 内置 Chromium）全程页面内点击跳转。未运行：L3「新建租户」服务端判权实测、L2/L4 账号走查、docker compose 主栈（8002/5175）回归。
+## 2026-10-30 权限模型重大重构：三管理员+授权范围、菜单→按钮树、用户三类绑定（全链路）
+
+按用户裁决推倒旧「五级角色 + 27 接口码 + 数据码目录」模型并重建闭环：平台角色收敛为三管理员 + 应用成员，每个角色带授权范围（超管/租户级/应用级，只能向下）；管理面唯一权限目录 = 「菜单→按钮」树（节点带 min_scope，菜单按钮自由搭配）；后端接口按节点判权 + 范围做数据边界；用户管理支持绑定租户（必选默认一个）/组织/应用多选。「权限编码」页下线，应用工作台业务面（业务码/资源树/数据叶子）本轮不动。
+
+**模型与后端核心：**
+
+- **模板收敛：** `platform.admin`(scope=super) / `tenant.admin`(tenant) / `app.admin`(app) / `app.member`(member)；`apps.admin` 并入 `app.admin`（管 N 个应用=绑 N 个应用）。`roles` 新增 `scope` 列；范围常量/秩在 `permission_kinds.py`（ROLE_SCOPE_*、ROLE_SCOPE_RANK、TEMPLATE_ROLE_SCOPES）。
+- **迁移 `0006_role_scope_nodes`：** 加 `roles.scope` 并按模板 key 回填；apps.admin 绑定迁到 app.admin 后删模板行；删除管理面 `kind='api'` 权限与 `menu.permissions`/`button.permissions.manage` 节点及其授权。离线编译验证通过；**开发/生产库执行仍需备份与授权（未执行）**。
+- **判权：** `ensure_codes` 改菜单/按钮节点判权（无模板回退）；新增 `operator_scope`/`ensure_scope`/`scope_at_least`/`effective_role_scope`；节点 `min_scope`（建租户/模型写仅超管、建人需租户级）在挂权与判权双向收口；`list_actor_bound_application_ids`（应用级=绑定的全部应用）；`assert_actor_can_manage_role`（范围只能向下）。
+- **角色 API：** 列表/详情带 `scope`/`scope_label`/`is_template` 且按操作者范围过滤；创建/克隆/编辑/启停/删除/绑定全部走范围闸门（任命 app.admin 需租户级；L1/L3 仅超管可任命）；挂权校验改「平台角色只挂菜单/按钮节点 + 节点下限 ≤ 角色范围；应用角色只挂本应用业务码」。
+- **admin API 全量映射替换：** 27 码→节点码（platform.account.manage→button.users.manage、ops.authz.simulate→button.authz.simulate[新增] 等）；数据边界落地：用户列表（租户级=本租户用户，应用级=绑定应用的用户）、审计/模型用量（应用级=绑定应用）、租户/组织/用户组/邀请/主题/总览按映射表替换并加范围闸门；权限体检重写为 7 项（H3 回退计数删除，H1=持按钮缺父菜单）；业务码登记/启停仅超管、管理面节点不再开放登记。
+- **用户绑定：** `POST /admin/users` 改 `tenant_ids`(≥1)/`organization_ids`/`application_ids`——逐租户建成员、组织挂接（每租户首个主组织）、绑应用自动补 `app.member`；用户详情返回各租户组织绑定。
+- **种子：** 管理面目录=菜单/按钮节点；L1 挂全量节点；三模板按固定节点集（L3_GRANT_NODE_CODES/L2_GRANT_NODE_CODES）预置并带 scope。
+- **前端：** capabilities 新增顶层 `scope` 与 `operatorScope()`，`platform_codes` 只含节点码；「权限编码」页归档至 `views/_archive/permissions/`（`/permissions`→`/roles`）；RolePermissionGrantModal 改单棵菜单→按钮树 + 授权范围下拉（按操作者秩过滤、模板置灰、min_scope 超范围禁勾、PATCH scope + PUT permissions 两段式保存）；RoleManagement 加范围列与新建必选范围（默认租户级）；UserManagement 创建表单改绑定租户（多选默认第一个）/组织（按租户分组联动）/应用多选；UserDetailDrawer 展示组织标签与应用绑定；27 接口码判断全量替换为节点码。
+- **测试：** 9 个模块适配新模型（test_role_hierarchy_guards 整体改写为三管理员任命链、test_p405_layering 去 apps.admin、test_permission_tree/health 断言改节点契约与 7 项、test_admin_authorization 重写为节点+范围判权、test_role_guards 删回退用例改节点闸门等）。
+- **验证：** backend `.venv` 全量 unittest discover **349 tests, 0 failures**（1 个主题上传用例仅沙箱写入受限，沙箱外 OK）；隔离 Postgres 套件（随机临时库迁移至 0006 + 全量测试）通过；前端 `npm run build`（vue-tsc+vite）exit 0、`npm run smoke` 通过、`lint:main` 0 警告。**未运行：** 开发库/生产库 0006 迁移执行（需受保护备份与明确授权）、真实浏览器端到端走查。
+- **死代码清理（收尾）：** `permission_namespace.py` 删除旧五域作用域矩阵（PLATFORM_SCOPE_CODES/TENANT_SCOPE_CODES/HIDDEN_SCOPES_BY_KIND/`resolve_permission_scope_key`/`assert_role_kind_grant_permissions`，生产代码已零调用）；`tests/test_permission_namespace.py` 同步删除 RoleKindGrantGuardTests 用例组。清理后 `tests.test_permission_namespace tests.test_role_guards` 15 项 OK。
+- **遗留（运维现状）：** compose 主栈 api 容器已挂载新代码但开发库仍为 0005 旧结构，`GET /api/v1/ready` 返回 **503**（迁移 pending）——主栈在执行 0006 迁移前不可用；恢复路径 = 按部署与运维门禁做受保护备份 → `docker compose --profile migrate run --build --rm migrate` → 重跑 seed-greenfield 同步新目录/模板（需明确授权）。5173 走查环境（iam-e2e-api 容器 + iam_e2e_scratch 临时库 + vite dev）保留供复验，清理命令见走查条目。
+- **边界：** 应用工作台业务面（业务码/资源树/data_scope 叶子/RoleDataScope）未动；`docs/应用对接.md` 契约未变。
+## 2026-10-30 权限闭环治理 F1–F8 实施（spec: implement-permission-governance）
+
+基于 [权限闭环治理方案 PRD](docs/prototypes/permission-governance/PRD.html) 全量实施（spec 驱动，11 任务全勾）。核心：判权口径收口为「只认码」、码表契约单一来源、权限体检页与排障链路、挂码缺口阻断、数据范围写分级+双写、死代码旧词清理。
+
+- **F2 码表单一来源：** utton.roles.manage 映射收敛为仅 
+bac.role.manage；GET /admin/permissions/tree 下发 meta（menus 映射 / level_scopes 层级码集 / template_sizes 模板码数，运行时推导）；前端删除 permissionTree.ts 四张硬编码映射表与 permissionGroups.ts 层级码集硬编码，统一消费新增 utils/permissionContract.ts 缓存；RoleManagement 统计文案改契约渲染；grant_codes_skip_missing 默认严格抛错（隔离场景显式跳过）；新增 menu.permission_health（L1 专属，派生排除）。
+- **F1+F6 体检与排障：** 新增 GET /admin/permissions/health（H1–H8 八项：菜单-接口对齐=阻断/按钮映射唯一性/回退残留计数/数据双轨/未挂载码/计数一致性/孤儿码/前端静态保障）与 GET /admin/permissions/user-chain（用户→有效角色含直连/组继承来源→四类持码→菜单命中判定），均仅 L1。前端新增「高级管理 → 权限体检」页（三卡统计+检查项列表+详情抽屉+立即复检+「成员与生效」Tab），App 壳/page-registry/icons 最小接线。
+- **F3 判权可观测（迁移窗口内）：** ensure_codes 角色 key 回退保留但命中即计数+WARN（
+ecord_template_fallback_hit/get_template_fallback_hits），放行行为不变；敏感码双检从单码特判改为 BUTTON_CATALOG 写类按钮接口码并集统一覆盖；绑定「已存在直接 return」豁免删除（已存在绑定同样走判权）；_assert_actor_grantable_permissions 的 grantable 改必传显式集合（None=编程错误）。**回退下线仍为后续决策（PRD TBD）。**
+- **F4 数据范围：** 删除 del manage 写法，写操作要求 org.manage 且 L3 起（L2 只读，手工挂码的 L2 仍拒写——纵深）；PUT 替换同步双写数据叶子码授权（并镜像收敛不再被策略映射的旧叶子授权，防双读残留放宽）；evaluate_access 双读不变；体检 H4 报告仅旧表未映射行数。**存量 RoleDataScope 迁移执行仍需数据库授权（PRD TBD）。**
+- **F5 挂码缺口阻断：** 挂码弹窗勾 menu.* 缺契约接口码时保存置灰+缺失清单（与体检 H1 同判定）；仅对「本层级可见可配」的缺失码阻断，层级外缺失 warning 提示交体检兜底（避免租户管理员被 L1 专属码锁死）。
+- **F7 前端判权统一：** pi/capabilities.ts 新增 hasMenu/hasButton（L1 放行语义内置），6 处 platform_admin && 双轨判权清零；新增 TENANT_ADMIN_API_PREFIX/APPLICATION_ROLE_API_PREFIX 常量，非归档代码 /tenant-admin 字面量归零（application_roles 路由后端单挂载 /tenant-admin，经核实按常量处理）；三条重定向路由去重；PAGE_INFO 收口。
+- **F8 清理：** 删除 ensure_management_permission 及旧码映射表（零引用）；infer_permission_kind 库列优先；iam.*/「四级管理员」旧词改五级/五域口径（含 test_p404 夹具归因修正）。
+- **验证：** 后端 ackend/.venv 全量 unittest discover：**348 tests，4 errors 全为既有基线**（test_admin_authorization 陈旧 mock，P344 起记录），指定 16 模块 159 项全绿（含新增 test_permission_health 10 项 / data_scope_grading 5 项 / p404 修复 9 项 OK）；前端 
+pm run build（vue-tsc+Vite）exit 0、改动文件 eslint 0 警告。**未运行：** 生产库迁移与 RoleDataScope 存量迁移执行（需授权）、回退下线决策（待窗口观察）、真实环境浏览器走查（本机无运行中后端，建议清单见实施报告：L1 侧栏体检入口/L3 不可见、三卡筛选、H1 抽屉、成员与生效链路、挂码阻断与恢复）。
+- **边界：** 两套资源树并存、五级模板码集、公开注册/配额门禁均未动。
 # 变更日志
+
+## 2026-10-30 权限治理 Task 7：前端判权统一与入口收口（F7）
+
+改动仅前端：`frontend/src/api/capabilities.ts`、`views/application-workspace/components/ApplicationMoreHost.vue`、`application-workspace/components/RoleMembersModal.vue`、`application-workspace/tabs/RolesTab.vue`、`views/organization-workspace/components/OrganizationMoreHost.vue`、`views/applications/ApplicationPermissionPanel.vue`、`views/roles/RoleManagement.vue`、`views/models/ModelGovernancePage.vue`、`router/index.ts`、`router/navigation.ts`、`App.vue`（一行 `pageInfo[page]?.title ?? ''` 类型兼容）。`utils/permissionTree.ts` / `utils/permissionGroups.ts` / `utils/permissionContract.ts` / `RolePermissionGrantModal.vue` / `views/permissions/` / 后端 / spec 零改动。
+
+- **统一判权（7.1）：** `capabilities.ts` 新增私有 `hasKindCode(kind, code)` + 导出 `hasMenu(code)` / `hasButton(code)`：基于 `getCachedCapabilities()` 当前缓存做同步判断，L1（platform_admin）直接放行，其余角色 any-of 命中对应码域（仅接受 `menu.*` / `button.*` 前缀，域外码视为未持有防跨域误判）；语义与原 `platform_admin && hasAny(...)` / `platform_admin || hasAny(...)` 双轨写法一致。替换 6 处：ApplicationMoreHost（canSetTrust / canManageApplication 回退 / canRotateSecret 回退）、OrganizationMoreHost（canManageOrganization 平台分支）、ApplicationPermissionPanel（canRegisterCatalog L1 分支 / canChangeStatus）、RoleManagement（仅 canCreateRoles；isPlatformSuperAdmin 保留给 canMutateRoleMeta / canGrantRole 层级判定 / grantKindForRole 可见域——非 L1-or-code 双轨）、ModelGovernancePage（canManageModels）。grep 验收：非归档源码 `platform_admin &&` / `platform_admin === true &&` 组合判权清零；合法保留：consoleMode 推导、application-workspace / organization-workspace index 的页面级平台模式分支（L1 早退 + 租户标记，无码组合）、`permissions/PermissionCatalog.vue`（独立 L1 标志，禁止改清单内）、`views/_archive/**`（构建排除死代码）。
+- **API 前缀常量化（7.2）：** 探索确认后端 `application_roles.py` 路由（`/applications/{id}/roles|members|member-candidates|role-bindings`）**仅挂 `/tenant-admin`**（`tenant_admin/__init__.py` include；`admin/__init__.py` 不含，无 `/admin` 等价端点），平台/租户管理员共用该挂载点判权——若按 consoleMode 切 `/admin` 会平台视角全 404。故按任务允许的「常量」形态落地：`capabilities.ts` 导出 `APPLICATION_ROLE_API_PREFIX = '/tenant-admin'`（注释写明单挂载事实与未来双挂只需改一处），RolesTab 4 处、RoleMembersModal 4 处字面量全部替换为常量；RolesTab 平台视角角色列表保留既有 `/admin/roles?role_class=application` 聚合分支（isPlatform 判断不动）。
+- **路由与导航收口（7.3）：** `router/index.ts` 删除 `/application-roles`、`/applications`、`/organizations` 三条字面重定向（与 `TENANT_MERGED_PAGES` 展开注册的路径/目标完全重复），统一由 TENANT_MERGED_PAGES 一处注册，行为不变；`navigation.ts` `PAGE_INFO` 删除已无对应 NAV 项/页面的四个收口键（applications / application_roles / organizations / tenant_access），类型改 `Partial<Record<PageKey, { title: string }>>`（PageKey 与 PAGE_PATHS 不动——TENANT_MERGED_PAGES 重定向仍需这些键），App.vue 面包屑取标题改 `pageInfo[page]?.title ?? ''`（运行时 `page` 只会命中仍在表内的键，纯类型安全收尾）。grep 确认被删键零引用残留。
+- **验证：** 改动 11 文件 `npx eslint --max-warnings 0` exit 0；`npm run build`（vue-tsc -b + vite）exit 0。浏览器走查未运行。
+- **遗留：** ① 应用角色/成员域端点真正按视角切前缀需后端把 application_roles 路由双挂 `/admin`（同 organizations/groups 模式），属后端改动本轮不做；② `ApplicationPermissionModal.vue` 两处 `/tenant-admin` props 兜底默认、`application-workspace/index.vue:228` 租户模式应用字典直连字面量不在 7.2 文件清单未动；③ `_archive` 下死代码含旧双轨写法，构建与 eslint 均排除，归后续清理。
+
+## 2026-10-30 权限治理 Task 3.3 + Task 5：绑定豁免收紧 + grantable 显式化 + 死代码旧词清理（F3 收口 / F8 后端）
+
+改动：`backend/app/services/rbac_guards.py`、`backend/app/api/v1/admin/access_control.py`、`backend/app/services/permission_kinds.py`（仅 infer 两函数注释口径）、`backend/app/db/seed_greenfield.py`（仅注释与文案字符串）；测试改 `backend/tests/test_greenfield_rbac.py`、`backend/tests/test_data_scope_grading.py`。`organizations.py` / `permission_health.py` / 前端 / spec 零改动。
+
+- **绑定豁免收紧（3.3）：** `bind_role` 删除「已存在绑定且非应用角色直接 return」短路（并清掉其尾部不可达的 `elif existing: return` 死分支）；幂等决策后移到全部判权与目标校验（ensure_codes / 租户范围 / L1-L3 任命保护 / 应用归属）之后——重复绑定校验通过仍静默成功（不 bump/审计），应用角色补齐 L4 成员绑定的路径保持落库（`provisioned_member` 标记）。unbind 复查：本无早退豁免（未绑 404），判权在入口，无需改动。
+- **grantable 显式化（3.3）：** `_assert_actor_grantable_permissions` 的 `grantable` 改为 keyword-only 必传集合，传 `None` 一律抛 `RuntimeError`（编程错误）；函数内不再隐式调 `actor_grantable_management_codes`、删除应用角色隐式豁免——应用角色跳过改由两个调用方（preview / replace_role_permissions）显式 `if not is_application_class_role(role)` 判断；新增 `_actor_grantable_codes_or_full`：L1（None=全量）显式展开为 `PLATFORM_MANAGEMENT_CODES`，None 魔法值不再向下游传递。可见性过滤处（tree / permissions 列表）的 None=L1 语义属 `actor_grantable_management_codes` 既有契约，未动。
+- **死代码删除（5.1）：** 删除 `rbac_guards.py` 的 `ensure_management_permission` 整段、`_role_keys_for_management_code` 及六张旧码→角色映射表（`_PLATFORM_ONLY_CODES`/`_TENANT_PEOPLE_CODES`/`_SHARED_CONSOLE_CODES`/`_APPLICATION_CODES`/`_L2_EXTRA_CODES`/`_L3_ASSIGN_CODES`）；模块 docstring 由「四级」改五级口径并注明映射器已删。`_SENSITIVE_CODE_DUAL_CHECK` 别名保留（test_role_guards 仍消费）。grep 全仓（backend/app + tests）`ensure_management_permission|_role_keys_for_management_code|六表名` 零引用；残留仅 CHANGELOG 历史、归档 dump、spec/checklist 与 docs/应用对接.md:91 一句过时表述（后者不在本轮可改清单，见遗留）。
+- **kind 收敛（5.2）：** `infer_permission_kind` / `permission_kind_of` 注释口径收敛：库列 `permissions.kind` 为唯一事实源，命中四类直接采信；前缀推断仅迁移兜底（kind 为空/脏值的历史行 + 创建未显式给 kind 的落库默认），规则冻结不再扩展。行为逻辑不变（原实现已是 kind 优先）。
+- **旧词清理（5.3）：** `seed_greenfield.py` 仅改注释与文案：模块 docstring「四级角色模板」→五级；L1 角色 description「全部 iam.* 管理面码」→「全部五域接口码与管理面菜单/按钮码」；阶段一注释「27 个 iam.* 管理面权限码」→「27 个五域接口码 + 四类树」；「四级走查」三处改走查口径。种子码集与授权语义零改动。
+- **测试：** `test_greenfield_rbac.py` 改用 `ensure_codes` 断言（原 `ensure_management_permission` 用例）并新增 4 用例：越权方对已存在绑定 bind → 403 且绑定不变；判权通过后重复绑定幂等（绑定数 1、不 bump）；grantable=None → RuntimeError；显式集合外新码 422 / L1 传全量放行。修 `test_data_scope_grading.py` 夹具（Round 1 遗留）：`selected_organizations` 依 schema 必须携带本租户真实组织，setUp 预置 Organization、`_policy_body` 按范围携带组织 ID。
+- **验证：** 在 `backend/.venv` 实装 requirements.txt 成功（fastapi/sqlalchemy/pydantic/argon2 等 10 项全装上）；`$env:PYTHONPATH=d:\project\role\backend` 后 `.venv\Scripts\python.exe -m unittest tests.test_role_guards tests.test_permission_tree tests.test_permission_health tests.test_data_scope_grading tests.test_p405_layering tests.test_greenfield_rbac`：**Ran 79 tests, OK（全绿）**。追加回归 `tests.test_platform_tenant_guards tests.test_role_hierarchy_guards tests.test_role_updates tests.test_permission_impact tests.test_admin_authorization`：Ran 30, errors=4, skipped=1——4 个 error 全部为 `test_admin_authorization.py` 既有坏测试（patch 了 `admin_authorization.evaluate_access`，该模块现行实现无此属性，与本次改动无关，该文件不在本轮所有权内未修）。改动 5 文件 `py_compile` 全部通过。
+- **遗留：** ① `docs/应用对接.md:91`「过渡期：ensure_management_permission(code) 仍可用」已失实，该文档不在本轮可改清单，待授权后同步；② `tests/test_admin_authorization.py` 4 用例 patch 失效为既有问题，待归口修复；③ 绑定幂等行为微调：应用角色重复绑定且无新增 L4 补齐时不再重复 bump/审计（原实现每次 bump+audit），与幂等语义一致；④ venv 实跑覆盖六个指定模块+五个追加模块，其余套件（如 test_p404_visibility、test_organization_workspace 等涉及绑定/挂码路径者）未逐一运行。
+
+## 2026-10-30 权限治理 Task 1/2/9：码表契约收口 + 体检服务端点 + 成员生效链路（F2/F1/F6 后端）
+
+改动：`backend/app/services/permission_kinds.py`、`backend/app/services/role_provisioning.py`（仅 3 处调用加 `skip_missing=True`）、`backend/app/api/v1/admin/access_control.py`（仅 tree 端点与 meta）、`backend/app/api/v1/admin/__init__.py`（路由注册）；新增 `backend/app/services/permission_health.py`、`backend/app/api/v1/admin/permission_health.py`、`backend/tests/test_permission_health.py`；扩展 `backend/tests/test_permission_tree.py`。`rbac_guards.py` / 前端 / migrations 零改动。
+
+- **契约收口（1.1）：** `BUTTON_CATALOG` 的 `button.roles.manage` 映射收敛为仅 `("rbac.role.manage",)`（org.manage 归 `button.org.manage`，H2 唯一性恢复）；`grant_codes_skip_missing(db, role_id, codes, *, skip_missing=False)` 改严格默认——契约必需码缺失抛 `RuntimeError`（消息列出缺失码），显式传 `skip_missing=True` 才跳过并按条数记 WARN；调用方适配：`role_provisioning.py` 三处模板派生 UI 码调用显式传 `skip_missing=True`（接口码严格性仍由 `_grant_codes`→`_permission_ids_by_codes` 保证），`tests/test_permission_tree.py` 数据叶子调用同步显式传参。
+- **tree meta（1.2）：** `GET /admin/permissions/tree` 响应新增 `meta`（`_permission_tree_meta()`）：`menus[{code,name,apis,buttons}]`（与 MENU_CATALOG/MENU_BUTTONS 同源）、`level_scopes{platform_admin,tenant_admin,apps_admin,app_admin}`（L1=27 管理面码，其余取 L3/L2M/L2 模板常量）、`template_sizes`（运行时 len 推导：27/20/17/16 口径，未硬编码 PRD 的 20/16/15）。
+- **L1 专属菜单（1.3）：** `MENU_CATALOG` 新增 `menu.permission_health`「权限体检」映射 `("rbac.permission.read","rbac.role.read")`，归 MENU_GROUPS「高级管理」组；新增 `L1_ONLY_MENU_CODES` 并在 `extra_ui_codes_for` 派生时排除（L3 同持两接口码但不派生该菜单，注释写明理由）；`seed_l1_role` 全量 UI 码授权自然包含，seed_greenfield.py 零改动。
+- **体检服务（2.1）：** 新增 `services/permission_health.py`：`run_permission_health(db)` 返回 H1–H8（结构 `{id,level: blocked|warn|ok,summary,details}`）+ `health_counters`。H1 菜单-接口对齐（blocked，details 含 role_key/role_name/menu_code/missing_apis/direct_member_count——role_bindings 直连计数、组继承不计并注明）；H2 按钮映射唯一性（warn）；H3 读 `rbac_guards.get_template_fallback_hits`（try/ImportError 防御，计数器缺失按 0 计并在 summary 注明，已确认并行同事已合入）；H4 RoleDataScope 未映射叶子码行数+样例（只读复用 `map_role_data_scopes_to_codes` 映射算法，样例上限 20）；H5 未挂载码（27 码 vs 菜单映射并集）；H6 目录 kind 一致性+模板码齐全；H7 孤儿码；H8 固定 ok「前端判权统一工具静态保障（配合前端 F7 交付）」。
+- **体检端点 + 排障链（2.2/Task9）：** 新增 `api/v1/admin/permission_health.py` 并注册进 admin 聚合器：`GET /admin/permissions/health` 返回 `{items[8],counters{blocked,warn,ok},generated_at}`；`GET /admin/permissions/user-chain?user_id&tenant_id&menu_code` 返回 `{user,roles[{role_id,key,name,source:direct|group,groups}],codes_by_kind{menu,button,api,data},menu_check{menu_code,held,required_apis,missing_apis,verdict}}`——来源归因分开查 RoleBinding（direct）与 `ancestor_group_cte` 递归组继承→UserGroupRole（group 附组名），持码按 permissions.kind 四类分组并集，菜单命中判定复用 `related_apis_for`（与 H1 同源契约）；两端点均 `is_platform_admin_user` 门禁，非 L1 → 403；未新建判权路径。
+- **测试（1.4/2.3）：** `test_permission_tree.py` 新增 `PermissionContractTests`（按钮映射唯一性=H2 契约侧断言、roles.manage 收敛、体检菜单派生排除）与 `GrantCodesStrictTests`（严格抛错列缺失码、显式 skip 授存在码返回新增数），并扩展 meta 形状、L1 持有/L3 不持 `menu.permission_health` 断言；新增 `test_permission_health.py` 10 用例（干净库 8 项全 ok+计数、H1 阻断详情、H2 漂移注入、H3 计数器接线、H4 双轨样例、H7 孤儿码、user-chain 直连+组继承并集/来源组名/缺码判定与 H1 一致、allow 场景、403×2、404×2、组继承不计直连成员数）。
+- **验证：** `docker` 命令不存在（本机无 Docker）；宿主机 Python 3.14 缺 fastapi/sqlalchemy/pydantic 且无 venv，按约定未安装依赖，**unittest 未运行**（`tests.test_permission_tree` / `tests.test_permission_health` 均未执行）。替代核验：8 个改动/新增文件 `py_compile` 全部通过；标准库 AST 静态契约断言通过（15 菜单含 permission_health、13 按钮单码且互不重叠、27 管理面码全挂载、L1_ONLY_MENU_CODES 正确）。隔离测试待容器环境回归（Task 10）。
+- **遗留：** ① 全量 `run_seed`（含阶段三平台租户 L3 预置）后，L3 因 `extra_ui_codes_for` 的 any-of 派生持有 `menu.users` 而缺 `platform.account.read/manage`——按 PRD H1 口径属真实阻断发现（「看得见进不去」），是否为 L3 调整菜单映射或种子归产品裁决，本轮按规格机械实现 H1；② 体检三档 level 未含 PRD 的「提示」级，H5/H6/H7 发现统一告警（warn），前端可按 id 细分展示；③ meta 的 `template_sizes` 为 27/20/17/16（role_provisioning 现行常量），与 PRD 文案 20/16/15 的差异已由运行时推导消解，前端统计文案以 meta 为准。
+
+## 2026-10-30 权限治理 Task 4：数据范围写分级 + 叶子码双写（F4）
+
+改动仅 `backend/app/api/v1/admin/organizations.py` 与新增 `backend/tests/test_data_scope_grading.py`；`permission_kinds.py` / `rbac_guards.py` / `role_provisioning.py` / `admin_authorization.py` / `authorization.py` 零改动（只 import 复用）。
+
+- **写分级（4.1）：** `PUT /roles/{id}/data-scopes` 不再传 `manage=True`（旧守卫 `del manage` 语义）；读保持 `has_organization_admin_access`（L1/L3/L2 可读、越权 404 隐藏存在性）；写新增私有守卫 `_require_data_scope_write_access`：平台管理员放行，否则须同时过 `ensure_codes('org.manage', tenant_id)` 与 `ensure_roles((L3_ROLE_KEY,), tenant_id)`（`ORGANIZATION_MANAGE` / `L3_ROLE_KEY` 均为常量导入，未硬编码）。L2/apps.admin 即使手工挂 org.manage 也因缺 L3 角色被拒（双条件纵深）。
+- **双写（4.2）：** 替换落库后调用私有 `_sync_data_scope_leaf_grants`：复用 `ensure_data_scope_children`（叶子缺失补建）与 `data_scope_code`（scope_type→叶子后缀），按 `map_role_data_scopes_to_codes` 的单条映射算法补授 `*.scope.*` 叶子授权；并将该角色不再被策略映射的旧叶子授权镜像收敛（防「叶子 ∪ 旧表」并集残留放宽范围，清空策略后双表同清）。旧表 RoleDataScope 照写。
+- **测试（4.3）：** 新增 5 用例（内存 SQLite，夹具仿 test_p405_layering 绿场风格）：L2 写 403 / 同一 L2 读 200；L2 手工挂 org.manage 写仍 403；L3 写 200 且三重断言（RoleDataScope 行、`*.scope.*` 叶子权限行 kind=data、RolePermission 叶子授权行）+ evaluate_access 放行约束正确；替换收窄/清空后叶子授权收敛、判权默认拒绝（双读并集不残留）；L1 代管写 200 双写生效。
+- **验证：** `docker compose ps` 不可用（本机无 Docker）；宿主机 Python 3.14 缺 fastapi/sqlalchemy 等依赖，按约定未安装依赖，**unittest 未运行**（`test_authorization_data_scope` 回归亦未运行，其还需 DATABASE_URL）。替代核验：两文件 `py_compile` 通过；grep 确认数据范围写路径无 `manage=True`、既有测试无 `replace_role_data_scopes` 调用（无回归面）。目标环境（容器）验证待后续轮次。
+- **遗留：** `admin_authorization.py` 的 `del manage` 残留（该文件本轮禁止编辑）；组织 CRUD 与成员接口的 `manage=True` 用法属组织接口口径，不在 F4 数据范围范围。
+
+## 2026-10-30 权限治理 Task 3.1/3.2：判权回退可观测 + 敏感码双检统一（F3 部分）
+
+Task 3（3.3 绑定豁免收紧与 Task 3.4 全量用例归后续轮次）。改动仅 `backend/app/services/rbac_guards.py` 与 `backend/tests/test_role_guards.py`，迁移窗口内判权行为不变（回退命中仍放行）。
+
+- **回退可观测（3.1）：** 新增 `record_template_fallback_hit(user, code, role_keys)`（进程内计数 +1，WARN 日志含 user id/email、缺失码、命中角色 key）与 `get_template_fallback_hits() -> int`（供体检 H3 按名消费，重启清零）；`ensure_codes` 回退分支在 return 前调用登记，放行语义与返回值不变。未动 `ensure_management_permission` 死代码段。
+- **双检统一（3.2）：** 新增 `sensitive_api_codes()`（lru_cache，函数内延迟 import BUTTON_CATALOG 避免循环导入，口径=写类按钮码全覆盖：BUTTON_CATALOG 全部按钮映射接口码并集）与惰性常量入口 `SENSITIVE_API_CODES`（模块 `__getattr__`）；旧名 `_SENSITIVE_CODE_DUAL_CHECK` 保留为别名（`__contains__` 实时委托统一清单），`ensure_management_permission` 内 `app.secret.rotate` 双检语义由 `button.apps.secret` 映射自动覆盖。未改 `permission_kinds.py`。
+- **测试（3.3 部分）：** `test_role_guards.py` 追加 4 用例（回退命中计数 +1、有码用户不走回退计数不变、敏感集合=BUTTON_CATALOG 并集且含 platform.account.manage / platform.tenant.manage / app.secret.rotate、旧名别名 in 语义），既有 5 用例未改。
+- **验证：** `docker compose ps` 不可用（本机未安装 Docker Desktop）；宿主机 Python 3.14 兜底缺 fastapi/sqlalchemy 等依赖，按约定未安装依赖，**unittest 未运行**。已做替代核验：两文件 `py_compile` 语法通过；AST 契约核验通过（三函数名与签名一字不差、ensure_codes 已调用 record_template_fallback_hit、旧名保留、4 新用例就位）。目标环境（容器）回归待后续轮次执行。
+
+## 2026-10-30 权限闭环治理方案 PRD（可评审交付物）
+
+用户反馈「平台权限 + 角色分配权限很乱」，要求深读项目后给出闭环方案 PRD（prd-authoring + rapid-prototype 流程）。经前后端全量侦察（2026-10-30 现状）：产品语义层（五级模板 / 27 接口码 / 四类树 / 三层配权 / 看得见才能配）已收敛，**乱的根因是实现层 16 处双轨与漂移**——最核心是 `ensure_codes` 保留角色 key 回退（rbac_guards.py:254-257，前端按码裁剪、后端认角色 key 两套口径）与菜单↔按钮↔接口映射前后端两份人工同步（permission_kinds.py ↔ permissionTree.ts）。
+
+- **交付物：** [权限闭环治理方案 PRD](docs/prototypes/permission-governance/PRD.html)——自包含交互式 PRD（左侧原型 4 屏 + 右侧 4 Tab 文档 + 全文模式），遵循历史 PRD.html 惯例（目录在文档收口轮被清空，本轮为新交付物重建）。
+- **方案要点（七环闭环）：** 定义→呈现→挂码→分配→判权→审计→体检。裁决 D2 判权只认码（模板 key 仅用于种子与 UI）；D3 映射单一来源（后端契约唯一源，前端零硬编码 + CI 门禁）；D4 对齐即门禁（H1 菜单缺接口=阻断）；D5 数据范围以 `*.scope.*` 叶子为主路径、RoleDataScope 只读过渡后迁移收口。
+- **需求 F1–F8：** P0 = 权限体检页（8 检查项：菜单接口对齐/按钮映射唯一性/回退残留/数据双轨/未挂载码/计数一致性/孤儿码/判权写法）+ 码表契约 + 判权收口 + 数据范围收口；P1 = 挂码缺口阻断 + 排障链路（用户→角色→码→命中）+ 前端判权统一 + 死代码旧词清理。E1–E16 乱点清单逐条带文件证据并归入需求。
+- **验证：** 浏览器实测（桌面 1440 / 窄屏 390 / 全文模式 / 交互链路 a–e / 控制台零报错）全部通过；发现并修复 2 缺陷（全文模式切回入口缺失、挂码弹窗初始态未触发阻断判定）。未运行：真实后端改造（本交付为方案 PRD，待评审后立项）。
+- **边界：** 不推翻五级模板与两套资源树并存的产品裁决；不做审批流。迁移窗口（回退下线、RoleDataScope 迁移）标 TBD，需实施排期与数据库迁移授权。
+
+## 2026-10-30 平台资源权限树 + 数据权限
+
+目录和挂码都改成两个 Tab。资源权限树与现网侧栏同形（运营总览 / 身份与组织 / 应用与权限 / 高级管理 / 平台治理 / 审计与验证），菜单下按映射挂按钮和 27 个接口字符串；数据权限单独一棵树，管理面接口不进这里。新增 `menu.model_usage`。`permissions.kind` 接到 ORM 与创建接口。非 L1 路由认勾到的接口码（五级模板仍可按角色 key 回退）；L1 带上全部菜单/按钮；侧栏只认 `menu.*`，写按钮只认 `button.*`。未 migrate，未改五级模板规格，未动 DeerFlow / 应用工作台业务资源树。
+
+- **验证：** 容器 unittest `tests.test_permission_tree` 9/9 + `tests.test_p405_layering` 28/28 + `tests.test_role_guards` 5/5 + `tests.test_permission_namespace` 11/11 **OK**（资源树侧栏形、菜单下挂按钮/接口、自定义角色只挂 `menu.users`+`org.member.read` 能过读、无码 403）。宿主机 `npm run build`（vue-tsc + Vite）exit 0。浏览器 L1：目录两 Tab；资源树与侧栏同形（含模型用量）；新建弹窗上级名称「运营总览」、上级编码 `menu.overview` 置灰；数据 Tab 空态「还没有数据权限叶子」。开发库幂等补种 `menu.model_usage`（created=1），未重建租户模板。自定义角色登录走查未做（隔离测试已覆盖）；未对超管账号跑破坏性 403。
+
+## 2026-10-30 开发库只留一个平台超级管理员
+
+按授权对开发 Compose 库清角色，方便自行重新配权。先备份 `D:\backup\iam-postgres\iam-postgres-20261030T054910Z-77db512a.dump`（SHA-256 前缀 `3a5860af`）。未改种子 / 开通应用预置代码。生产 Compose 未在跑。
+
+- **清理：** 删除 18 个角色（各租户 `tenant.admin`、各应用 `app.admin`/`app.member`、自定义角色）；邀请 0、`registration_role_id` 0；bump 成员 12。剩余 1 行 `platform.admin`，挂码 53（27 接口 + 26 菜单/按钮），引导超管仍绑定。
+- **验证：** `/api/v1/ready` 200。浏览器登录后「平台角色」共 1 条、53 项；侧栏 L1 菜单仍在；「＋ 新建平台角色」「＋ 新建用户」可见。未点保存改授权。未跑恢复演练。新建租户/应用或 `seed-greenfield` 仍会把模板再生出来。
+
+## 2026-10-30 四类树开发库走查
+
+迁移与种子后用 `admin@example.com` 登录 `http://localhost:5175` 走查。未改授权、未新建权限码、未跑独立授权 403（破坏性）。
+
+- **目录页：** 统计 56 / 菜单 13 / 按钮 13 / 接口 30 / 数据 0。四类筛选芯片与五域芯片在。树可见「菜单 → 工作台 → 运营总览 `menu.overview`」等叶子。侧栏 L1 菜单齐全（运营总览、组织/应用工作台、用户管理、成员邀请、平台角色、权限编码、用户组、租户管理、登录主题、模型治理、模型用量、鉴权模拟、审计日志）。页脚「服务正常」。
+- **从节点新建：** 「菜单」根「新建」打开弹窗，提示「上级前缀锁定不可改」；前缀 `menu.` 置灰；后段可填；完整编码预览 `menu.`。取消未创建。
+- **挂码弹窗：** 平台超级管理员（53 项）四类计数 菜单 13 / 按钮 13 / 数据 0 / 接口 27；树勾选 `menu.overview` 等；筛「按钮」可见 `button.users.manage` 等；独立授权提示在。租户二「租户管理员」（20 项）仅接口 20，筛「菜单」空（该实例未吃到菜单/按钮种子；L3 挂码仍隐藏 platform 域）。预览/保存未点。
+- **写按钮：** 平台角色「＋ 新建平台角色」、用户管理「＋ 新建用户」对 L1 可见。
+- **未跑：** 只给菜单不给接口的 403；`map-data-scope-codes`（数据叶子仍 0）。
+
+## 2026-10-30 开发库升级到 0005_permission_kind
+
+用户授权后对开发 Compose 库执行迁移。先备份 `D:\backup\iam-postgres\iam-postgres-20261030T042753Z-b8c28b8f.dump`（SHA-256 前缀 `9b86a489`），隔离恢复演练通过（revision `0004_owner_backchannel`，演练库已删）。`--build` 因 Docker Hub EOF 失败，改用现有 API 镜像 + 挂载的 migrations。`alembic upgrade`：`0004_owner_backchannel` → `0005_permission_kind`。随后幂等 `seed-greenfield` 新增 26 条菜单/按钮码，并对新行补回填 `kind`。
+
+- **结果：** `alembic current` = `heads` = `0005_permission_kind`。`/api/v1/ready` 200，api/console/postgres healthy。`permissions.kind` 计数：menu 13 / button 13 / api 30 / data 0。未跑 `alembic downgrade`。未跑 `map-data-scope-codes`（尚无 `*.scope.*` 业务叶子）。
+
+## 2026-10-30 权限编码改成四类树
+
+高级管理「权限编码」从扁平表改为菜单 / 按钮 / 数据权限 / 接口四棵树。现有 27 个五域码保留为接口层字符串；新增独立 `menu.*` / `button.*`；强制范围的业务码自动挂 5 个 `*.scope.*` 数据叶子。`GET /admin/permissions/tree` 返回树；挂码弹窗共用同一棵树，勾选独立（只给菜单不给接口会 403）。侧栏 any-of `menu.*` 与旧接口码；页内写按钮 any-of `button.*` 与旧写码。从节点新建时上级前缀锁定置灰。迁移 `0005_permission_kind` 已入库、**未对开发库执行**。DeerFlow 未接入，本轮未改。
+
+- **验证：** 容器 unittest `tests.test_permission_tree` **8/8 OK**（四类树形状、L1 含 `menu.tenants`、L2/L3 无该码、业务码缺数据叶子 deny、数据码/映射后 allow）。宿主机 `npm run build`（vue-tsc + Vite）exit 0。开发库随后已 migrate + seed，登录走查见上条。
+
+## 2026-10-30 用户配角色穿梭框改中文名
+
+「配置租户角色」穿梭框列表改为展示角色中文名称；应用角色附带应用名。搜索框文案改为「搜索角色名称」。仍可用英文标识搜索。
+
+- **验证：** 未运行构建。浏览器未重新走查保存角色。
+
+## 2026-10-30 配置成员改为多选增加
+
+应用工作台角色行「配置成员」去掉邮箱绑定条，改为「增加成员」弹窗：列出本租户成员、可搜索、可多选，确定后绑到当前角色（仍自动补 `app.member`）。已在该角色中的人禁用勾选。新增 `GET /tenant-admin/applications/{id}/member-candidates`，按应用管理权限列出租户活动成员，避免 L2 因没有 `org.read` 走不了组织成员接口。
+
+- **验证：** 容器 unittest `tests.test_p405_layering` **28/28 OK**（含候选列表已绑定标记、L2 跨应用 404、普通成员 404）。宿主机 `npm run build`（vue-tsc + Vite）exit 0。浏览器未登录走查增加成员弹窗。
+
+## 2026-10-30 应用 / 组织管理收口到工作台
+
+侧栏下线「应用管理」「组织管理」独立列表；旧深链 `/applications`、`/organizations` 重定向到对应工作台。左树顶部有「新建应用」/「新建组织」；节点「更多」也可新建，并打开编辑、密钥、启停、删除、负责人弹窗。高级管理只留平台角色、权限编码、用户组。
+
+- **验证：** 宿主机 `npm run build`（vue-tsc + Vite）exit 0。浏览器：未在本轮登录走查树「更多」写操作；侧栏去掉独立列表、工作台左树「⋯」菜单需在已登录会话确认。隔离 unittest 未运行。树「更多」曾因 `@click="factory()"` 丢掉真正监听器导致弹窗打不开，已改为菜单项直接 `@click`。平台模式 `/admin/tenants` 不带 `can_create_applications`，应用工作台顶部「新建应用」被误藏，已按组织工作台同样用平台模式补上。
 
 ## 2026-10-30 文档收口为四份中文手册
 
@@ -1646,4 +2199,5 @@ P381 只挡了「切类型」与「删除」两个入口；本轮把平台引导
 - 同步本地启动指南、前后端 README、整体 README/架构、PRD 与 `iam-project` Skill。
 - PowerShell AST 语法核验通过；本会话 Docker CLI 被系统拒绝且 localhost 不可达，未做服务运行验收；未迁移数据库。
 - 复核确认真实 Docker Desktop CLI 对 `dockerDesktopLinuxEngine` 命名管道返回 permission denied；`localhost:5175`/`8002` 也不可达，因此当前容器状态不可验证。最近成功读取的快照仍是开发库 0021 / 源码 head 0024；未对开发库执行迁移。
+
 

@@ -46,8 +46,10 @@ def ancestor_group_cte(membership_id: UUID, tenant_id: UUID):
 def authorized_role_ids_statement(membership_id: UUID, tenant_id: UUID) -> Select:
     """直连绑定与活跃用户组角色（含嵌套父组递归，G24）的并集。
 
-    组停用时保留配置但不参与继承；组层级沿 parent_group_id 向上递归——
-    成员所属组及其全部祖先组挂的角色均生效（与主流目录的嵌套组语义一致）。
+    平台角色全局化：直连绑定的平台类角色（application_id IS NULL）跨租户全局生效，
+    不再过滤角色租户；应用类角色（钉应用）仍要求与成员同租户。
+    组继承分支保持组所在租户：组停用时保留配置但不参与继承；组层级沿
+    parent_group_id 向上递归——成员所属组及其全部祖先组挂的角色均生效。
     组层级在写入时强制无环（服务层校验 + 复合外键），递归必然终止。
     """
     ancestor_groups = ancestor_group_cte(membership_id, tenant_id)
@@ -60,11 +62,14 @@ def authorized_role_ids_statement(membership_id: UUID, tenant_id: UUID) -> Selec
             UserGroup.status == "active",
         )
     )
-    return (
+    # 直连分支：平台类角色跨租户全局生效；应用类角色按其所属应用生效（跨租户任命：
+    # 应用上下文匹配由 list_effective_roles 的 application_id 条件负责，不再要求成员与角色同租户）。
+    direct_role_ids = (
         select(RoleBinding.role_id)
+        .join(Role, Role.id == RoleBinding.role_id)
         .where(RoleBinding.membership_id == membership_id)
-        .union(inherited_role_ids)
     )
+    return direct_role_ids.union(inherited_role_ids)
 
 
 def list_effective_roles(
@@ -76,14 +81,15 @@ def list_effective_roles(
 ) -> list[Role]:
     """返回成员在 (tenant, application) 上下文中的全部有效角色。
 
-    application_id 为 None 时只取应用维度为空的 platform/tenant 角色；
-    指定应用时取租户角色 ∪ 钉住该应用的应用角色（L2/业务角色）。
-    平台角色只存在于平台租户，业务租户过滤后天然不会出现。
+    平台角色全局化：平台类角色（application_id IS NULL，宿主平台管理租户）
+    绑定到任意租户成员均生效；应用类角色按其所属应用生效（跨租户任命，不再要求成员同租户），
+    应用上下文由 application_id 精确匹配，不会跨应用泄漏。
+    application_id 为 None 时只取应用维度为空的角色（平台/租户级）；
+    指定应用时取平台类角色 ∪ 钉住该应用的应用角色（L2/业务角色）。
     """
     statement = select(Role).where(
         Role.id.in_(authorized_role_ids_statement(membership_id, tenant_id)),
         Role.status == "active",
-        Role.tenant_id == tenant_id,
     )
     if application_id is None:
         statement = statement.where(

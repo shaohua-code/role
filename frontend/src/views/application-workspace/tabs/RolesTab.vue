@@ -4,10 +4,10 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { APPLICATION_ROLE_API_PREFIX, cachedHasAny } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
-import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
-import AdminEmpty from '@/components/AdminEmpty.vue'
+import AdminTable from '@/components/AdminTable.vue'
+import AdminSearchField from '@/components/AdminSearchField.vue'
 import ApplicationPermissionModal from '../components/ApplicationPermissionModal.vue'
 import RoleMembersModal from '../components/RoleMembersModal.vue'
 import { asPagedList } from '@/utils/paged'
@@ -44,6 +44,14 @@ const router = useRouter()
 
 const roles = ref<RoleRecord[]>([])
 const loading = ref(false)
+// U16 工具栏左槽：本地关键字过滤（名称/标识），与组织台成员 Tab 的搜索骨架对齐
+const keyword = ref('')
+const filteredRoles = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return roles.value
+  return roles.value.filter(role =>
+    role.name.toLowerCase().includes(kw) || role.key.toLowerCase().includes(kw))
+})
 const createOpen = ref(false)
 const saving = ref(false)
 const form = reactive({ key: '', name: '', description: '' })
@@ -57,7 +65,7 @@ let requestSequence = 0
 
 const isPlatform = computed(() => props.apiPrefix === '/admin')
 const canManage = computed(() => props.application?.can_manage === true
-  || (isPlatform.value && cachedHas('rbac.role.manage')))
+  || (isPlatform.value && cachedHasAny(['button.app_role.manage'])))
 const canCreate = computed(() => canManage.value && props.application?.status === 'active')
 
 const columns = [
@@ -78,7 +86,8 @@ function rolesPath(): string {
     })
     return `/admin/roles?${params}`
   }
-  return `/tenant-admin/applications/${props.application?.id}/roles`
+  // 应用角色域端点后端仅挂 /tenant-admin，租户视角走该前缀（平台视角列表用 /admin/roles 聚合）
+  return `${APPLICATION_ROLE_API_PREFIX}/applications/${props.application?.id}/roles`
 }
 
 async function loadRoles(): Promise<void> {
@@ -129,7 +138,8 @@ async function saveRole(): Promise<void> {
   }
   saving.value = true
   try {
-    const created = await api<RoleRecord>(`/tenant-admin/applications/${application.id}/roles`, {
+    // 创建应用角色走租户台挂载点（平台管理员同经此判权放行）
+    const created = await api<RoleRecord>(`${APPLICATION_ROLE_API_PREFIX}/applications/${application.id}/roles`, {
       method: 'POST',
       body: JSON.stringify({
         key: form.key.trim(),
@@ -180,11 +190,12 @@ async function onGrantsSaved(): Promise<void> {
 
 const grantCatalogPath = computed(() => {
   if (!grantRoleId.value || !props.application) return ''
-  return `/tenant-admin/applications/${props.application.id}/permissions?role_id=${encodeURIComponent(grantRoleId.value)}&include_management=true`
+  // 挂码目录与授权保存均走租户台应用角色挂载点
+  return `${APPLICATION_ROLE_API_PREFIX}/applications/${props.application.id}/permissions?role_id=${encodeURIComponent(grantRoleId.value)}&include_management=true`
 })
 const grantGrantsPath = computed(() => {
   if (!grantRoleId.value || !props.application) return ''
-  return `/tenant-admin/applications/${props.application.id}/roles/${grantRoleId.value}/permissions`
+  return `${APPLICATION_ROLE_API_PREFIX}/applications/${props.application.id}/roles/${grantRoleId.value}/permissions`
 })
 
 watch(() => [props.active, props.application?.id] as const, ([active]) => {
@@ -195,24 +206,26 @@ watch(() => [props.active, props.application?.id] as const, ([active]) => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <AdminTableToolbar :hint="canManage
-      ? '本页只列出应用角色（财务 / 只读等）。「应用权限」里勾选你看得见的租户/应用管理码、业务码和资源树；「配置成员」会同时成为该应用的平台成员。五级平台模板请到「高级管理 → 平台角色」。'
-      : '本页只列出应用角色；当前只读。'">
+    <!-- 统一表格组件：工具条（说明 + 操作）与表格/空态一体，页面不再自带 a-table -->
+    <AdminTable
+      :hint="canManage
+        ? '本页只列出应用角色（财务 / 只读等）。「应用权限」里勾选你看得见的租户/应用管理码、业务码和资源树；「配置成员」会同时成为该应用的平台成员。五级平台模板请到「高级管理 → 平台角色」。'
+        : '本页只列出应用角色；当前只读。'"
+      :columns="columns"
+      :data-source="filteredRoles"
+      :loading="loading"
+      row-key="id"
+      :scroll="{ x: 960 }"
+      :pagination="{ pageSize: 10, showSizeChanger: true }"
+      empty-emoji="🎭"
+      empty-text="当前应用还没有应用角色；先新建，再配置应用权限与成员"
+    >
+      <AdminSearchField v-model="keyword" placeholder="搜索角色名称或标识" />
       <template #actions>
         <a-button :loading="loading" :disabled="!application" @click="loadRoles">刷新</a-button>
         <a-button v-if="isPlatform" @click="goAdvancedRoles">平台角色</a-button>
         <a-button v-if="canCreate" type="primary" @click="openCreate">新建应用角色</a-button>
       </template>
-    </AdminTableToolbar>
-
-    <a-table
-      :data-source="roles"
-      :columns="columns"
-      :loading="loading"
-      row-key="id"
-      :scroll="{ x: 960, y: 'calc(100vh - 520px)' }"
-      :pagination="{ pageSize: 10, showSizeChanger: true }"
-    >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'permission_codes'">
           <a-button type="link" size="small" class="px-0" @click="openGrantEditor(record as RoleRecord)">
@@ -229,10 +242,7 @@ watch(() => [props.active, props.application?.id] as const, ([active]) => {
           </span>
         </template>
       </template>
-      <template #emptyText>
-        <AdminEmpty emoji="🎭" description="当前应用还没有应用角色；先新建，再配置应用权限与成员" />
-      </template>
-    </a-table>
+    </AdminTable>
 
     <a-modal v-model:open="createOpen" title="新建应用角色" ok-text="创建" cancel-text="取消" :confirm-loading="saving" @ok="saveRole">
       <a-form layout="vertical">
@@ -255,7 +265,6 @@ watch(() => [props.active, props.application?.id] as const, ([active]) => {
       :tenant-id="application.tenant_id"
       :role-id="grantRoleId"
       :role-name="grantRoleName"
-      :role-namespace="application.permission_namespace || ''"
       :catalog-path="grantCatalogPath"
       :grants-path="grantGrantsPath"
       :can-manage="canManage"

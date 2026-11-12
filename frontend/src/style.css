@@ -16,12 +16,14 @@ body {
   font-family: var(--font-sans);
 }
 
-/* 登录页与 OIDC 主题：黑色画布 + 极微弱白光（P350 黑白灰），禁止多层炫光 */
+/* 登录页与 OIDC 主题：黑色画布 + 舞台式布光（P350 黑白灰，禁止多层炫光）。
+   D3 工艺：中心聚光给卡片打底 → 左上/右下极弱环境光 → 卡片分层阴影接地 + 发丝亮边。 */
 .login-shell {
   min-height: 100vh;
   background:
-    radial-gradient(40rem 24rem at 15% -10%, rgba(255, 255, 255, 0.07), transparent 65%),
-    radial-gradient(36rem 22rem at 85% 110%, rgba(255, 255, 255, 0.03), transparent 70%),
+    radial-gradient(42rem 30rem at 50% 38%, rgba(255, 255, 255, 0.05), transparent 68%),
+    radial-gradient(40rem 24rem at 12% -8%, rgba(255, 255, 255, 0.06), transparent 65%),
+    radial-gradient(36rem 22rem at 88% 112%, rgba(255, 255, 255, 0.03), transparent 70%),
     var(--color-login-canvas);
 }
 .login-card {
@@ -29,11 +31,25 @@ body {
   z-index: 1;
   width: min(440px, calc(100vw - 32px));
   padding: var(--space-5) var(--space-6);
-  border: 1px solid color-mix(in srgb, var(--color-bg-elevated) 55%, transparent);
+  /* 发丝亮边 + 顶部受光：让白卡片在黑画布上有「物件感」而非贴纸感 */
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--radius-lg);
   background: var(--color-login-card);
   backdrop-filter: blur(12px);
-  box-shadow: var(--shadow-lg);
+  /* 0-2-0 特异度：压过 antd 运行时注入的同权重卡片阴影，保证分层接地阴影生效 */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 24px 48px -12px rgba(0, 0, 0, 0.5),
+    0 48px 96px -24px rgba(0, 0, 0, 0.45);
+}
+/* 同规则的高特异度副本：dev 下 cssinjs <style> 后插会覆盖 0-1-0 的 .login-card */
+.login-shell .login-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 24px 48px -12px rgba(0, 0, 0, 0.5),
+    0 48px 96px -24px rgba(0, 0, 0, 0.45);
 }
 .login-brand { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-6); }
 .login-brand strong, .login-brand small { display: block; }
@@ -46,8 +62,11 @@ body {
   height: 36px;
   border: none;
   border-radius: var(--radius-md);
-  background: var(--color-brand);
-  box-shadow: var(--shadow-sm);
+  /* 石墨渐变 + 顶部受光：黑白体系内做出材质层次（轻奢极简） */
+  background: linear-gradient(180deg, #3f3f46, #18181b);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    var(--shadow-sm);
   font-size: 12px;
   font-weight: 600;
   color: #fff;
@@ -111,7 +130,29 @@ body {
 .theme-switches .ant-form-item { display: flex; align-items: center; justify-content: space-between; }
 .theme-help, .history-caption { margin: 0 0 16px; color: var(--color-text-secondary); font-size: 12px; line-height: 1.65; }
 .theme-side { display: grid; gap: 16px; }
-.preview-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.preview-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  /* U22 卡头分隔线：与左侧「主题配置」卡默认头部分隔线同构 */
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 12px;
+}
+/* U22 分段控件统一胶囊形：消灭首尾直角，与全站圆角语言一致 */
+.preview-heading .ant-radio-group {
+  border-radius: 999px;
+  overflow: hidden;
+}
+.preview-heading .ant-radio-button-wrapper:first-child {
+  border-start-start-radius: 999px;
+  border-end-start-radius: 999px;
+}
+.preview-heading .ant-radio-button-wrapper:last-child {
+  border-start-end-radius: 999px;
+  border-end-end-radius: 999px;
+}
 .preview-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .preview-heading p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 12px; }
 .theme-preview-frame { display: grid; min-height: 390px; place-items: center; padding: 28px; border: 1px solid var(--color-border); border-radius: 10px; background-size: cover; background-position: center; }
@@ -265,18 +306,11 @@ body {
   width: 208px;
 }
 
-/* 筛选面板：与工具条同族的层次容器；面板内控件统一占满单元格。 */
+/* 筛选面板：与工具条同族的层次容器；面板内控件统一占满单元格。
+   U4：面板底色/边框已 token 化（AdminFilterPanel），暗色随 token 自动翻转，原暗色补丁删除。 */
 .admin-filter-panel .ant-select,
 .admin-filter-panel .ant-picker {
   width: 100%;
-}
-/* 深色主题：筛选面板半透明叠加，标签提高亮度保证可读。 */
-.ant-layout[data-theme='dark'] .admin-filter-panel {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(148, 163, 184, 0.16);
-}
-.ant-layout[data-theme='dark'] .admin-filter-panel .admin-filter-label {
-  color: var(--color-text-muted);
 }
 
 /* 窄屏宽表格使用表格自身横向滚动。 */
@@ -317,6 +351,77 @@ body {
 .ant-layout[data-theme='dark'] .ant-table-thead > tr > th { background: rgba(255, 255, 255, 0.04); }
 .ant-layout[data-theme='dark'] .ant-table-tbody > tr.ant-table-row:hover > td { background: var(--color-row-hover); }
 
+/* U24 sticky 接缝：fixed 列单元格由 antd 显式上底色（非透明），与透明表体在部分容器下出现纵向色差。
+   显式对齐到同一 token——表体 fixed 列 = elevated 卡底、表头 fixed 列 = subtle，与普通列完全一致。 */
+.ant-layout .ant-table-tbody > tr > td.ant-table-cell-fix-left,
+.ant-layout .ant-table-tbody > tr > td.ant-table-cell-fix-right { background: var(--color-bg-elevated); }
+.ant-layout .ant-table-thead > tr > th.ant-table-cell-fix-left,
+.ant-layout .ant-table-thead > tr > th.ant-table-cell-fix-right { background: var(--color-bg-subtle); }
+.ant-layout[data-theme='dark'] .ant-table-tbody > tr > td.ant-table-cell-fix-left,
+.ant-layout[data-theme='dark'] .ant-table-tbody > tr > td.ant-table-cell-fix-right { background: var(--color-bg-elevated); }
+.ant-layout[data-theme='dark'] .ant-table-thead > tr > th.ant-table-cell-fix-left,
+.ant-layout[data-theme='dark'] .ant-table-thead > tr > th.ant-table-cell-fix-right { background: rgba(255, 255, 255, 0.04); }
+
+/* U25 default 状态 tag（停用/灰标）：antd 只下发 .ant-tag-default 类名未生成样式，回退到近白底 +
+   浅描边显得整体洗白。补齐 token 化灰 chip：subtle 底 + strong 描边 + 次级墨文字（约 7:1）。 */
+.ant-layout .ant-tag-default {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
+  border-color: var(--color-border-strong);
+}
+
+/* U26 主按钮阴影统一口径：全站主按钮一律无阴影。antd disabled/loading 态本就无阴影，常态却保留
+   默认 0 2px 0 偏移投影（桥接 token 实测未生效），同页两态观感不一；扁平实底更契合黑白灰体系。
+   悬停/聚焦/激活态用 ≥0-4-0 特异性盖过 antd cssinjs 的 :not(:disabled):hover 链。 */
+.ant-layout .ant-btn-primary { box-shadow: none; }
+.ant-layout .ant-btn-primary:not(:disabled):hover,
+.ant-layout .ant-btn-primary:not(:disabled):focus-visible,
+.ant-layout .ant-btn-primary:not(:disabled):active { box-shadow: none; }
+
+/* U25 侧栏折叠按钮：Tailwind 工具类位于 @layer utilities，会输给无层的表单元素 reset
+   （button { color: inherit }），按钮上的 text-* 颜色类不生效（实测恒继承 #fafafa）——
+   侧栏原生按钮颜色改由本无层规则固定：次亮白常态、纯白悬停，与菜单条目亮度对齐。 */
+.mgmt-sider .sider-toggle-btn { color: var(--color-sider-text-strong); }
+.mgmt-sider .sider-toggle-btn:hover { color: var(--color-sider-text-active); }
+
+/* U29：antd cssinjs（无层）会把 token 字体写在 .ant-tag 上，layered 的 font-mono 工具类
+   打不过它——client_id 等宽灰标改由本无层规则固定等宽字体。 */
+.ant-tag.font-mono { font-family: var(--font-mono); }
+
+/* ===== D6 统一表格质感：密而不挤的 B2B 阅读节奏（全站 a-table，含弹窗内表格） ===== */
+/* 表头：小号次级灰 + 微字距——「列头是注释、数据是主体」的层级，替代 antd 默认 14px 重表头 */
+.ant-layout .ant-table-thead > tr > th {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary);
+  border-bottom-color: var(--color-border-strong);
+}
+/* 单元格：12px 纵向节奏（antd 默认 16px），行更密、纵向扫读路径更短 */
+.ant-layout .ant-table-tbody > tr > td {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-bottom-color: var(--color-border);
+}
+/* 分页与表格内数字等宽对齐：计数列、分页码宽度稳定不跳动 */
+.ant-layout .ant-table-wrapper .ant-pagination-item a,
+.ant-layout .ant-table-wrapper .ant-pagination-total-text {
+  font-variant-numeric: tabular-nums;
+}
+/* 表格内动作链接降噪：常态次级墨、悬停转主墨——密集表格里操作列不再是一排黑色粗字，行数据重新成为视觉主体 */
+.ant-layout .ant-table-tbody .ant-btn-link:not(.ant-btn-dangerous):not(:disabled) {
+  color: var(--color-text-secondary);
+}
+.ant-layout .ant-table-tbody .ant-btn-link:not(.ant-btn-dangerous):not(:disabled):hover,
+.ant-layout .ant-table-tbody .ant-btn-link:not(.ant-btn-dangerous):not(:disabled):focus-visible {
+  color: var(--color-brand);
+}
+.ant-layout[data-theme='dark'] .ant-table-tbody .ant-btn-link:not(.ant-btn-dangerous):not(:disabled):hover,
+.ant-layout[data-theme='dark'] .ant-table-tbody .ant-btn-link:not(.ant-btn-dangerous):not(:disabled):focus-visible {
+  color: var(--color-brand-hover);
+}
+
 /* 全局细滚动条：slate 色系，深色主题切换为暗色滑轨。 */
 * { scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -326,6 +431,33 @@ body {
 .ant-layout[data-theme='dark'] * { scrollbar-color: var(--color-border-strong) transparent; }
 .ant-layout[data-theme='dark'] *::-webkit-scrollbar-thumb { background: var(--color-border-strong); }
 .ant-layout[data-theme='dark'] *::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+
+/* ===== U1 暗色侧栏菜单修复：darkAlgorithm 与 Menu theme="dark" 组合会把条目色错算成
+   rgba(24,24,27,.65)（65% 黑压 #09090b 黑底，对比度 ~1.2:1 近乎隐形）。
+   用 html[data-theme] 作用域 + 高特异性覆盖 cssinjs（:where 前缀特异性为 0），
+   同时覆盖固定侧栏与移动端抽屉（teleport 到 body，.ant-layout 祖先不存在）。 ===== */
+html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-item:not(.ant-menu-item-selected),
+html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-title {
+  color: rgba(255, 255, 255, 0.72);
+}
+html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-item:not(.ant-menu-item-selected):hover,
+html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-title:hover {
+  color: #fff;
+}
+html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-arrow {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ===== U7 空表格不渲染横向滚动条：antd 空态仍按列宽 colgroup 撑出横向溢出，
+   死滚动条横穿空态区；空表列宽并无可滚内容，直接隐藏。 ===== */
+.ant-table-wrapper .ant-table-empty .ant-table-content::-webkit-scrollbar,
+.ant-table-wrapper .ant-table-empty .ant-table-body::-webkit-scrollbar {
+  display: none;
+}
+.ant-table-wrapper .ant-table-empty .ant-table-content,
+.ant-table-wrapper .ant-table-empty .ant-table-body {
+  scrollbar-width: none;
+}
 
 
 /* —— Management shell (token-driven) —— */
@@ -342,7 +474,8 @@ body {
   padding-right: var(--content-padding-x);
   padding-top: var(--space-6);
   padding-bottom: var(--space-6);
-  /* 纵向骨架：内容不足时卡片拉伸填满、页脚恒贴底，消除数据少/空态页面的大片画布裸露。 */
+  /* 纵向骨架：内容不足时卡片拉伸填满，消除数据少/空态页面的大片画布裸露。
+     页脚已移出滚动流（App.vue 壳层固定底行），滚动条只在内容真实超出时出现。 */
   display: flex;
   flex-direction: column;
 }

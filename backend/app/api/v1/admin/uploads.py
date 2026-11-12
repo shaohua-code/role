@@ -20,7 +20,7 @@ from app.core.security import current_user
 from app.db.session import get_db_session
 from app.models.application import Application
 from app.models.identity import User
-from app.services.rbac_guards import ensure_roles
+from app.services.rbac_guards import ensure_codes, ensure_roles
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS
 
 ALLOWED_CONTENT_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
@@ -47,15 +47,19 @@ async def upload_theme_asset(request: Request, application_id: UUID,
     application = db.get(Application, application_id)
     if not application:
         raise HTTPException(404, "应用不存在")
-    ensure_roles(actor, db, list(CONSOLE_ADMIN_ROLE_KEYS), tenant_id=application.tenant_id,
-                 application_id=application.id, detail="缺少管理角色（原 ops.theme.manage）")
+    ensure_codes(actor, db, "button.themes.manage", tenant_id=application.tenant_id, application_id=application.id, detail="缺少管理权限：button.themes.manage")
     settings = get_settings()
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     extension = ALLOWED_CONTENT_TYPES.get(content_type)
     if not extension:
         raise HTTPException(415, "仅支持 PNG / JPEG / WebP 位图（SVG 可携带脚本，已排除）")
     declared_length = request.headers.get("content-length")
-    if declared_length and int(declared_length) > settings.theme_upload_max_bytes:
+    # P2-11：非数字 Content-Length 不抛 500，按 0 处理交由实际 body 大小校验兜底。
+    try:
+        declared_size = int(declared_length) if declared_length else 0
+    except ValueError:
+        declared_size = 0
+    if declared_size > settings.theme_upload_max_bytes:
         raise HTTPException(413, f"素材超过大小限制（{settings.theme_upload_max_bytes} 字节）")
     payload = await request.body()
     if not payload:

@@ -3,8 +3,9 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import { PAGE_PATHS } from '@/router/navigation'
+import { PlusOutlined } from '@/plugins/icons'
 import AdminListPage from '@/components/AdminListPage.vue'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminDetailDrawer from '@/components/AdminDetailDrawer.vue'
@@ -36,7 +37,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ changed: [] }>()
 const router = useRouter()
-const canManageTenants = computed(() => cachedHas('platform.tenant.manage'))
+const canManageTenants = computed(() => cachedHasAny(['button.tenants.manage']))
 
 let hydratedCatalogGeneration = -1
 
@@ -82,8 +83,9 @@ const filteredTenants = computed(() => {
 const columns = [
   { title: '租户', dataIndex: 'name', key: 'name', width: 210 },
   { title: '类型', dataIndex: 'kind', key: 'kind', width: 110 },
-  { title: '成员', dataIndex: 'member_count', key: 'member_count', width: 90 },
-  { title: '应用', dataIndex: 'application_count', key: 'application_count', width: 90 },
+  // U27 计数列收窄（90→72）：两三位数字不需要宽列，宽度还给名称列
+  { title: '成员', dataIndex: 'member_count', key: 'member_count', width: 72 },
+  { title: '应用', dataIndex: 'application_count', key: 'application_count', width: 72 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 88 },
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 190, fixed: 'right' as const },
 ]
@@ -283,8 +285,8 @@ watch(() => [props.shellCatalogGeneration, props.shellTenants?.length] as const,
       :loading="loading"
       row-key="id"
       :custom-row="rowProps"
-      :scroll="{ x: 860, y: 'calc(100vh - 430px)' }"
-      :pagination="{ pageSize: 10, showSizeChanger: true }"
+      :scroll="{ x: 826, y: 'calc(max(360px, 100vh - 430px))' }"
+      :pagination="{ pageSize: 10, showSizeChanger: true, showTotal: (count: number) => `共 ${count} 条` }"
       empty-emoji="🏢"
       :empty-text="searchText || kindFilter || statusFilter ? '没有匹配的租户' : '暂无租户，可点击新建租户创建隔离空间'"
     >
@@ -292,7 +294,8 @@ watch(() => [props.shellCatalogGeneration, props.shellTenants?.length] as const,
       <a-select v-model:value="kindFilter" :options="kindOptions" placeholder="类型" />
       <a-select v-model:value="statusFilter" :options="statusOptions" placeholder="状态" />
       <template #header-extra>
-        <a-button type="primary" @click="createTenant">＋ 新建租户</a-button>
+        <!-- 建租户是超管专属（button.tenants.manage min_scope=super）：非超管隐藏入口，与后端判权同口径 -->
+        <a-button v-if="canManageTenants" type="primary" @click="createTenant"><PlusOutlined class="mr-1" />新建租户</a-button>
       </template>
       <template #actions>
         <a-button :loading="loading" @click="loadTenants">刷新</a-button>
@@ -319,7 +322,7 @@ watch(() => [props.shellCatalogGeneration, props.shellTenants?.length] as const,
         </template>
         <template v-else-if="column.key === 'status'"><a-tag :color="record.status === 'active' ? 'green' : 'default'">{{ record.status === 'active' ? '启用' : '停用' }}</a-tag></template>
         <template v-else-if="column.key === 'actions'"><a-space :size="2" @click.stop>
-          <a-button v-if="record.slug !== 'platform'" type="link" size="small" @click="changeKind(record)">{{ record.kind === 'consumer' ? '转为组织租户' : '转为 ToC 消费' }}</a-button>
+          <a-button v-if="canManageTenants && record.slug !== 'platform'" type="link" size="small" @click="changeKind(record)">{{ record.kind === 'consumer' ? '转为组织租户' : '转为 ToC 消费' }}</a-button>
           <a-button v-if="canManageTenants" type="link" size="small" @click="changeStatus(record)">{{ record.status === 'active' ? '停用' : '启用' }}</a-button>
           <a-button v-if="canManageTenants && record.slug !== 'platform'" type="link" size="small" danger @click="deleteTenant(record)">删除</a-button>
         </a-space></template>

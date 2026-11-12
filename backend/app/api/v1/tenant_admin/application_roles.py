@@ -28,23 +28,24 @@ from app.services.permission_impact import (
     apply_role_permissions,
     preview_role_permissions,
 )
+from app.services.permission_kinds import ROLE_SCOPE_TENANT, infer_permission_kind
 from app.services.permission_namespace import (
     assert_application_grant_permissions,
     is_management_code,
     permission_matches_namespace,
 )
+from app.services.rbac_guards import (
+    actor_grantable_management_codes,
+    bump_membership_versions,
+    ensure_scope,
+    user_has_any_role,
+)
 from app.services.role_provisioning import (
-    L2M_ROLE_KEY,
     L2_ROLE_KEY,
     L3_ROLE_KEY,
     L4_ROLE_KEY,
     TEMPLATE_ROLE_KEYS,
     is_application_class_role,
-)
-from app.services.rbac_guards import (
-    actor_grantable_management_codes,
-    bump_membership_versions,
-    user_has_any_role,
 )
 
 
@@ -53,26 +54,24 @@ router = APIRouter(tags=["应用角色与成员"])
 def _ensure_app_role_binding_permission(
     actor: User, db: Session, application: Application, role: Role,
 ) -> None:
-    """P405 任命链：L3 可任命多应用/应用管理员；多应用管理员可再任命应用管理员；应用管理员不能任命管理员。"""
+    """P405 任命链：任命应用管理员（app.admin 模板）需租户级及以上范围；应用级只能维护本应用角色。"""
     if is_platform_admin_user(actor, db):
         return
+    # 任命/撤职应用管理员是租户级能力：范围闸门收口（应用级不能向上）。
+    if role.key == L2_ROLE_KEY:
+        ensure_scope(
+            actor, db, ROLE_SCOPE_TENANT,
+            detail="任命应用管理员需要租户级及以上范围",
+        )
+        return
     tenant_id = application.tenant_id
-    app_id = application.id
     if user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
         return
-    is_multi = user_has_any_role(
-        actor, db, (L2M_ROLE_KEY,), tenant_id=tenant_id, application_id=app_id,
+    # 应用管理员可维护本应用的成员/自定义应用角色（含 app.member 模板）。
+    is_app_admin = user_has_any_role(
+        actor, db, (L2_ROLE_KEY,), tenant_id=tenant_id, application_id=application.id,
     )
-    is_single = user_has_any_role(
-        actor, db, (L2_ROLE_KEY,), tenant_id=tenant_id, application_id=app_id,
-    )
-    if is_multi:
-        if role.key == L2M_ROLE_KEY:
-            raise HTTPException(403, "多应用管理员不能任命多应用管理员")
-        return
-    if is_single:
-        if role.key in {L2M_ROLE_KEY, L2_ROLE_KEY}:
-            raise HTTPException(403, "应用管理员不能任命应用管理员")
+    if is_app_admin:
         if role.key == L4_ROLE_KEY or is_application_class_role(role):
             return
         raise HTTPException(403, "缺少应用角色成员管理权限")
@@ -363,6 +362,7 @@ def list_application_permissions(
             "scope": permission.scope,
             "description": permission.description,
             "status": permission.status,
+            "kind": infer_permission_kind(permission.code),
         })
     return payload
 
@@ -584,6 +584,85 @@ def list_application_members(
     }
 
 
+@router.get("/applications/{application_id}/member-candidates")
+def list_application_member_candidates(
+    application_id: UUID,
+    q: str | None = Query(default=None, max_length=120),
+    role_id: UUID | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> dict:
+    """列出本应用所属租户的活动成员，供勾选绑定到应用角色。
+
+    与组织成员目录分离：L2 没有 org.read，不能走 /members；本接口按应用管理权限判权。
+    """
+    application = _authorized_application(application_id, actor, db)
+    scoped_role = _authorized_role(application, role_id, actor, db) if role_id else None
+    filters = [
+        TenantMembership.tenant_id == application.tenant_id,
+        TenantMembership.status == "active",
+        User.status == "active",
+    ]
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        filters.append(or_(User.email.ilike(pattern), User.display_name.ilike(pattern)))
+
+    total = int(db.scalar(
+        select(func.count(TenantMembership.id))
+        .join(User, User.id == TenantMembership.user_id)
+        .where(*filters)
+    ) or 0)
+    rows = db.execute(
+        select(TenantMembership.id, User.id.label("user_id"), User.email, User.display_name)
+        .join(User, User.id == TenantMembership.user_id)
+        .where(*filters)
+        .order_by(User.display_name, User.email)
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    bound_membership_ids: set[UUID] = set()
+    if scoped_role is not None and rows:
+        membership_ids = [row.id for row in rows]
+        bound_membership_ids.update(db.scalars(select(RoleBinding.membership_id).where(
+            RoleBinding.membership_id.in_(membership_ids),
+            RoleBinding.role_id == scoped_role.id,
+        )).all())
+        bound_membership_ids.update(db.scalars(
+            select(UserGroupMembership.membership_id)
+            .join(UserGroup, and_(
+                UserGroup.id == UserGroupMembership.group_id,
+                UserGroup.tenant_id == UserGroupMembership.tenant_id,
+            ))
+            .join(UserGroupRole, and_(
+                UserGroupRole.group_id == UserGroup.id,
+                UserGroupRole.tenant_id == UserGroup.tenant_id,
+            ))
+            .where(
+                UserGroupMembership.membership_id.in_(membership_ids),
+                UserGroup.status == "active",
+                UserGroupRole.role_id == scoped_role.id,
+            )
+        ).all())
+
+    return {
+        "items": [
+            {
+                "user_id": str(user_id),
+                "email": email,
+                "display_name": display_name,
+                "already_bound": membership_id in bound_membership_ids,
+            }
+            for membership_id, user_id, email, display_name in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @router.put("/applications/{application_id}/role-bindings", status_code=204)
 def bind_application_role(
     application_id: UUID,
@@ -592,10 +671,10 @@ def bind_application_role(
     actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> None:
-    """按管理员指定的邮箱绑定现有租户成员；不提供可枚举的候选成员目录。
+    """按管理员指定的邮箱绑定现有租户成员；候选名单见 member-candidates。
 
-    判权顺序：先要求应用可读（L3 assign 也需要看到应用），再按 manage/assign
-    双层码决定是否允许绑定目标角色；L3 只能任命 key=app.admin。
+    判权顺序：先要求应用可读（租户级任命也需要看到应用），再按角色模板与
+    授权范围决定是否允许绑定目标角色；任命应用管理员需租户级及以上范围。
     """
     application = _authorized_application(application_id, actor, db, manage=False)
     if application.status != "active":

@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 // 共享「用户组关系」弹窗：按类型批量编辑组成员或组角色。
 // 自用户组管理页抽取，供用户组页与组织工作台「用户组」Tab 复用，避免重复造轮子。
 // P355：多选下拉升级为穿梭框（对齐用户页「配置租户角色」交互）——左右双栏 + 搜索 + 勾选，
@@ -50,13 +50,14 @@ watch(() => props.open, async open => {
         disabled: false,
       }))
     } else {
-      const roles = await api<Array<{ id: string; key: string; name: string; status: string; assigned: boolean }>>(
+      // 组角色候选：后端已按操作者范围秩过滤（恒向下兼容），scope_label 让层级在选项上可见。
+      const roles = await api<Array<{ id: string; key: string; name: string; status: string; scope_label?: string; assigned: boolean }>>(
         `${props.apiPrefix}/groups/${props.groupId}/roles`)
       selectedIds.value = roles.filter(item => item.assigned).map(item => item.id)
       items.value = roles.map(item => ({
         key: item.id,
         title: item.name,
-        description: `${item.key}${item.status === 'active' ? '' : ' · 角色已停用'}`,
+        description: `${item.key}${item.scope_label ? ` · ${item.scope_label}` : ''}${item.status === 'active' ? '' : ' · 角色已停用'}`,
         // 停用且未分配的角色禁止新勾入；已分配的停用角色保留可移除。
         disabled: item.status !== 'active' && !item.assigned,
       }))

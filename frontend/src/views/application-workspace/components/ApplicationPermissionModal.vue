@@ -3,6 +3,7 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
+import { APPLICATION_ROLE_API_PREFIX } from '@/api/capabilities'
 import { asPagedList } from '@/utils/paged'
 import RolePermissionGrantModal from '@/components/RolePermissionGrantModal.vue'
 import RoleResourceGrantModal from './RoleResourceGrantModal.vue'
@@ -37,7 +38,6 @@ const props = withDefaults(defineProps<{
   tenantId?: string
   roleId?: string
   roleName?: string
-  roleNamespace?: string
   catalogPath?: string
   grantsPath?: string
   canManage?: boolean
@@ -46,7 +46,6 @@ const props = withDefaults(defineProps<{
   tenantId: '',
   roleId: '',
   roleName: '',
-  roleNamespace: '',
   catalogPath: '',
   grantsPath: '',
   canManage: false,
@@ -78,9 +77,9 @@ async function loadDataScopes(): Promise<void> {
   loadingDataScopes.value = true
   try {
     const catalogPath = props.catalogPath
-      || `/tenant-admin/applications/${props.applicationId}/permissions?role_id=${encodeURIComponent(props.roleId)}&include_management=true`
+      || `${APPLICATION_ROLE_API_PREFIX}/applications/${props.applicationId}/permissions?role_id=${encodeURIComponent(props.roleId)}&include_management=true`
     const grantsPath = props.grantsPath
-      || `/tenant-admin/applications/${props.applicationId}/roles/${props.roleId}/permissions`
+      || `${APPLICATION_ROLE_API_PREFIX}/applications/${props.applicationId}/roles/${props.roleId}/permissions`
     const [catalog, grants, organizations, configured] = await Promise.all([
       api<PermissionRecord[] | { items: PermissionRecord[] }>(catalogPath).then(result => asPagedList(result).items),
       api<PermissionGrant[]>(grantsPath),
@@ -192,12 +191,8 @@ watch(activePane, pane => {
               embedded
               :role-id="roleId"
               :role-name="roleName"
-              :lock-authority-codes="false"
-              role-kind=""
-              :role-namespace="roleNamespace"
               :catalog-path="catalogPath"
               :grants-path="grantsPath"
-              :disable-iam-codes="false"
               @saved="onGrantsSaved"
             />
           </section>

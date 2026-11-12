@@ -50,6 +50,14 @@ class MembershipStatusUpdate(BaseModel):
     status: Literal["active", "disabled", "departed"]
 
 
+class MembershipCreate(BaseModel):
+    """为既有用户直加租户成员关系；去重后逐个创建或恢复（disabled/departed 直接恢复为 active）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant_ids: list[UUID] = Field(min_length=1, max_length=50)
+
+
 class RoleDataScopeItem(BaseModel):
     """单条数据范围策略：仅 selected_organizations 类型允许携带 organization_ids。"""
 

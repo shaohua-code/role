@@ -2,9 +2,11 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api, ApiRequestError } from '@/api'
-import { getCachedCapabilities } from '@/api/capabilities'
+import { ADMIN_API_PREFIX, hasButton } from '@/api/capabilities'
+import { PlusOutlined } from '@/plugins/icons'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
+import AdminTable from '@/components/AdminTable.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 // P369：复用概览账本指标卡（clickable=false 纯展示态），统一「编号 + 巨号数字」设计语言。
 import OverviewStatCard from '@/views/overview/components/OverviewStatCard.vue'
@@ -40,8 +42,8 @@ interface UsageSummary {
 }
 
 const props = defineProps<{ active: boolean; view: View; seedTenants?: Tenant[] }>()
-// 模型写/复核是 ops.model.manage（绿场仅 L1 持有）；L2/L3 只读目录与用量。
-const canManageModels = computed(() => getCachedCapabilities()?.platform_admin === true)
+// 页内写按钮认 button.models.manage；L1 放行语义收进 hasButton 统一判权。
+const canManageModels = computed(() => hasButton('button.models.manage'))
 const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const OUTCOME_FILTER_OPTIONS = [
   { value: 'succeeded', label: '成功' },
@@ -110,25 +112,36 @@ const modelFilterOptions = computed(() => catalogModels.value.map(model => ({
   label: model.display_name,
 })))
 const estimatedCostSummary = computed(() => {
-  if (summary.value.requests === 0) return '暂无用量'
+  // M4：零请求时显示占位符 —，避免统计卡里出现长短不一的文本值破坏卡片节奏
+  if (summary.value.requests === 0) return '—'
   return summary.value.estimated_cost === null ? '费用未知' : formatCostValue(summary.value.estimated_cost)
 })
 // P369：账本式汇总指标卡（对齐 P368 概览 01–05），大数千分位格式化；数据未加载时统一显示占位符。
+// U20：卡内不再带 01–05 编号——与节编号双体系打架，卡片回归「标签+数值」纯排版。
 const usageMetricCards = computed(() => {
   const loaded = usageDataLoaded.value
   const count = (value: number): number | string => (loaded ? value.toLocaleString('zh-CN') : '—')
   return [
-    { index: '01', label: '请求总数', value: count(summary.value.requests) },
-    { index: '02', label: '成功率', value: loaded && summary.value.requests > 0 ? `${(summary.value.succeeded / summary.value.requests * 100).toFixed(1)}%` : '—' },
-    { index: '03', label: '输入 Token', value: count(summary.value.input_tokens) },
-    { index: '04', label: '输出 Token', value: count(summary.value.output_tokens) },
-    { index: '05', label: '估算费用', value: loaded ? estimatedCostSummary.value : '—' },
+    { label: '请求总数', value: count(summary.value.requests) },
+    { label: '成功率', value: loaded && summary.value.requests > 0 ? `${(summary.value.succeeded / summary.value.requests * 100).toFixed(1)}%` : '—' },
+    { label: '输入 Token', value: count(summary.value.input_tokens) },
+    { label: '输出 Token', value: count(summary.value.output_tokens) },
+    { label: '估算费用', value: loaded ? estimatedCostSummary.value : '—' },
   ]
 })
 // 次级审计指标（成功/失败绝对数、估算与未知费用计数）收进脚注行，保证指标卡单行 5 张与概览一致。
 const usageAuditFootnote = computed(() => {
   const count = (value: number): string => value.toLocaleString('zh-CN')
   return `成功 ${count(summary.value.succeeded)} · 失败 ${count(summary.value.failed)} · 估算用量请求 ${count(summary.value.estimated_usage_requests)} · 未知费用请求 ${count(summary.value.unknown_cost_requests)}`
+})
+
+// U2 章节编号改「位置序」动态计算：无聚合数据时图表区合并为单个「02 用量与分布」空档带，
+// 待核对/账目前移为 03/04；有数据时恢复 04/05。修复空态 01→02→04→05 跳号。
+const usageChartsHaveData = computed(() => Boolean(timeline.value?.length || byModel.value?.length))
+const reviewSectionNo = computed(() => (usageChartsHaveData.value ? '04' : '03'))
+const ledgerSectionNo = computed(() => {
+  if (props.view !== 'usage') return '01'
+  return usageChartsHaveData.value ? '05' : '04'
 })
 
 const modelColumns = [
@@ -244,6 +257,17 @@ function commitUsageDates(): void {
   appliedCreatedTo.value = to
 }
 
+// M3 日期范围选择器：一个语义控件替代两个裸文本框；value-format 让 v-model 直接持有 YYYY-MM-DD 字符串，
+// 读写桥接既有 createdFrom/createdTo 与校验逻辑，选择器本身保证日期合法。
+const usageDateRangeModel = computed<string[] | null>({
+  get: () => (createdFrom.value && createdTo.value ? [createdFrom.value, createdTo.value] : null),
+  set: (range) => {
+    createdFrom.value = range?.[0] || ''
+    createdTo.value = range?.[1] || ''
+    commitUsageDates()
+  },
+})
+
 function changeUsageEventPage(pagination: { current?: number; pageSize?: number }): void {
   const nextPageSize = Math.min(Math.max(pagination.pageSize ?? usageEventPageSize.value, 1), 200)
   if (nextPageSize !== usageEventPageSize.value) {
@@ -261,18 +285,18 @@ async function load(): Promise<void> {
   const sequence = ++requestSequence.value
   loading.value = true
   if (props.view === 'usage') usageLoadError.value = ''
-  // 租户模式（L2/L3）必须显式锚定租户才能通过后端 ops.model.read 判权，默认选首个可见租户。
+  // 租户模式（L2/L3）必须显式锚定租户才能通过后端判权，默认选首个可见租户。
   const knownTenants = props.seedTenants?.length ? props.seedTenants : tenants.value
   if (!tenantId.value && knownTenants.length) tenantId.value = knownTenants[0].id
   const tenantQuery = tenantId.value ? `?tenant_id=${encodeURIComponent(tenantId.value)}` : ''
-  // seedTenants 提供时跳过 /admin/tenants（租户管理员无 platform.tenant.read）。
+  // seedTenants 提供时跳过 /admin/tenants（租户管理员无租户管理菜单节点）。
   const tenantsSource = props.seedTenants?.length
     ? Promise.resolve(props.seedTenants)
-    : api<Tenant[]>('/admin/tenants')
+    : api<Tenant[]>(`${ADMIN_API_PREFIX}/tenants`)
   try {
     if (props.view === 'catalog') {
       const [tenantRows, modelRows] = await Promise.all([
-        tenantsSource, api<ModelRecord[]>(`/admin/models${tenantQuery}`),
+        tenantsSource, api<ModelRecord[]>(`${ADMIN_API_PREFIX}/models${tenantQuery}`),
       ])
       if (sequence !== requestSequence.value) return
       tenants.value = tenantRows
@@ -290,18 +314,18 @@ async function load(): Promise<void> {
       appendLedgerFilters(summaryParams)
       const summaryQuery = summaryParams.toString()
       // 模型目录失败不影响账目；保留上一次模型列表，避免筛选框被清空。
-      const modelRowsPromise = api<ModelRecord[]>(`/admin/models${tenantQuery}`).catch(() => null)
+      const modelRowsPromise = api<ModelRecord[]>(`${ADMIN_API_PREFIX}/models${tenantQuery}`).catch(() => null)
       // P400：趋势与分布与汇总共用同一套筛选参数（summaryQuery），保证口径一致；
       // 指定模型筛选时分布退化为单柱，直接跳过请求并清空旧图。
-      const timelinePromise = api<{ items: UsageTimelinePoint[] }>(`/admin/model-usage/timeline?${summaryQuery}`).catch(() => null)
+      const timelinePromise = api<{ items: UsageTimelinePoint[] }>(`${ADMIN_API_PREFIX}/model-usage/timeline?${summaryQuery}`).catch(() => null)
       const byModelPromise = modelFilter.value
         ? Promise.resolve(null)
-        : api<{ items: UsageModelAggregate[] }>(`/admin/model-usage/by-model?${summaryQuery}`).catch(() => null)
+        : api<{ items: UsageModelAggregate[] }>(`${ADMIN_API_PREFIX}/model-usage/by-model?${summaryQuery}`).catch(() => null)
       const [tenantRows, eventRows, usageSummary, reviewRows, modelRows, timelineRows, byModelRows] = await Promise.all([
         tenants.value.length ? Promise.resolve(tenants.value) : tenantsSource,
-        api<UsageEventPage>(`/admin/model-usage/events?${eventParams.toString()}`),
-        api<UsageSummary>(`/admin/model-usage/summary${summaryQuery ? `?${summaryQuery}` : ''}`),
-        api<UsageReviewPage>(`/admin/model-usage/reviews?${reviewParams.toString()}`),
+        api<UsageEventPage>(`${ADMIN_API_PREFIX}/model-usage/events?${eventParams.toString()}`),
+        api<UsageSummary>(`${ADMIN_API_PREFIX}/model-usage/summary${summaryQuery ? `?${summaryQuery}` : ''}`),
+        api<UsageReviewPage>(`${ADMIN_API_PREFIX}/model-usage/reviews?${reviewParams.toString()}`),
         modelRowsPromise,
         timelinePromise,
         byModelPromise,
@@ -376,7 +400,7 @@ async function resolveReview(): Promise<void> {
     latency_ms: reviewForm.latency_ms,
   })
   try {
-    await api('/admin/model-usage/reviews', { method: 'POST', body: JSON.stringify(payload) })
+    await api(`${ADMIN_API_PREFIX}/model-usage/reviews`, { method: 'POST', body: JSON.stringify(payload) })
     message.success(reviewForm.decision === 'settle' ? '用量已核对并入账' : '已确认未调用 Provider，额度已释放')
     reviewOpen.value = false
     if (reviews.value.length === 1 && reviewPage.value > 1) reviewPage.value -= 1
@@ -433,7 +457,7 @@ async function saveModel(): Promise<void> {
   } else if (clearCredentialRef.value) payload.credential_ref = null
   else if (form.credential_ref.trim()) payload.credential_ref = form.credential_ref.trim()
   try {
-    await api(isEditing ? `/admin/models/${editingId.value}` : '/admin/models', {
+    await api(isEditing ? `${ADMIN_API_PREFIX}/models/${editingId.value}` : `${ADMIN_API_PREFIX}/models`, {
       method: isEditing ? 'PATCH' : 'POST', body: JSON.stringify(payload),
     })
     message.success(isEditing ? '模型已更新' : '模型已创建')
@@ -447,7 +471,7 @@ function changeStatus(record: ModelRecord): void {
   const status = record.status === 'active' ? 'disabled' : 'active'
   const update = async (): Promise<void> => {
     try {
-      await api(`/admin/models/${record.id}/status`, {
+      await api(`${ADMIN_API_PREFIX}/models/${record.id}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ expected_status: record.status, status }),
       })
@@ -474,7 +498,7 @@ function deleteModel(record: ModelRecord): void {
     okText: '永久删除', cancelText: '取消', okButtonProps: { danger: true },
     onOk: async () => {
       try {
-        await api(`/admin/models/${record.id}`, { method: 'DELETE' })
+        await api(`${ADMIN_API_PREFIX}/models/${record.id}`, { method: 'DELETE' })
         message.success('模型已删除')
         await load()
       } catch (error) {
@@ -535,7 +559,7 @@ watch([
       :subtitle="view === 'catalog' ? '维护租户模型目录、外部凭证引用、价格与调用限额。' : '查看可信网关报告的请求量、Token 消耗和费用估算。可按模型、结果和 UTC 日期筛选。'"
     >
       <template #extra>
-        <a-button v-if="view === 'catalog' && canManageModels" type="primary" :disabled="!tenants.length" @click="createModel">＋ 新建模型</a-button>
+        <a-button v-if="view === 'catalog' && canManageModels" type="primary" :disabled="!tenants.length" @click="createModel"><PlusOutlined class="mr-1" />新建模型</a-button>
       </template>
     </AdminPageHeader>
 
@@ -548,20 +572,20 @@ watch([
           <span class="font-mono text-[11px] font-medium text-[var(--color-text-muted)]">01</span>
           用量汇总
         </h3>
-        <p class="mb-0 text-xs text-[var(--color-text-muted)]">统计口径与下方账目筛选一致，不含待核对预留</p>
+        <!-- U30 关键口径说明从 muted 提到 secondary：11px 浅灰约 2.3:1 低于可读下限 -->
+        <p class="mb-0 text-xs text-[var(--color-text-secondary)]">统计口径与下方账目筛选一致，不含待核对预留</p>
       </div>
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <OverviewStatCard
           v-for="metric in usageMetricCards"
           :key="metric.label"
           :clickable="false"
           :label="metric.label"
           :value="metric.value"
-          :index="metric.index"
         />
       </div>
-      <!-- 次级审计指标收进脚注行，指标卡保持单行 5 张与概览一致。 -->
-      <p class="mb-0 mt-2 font-mono text-[11px] tracking-wide text-[var(--color-text-muted)]">{{ usageAuditFootnote }}</p>
+      <!-- U12 次级审计指标收进脚注行：去 mono/字距，作常规说明行避免读作悬浮裁切数字 -->
+      <p class="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">{{ usageAuditFootnote }}</p>
     </div>
 
     <!-- P400：02 用量趋势 + 03 模型分布；与汇总共用筛选口径，选中具体模型时隐藏分布卡。 -->
@@ -578,27 +602,34 @@ watch([
     <div v-if="view === 'usage'" class="flex min-w-0 flex-col">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <h3 class="mb-0 flex items-center gap-2 text-base font-semibold text-[var(--color-text-primary)]">
-          <span class="font-mono text-[11px] font-medium text-[var(--color-text-muted)]">04</span>
+          <span class="font-mono text-[11px] font-medium text-[var(--color-text-muted)]">{{ reviewSectionNo }}</span>
           待核对调用
           <a-badge :count="reviewTotal" :show-zero="false" />
         </h3>
         <a-button :loading="loading" @click="load">刷新核对队列</a-button>
       </div>
       <a-card class="data-card review-card" :bordered="false">
-        <!-- P400 降噪：原「灰字说明 + 大黄条」两行堆叠合为一条轻警示，规则只说一遍。 -->
-        <a-alert message="超时预留不会自动收费或释放（核对前仍占保守 TPM 额度）；请先对照 Provider 日志——确认从未调用才可释放，无法还原用量时按可核实依据结算并标记为估算。" type="warning" show-icon />
-        <a-table v-if="reviews.length > 0" class="review-table" :data-source="reviews" :columns="reviewColumns" :loading="loading" row-key="request_id"
-          :scroll="{ x: reviewTableScrollWidth, y: 'calc(100vh - 430px)' }"
+        <!-- M2 降噪：超时预留警示只在队列确实有待核对项时出现，空队列不再常驻橙条 -->
+        <a-alert v-if="reviews.length > 0" message="超时预留不会自动收费或释放（核对前仍占保守 TPM 额度）；请先对照 Provider 日志——确认从未调用才可释放，无法还原用量时按可核实依据结算并标记为估算。" type="warning" show-icon />
+        <!-- M2 统一表格组件：加载 / 错误 / 空态由 AdminTable 托管，替代原 v-if 自定义空态分支 -->
+        <AdminTable
+          class="review-table"
+          :columns="reviewColumns"
+          :data-source="reviews"
+          :loading="loading"
+          :error-text="usageLoadError"
+          row-key="request_id"
+          :scroll="{ x: reviewTableScrollWidth, y: 'calc(max(360px, 100vh - 430px))' }"
           :pagination="{ current: reviewPage, pageSize: reviewPageSize, total: reviewTotal, showSizeChanger: true, pageSizeOptions: ['10', '20', '50'], showTotal: reviewTotalText }"
-          @change="changeReviewPage">
+          empty-emoji="🧾"
+          empty-text="没有待核对调用"
+          @table-change="changeReviewPage"
+        >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'expires_at'">{{ new Date(record.expires_at).toLocaleString() }}</template>
             <template v-else-if="column.key === 'actions'"><a-button v-if="canManageModels" type="primary" size="small" @click="openReview(record)">核对</a-button></template>
           </template>
-        </a-table>
-        <div v-else-if="loading" class="table-empty-state" role="status">正在加载待核对调用…</div>
-        <div v-else-if="usageLoadError" class="table-empty-state" role="alert">暂时无法读取待核对调用，请刷新重试。</div>
-        <AdminEmpty v-else class="table-empty-state" emoji="🧾" description="没有待核对调用" />
+        </AdminTable>
       </a-card>
     </div>
 
@@ -606,7 +637,7 @@ watch([
     <div class="flex min-w-0 flex-col">
       <div class="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 class="mb-0 flex items-baseline gap-2 text-base font-semibold text-[var(--color-text-primary)]">
-          <span class="font-mono text-[11px] font-medium text-[var(--color-text-muted)]">{{ view === 'usage' ? '05' : '01' }}</span>
+          <span class="font-mono text-[11px] font-medium text-[var(--color-text-muted)]">{{ ledgerSectionNo }}</span>
           {{ view === 'usage' ? '调用账目' : '模型目录' }}
         </h3>
       </div>
@@ -628,22 +659,25 @@ watch([
               <a-select v-model:value="modelFilter" class="tenant-filter" aria-label="按模型筛选" placeholder="全部模型" allow-clear
                 :options="modelFilterOptions" />
             </div>
-            <div class="tenant-filter-control">
-              <span class="tenant-filter-label">开始日期</span>
-              <a-input v-model:value="createdFrom" class="tenant-filter" :maxlength="10" allow-clear placeholder="YYYY-MM-DD" aria-label="开始日期，UTC" @blur="commitUsageDates" @change="commitUsageDates" />
-            </div>
-            <div class="tenant-filter-control">
-              <span class="tenant-filter-label">结束日期</span>
-              <a-input v-model:value="createdTo" class="tenant-filter" :maxlength="10" allow-clear placeholder="YYYY-MM-DD" aria-label="结束日期，UTC" @blur="commitUsageDates" @change="commitUsageDates" />
-            </div>
+            <!-- M3 日期筛选：范围选择器一个控件替代两个文本框（自带合法校验，口径仍为 UTC 日期字符串） -->
+            <a-range-picker
+              v-model:value="usageDateRangeModel"
+              class="w-full shrink-0 lg:w-[264px]"
+              value-format="YYYY-MM-DD"
+              :placeholder="['开始日期', '结束日期']"
+              separator="→"
+              allow-clear
+              aria-label="按 UTC 日期范围筛选"
+            />
           </template>
           <template #actions>
             <a-button :loading="loading" @click="load">刷新</a-button>
           </template>
         </AdminTableToolbar>
-        <p v-if="view === 'usage' && usageDateError" class="m-0 mb-3 text-xs text-red-400" role="alert">{{ usageDateError }}</p>
+        <!-- M4 日期错误提示用语义 token（原 Tailwind red-400） -->
+        <p v-if="view === 'usage' && usageDateError" class="m-0 mb-3 text-xs text-[var(--color-error)]" role="alert">{{ usageDateError }}</p>
         <a-table v-if="view === 'catalog'" :data-source="models" :columns="modelColumns" :loading="loading" row-key="id"
-          :scroll="{ x: modelTableScrollWidth, y: 'calc(100vh - 430px)' }" :pagination="{ pageSize: 10, showSizeChanger: true }">
+          :scroll="{ x: modelTableScrollWidth, y: 'calc(max(360px, 100vh - 430px))' }" :pagination="{ pageSize: 10, showSizeChanger: true }">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'tenant_id'">{{ tenantName(record.tenant_id) }}</template>
             <template v-else-if="column.key === 'capabilities'">{{ record.capabilities.join('、') || '—' }}</template>
@@ -654,10 +688,19 @@ watch([
           </template>
           <template #emptyText><AdminEmpty emoji="🤖" description="暂无模型目录项，可创建模型" /></template>
         </a-table>
-        <a-table v-else-if="events.length > 0" :data-source="events" :columns="usageColumns" :loading="loading" row-key="id"
-          :scroll="{ x: usageTableScrollWidth, y: 'calc(100vh - 430px)' }"
+        <!-- M3 统一表格组件：加载 / 错误 / 空态由 AdminTable 托管，替代原 v-if 三分支自定义空态 -->
+        <AdminTable v-else
+          :columns="usageColumns"
+          :data-source="events"
+          :loading="loading"
+          :error-text="usageLoadError"
+          row-key="id"
+          :scroll="{ x: usageTableScrollWidth, y: 'calc(max(360px, 100vh - 430px))' }"
           :pagination="{ current: usageEventPage, pageSize: usageEventPageSize, total: usageEventTotal, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: usageEventTotalText }"
-          @change="changeUsageEventPage">
+          empty-emoji="📊"
+          empty-text="暂无模型调用记录"
+          @table-change="changeUsageEventPage"
+        >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'created_at'">{{ new Date(record.created_at).toLocaleString() }}</template>
             <template v-else-if="column.key === 'estimated_cost'">{{ record.estimated_cost === null ? '未知' : formatCostValue(record.estimated_cost) }}</template>
@@ -665,10 +708,7 @@ watch([
             <template v-else-if="column.key === 'usage_is_estimated'"><a-tag :color="record.usage_is_estimated ? 'orange' : 'green'">{{ record.usage_is_estimated ? '估算' : '实测' }}</a-tag></template>
             <template v-else-if="column.key === 'outcome'"><a-tag :color="record.outcome === 'succeeded' ? 'green' : 'red'">{{ record.outcome === 'succeeded' ? '成功' : '失败' }}</a-tag></template>
           </template>
-        </a-table>
-        <div v-else-if="loading" class="table-empty-state" role="status">正在加载模型用量…</div>
-        <div v-else-if="usageLoadError" class="table-empty-state" role="alert">暂时无法读取模型调用记录，请刷新重试。</div>
-        <AdminEmpty v-else class="table-empty-state" emoji="📊" description="暂无模型调用记录" />
+        </AdminTable>
       </a-card>
     </div>
 
@@ -732,8 +772,6 @@ watch([
 .model-governance-page :deep(.ant-table-wrapper) { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
 .model-governance-page :deep(.ant-table-content) { max-width: 100%; }
 .review-table { min-width: 0; }
-.table-empty-state { padding: 24px 0; }
-div.table-empty-state { display: grid; place-items: center; min-height: 140px; color: var(--subtle); font-size: 13px; }
 .review-warning { margin-bottom: 14px; }
 .review-request { overflow-wrap: anywhere; color: var(--color-text-secondary); font-size: 12px; }
 .table-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; }

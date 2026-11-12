@@ -1,7 +1,13 @@
-"""绿场五级平台角色的自动预置：租户创建时配 L3，应用创建时配多应用/单应用/成员模板。
+"""平台角色模板自动预置与授权范围常量。
 
-权限码常量与 seed_greenfield.py 共用同一份目录语义；判权侧见 rbac_guards。
-P405：产品上分两类——五个模板 key 是平台角色；钉应用且非模板 key 的才是应用角色。
+三管理员 + 应用成员（授权范围只能向下：超管 > 租户管理员 > 应用管理员）：
+- platform.admin 超管（scope=super）：平台所有内容可见；
+- tenant.admin 租户管理员（scope=tenant）：当前用户所有租户的数据；
+- app.admin 应用管理员（scope=app）：当前用户所有应用的数据；管 N 个应用 = 绑 N 个应用；
+- app.member 应用成员（scope=member）：零管理权限，仅表示业务侧成员身份。
+
+权限授予只有菜单/按钮两类节点（menu.* / button.*）；旧 27 接口码与数据码目录已移除。
+模板持有节点、授权范围常量与 seed_greenfield / rbac_guards 共用同一份语义。
 """
 
 from __future__ import annotations
@@ -12,91 +18,97 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.authorization import Permission, Role, RolePermission
+from app.models.identity import Tenant
+from app.services.permission_kinds import (
+    ROLE_SCOPE_APP,
+    ROLE_SCOPE_MEMBER,
+    ROLE_SCOPE_SUPER,
+    ROLE_SCOPE_TENANT,
+    TEMPLATE_ROLE_SCOPES,
+)
 
-# L1 平台超管：全部管理面码（由 seed_greenfield 授予）。
+# L1 平台超管：全部菜单/按钮节点（由 seed_greenfield 授予），授权范围=超管。
 L1_ROLE_KEY = "platform.admin"
-# L3 租户组织管理员：当前租户下的一切——应用/业务权限码/模型/主题/审计全域管理 + 组织成员协作；
-# 平台权限目录写（rbac.permission.manage）仅 L1；专属边界（account.*/tenant.*/overview）由种子只授 L1。
+# L3 租户管理员：当前用户所有租户的数据——应用/组织/成员/用户组/邀请/主题/审计全域管理；
+# 平台级治理（建删租户、模型目录写）仅超管。
 L3_ROLE_KEY = "tenant.admin"
-L3_PERMISSION_CODES: tuple[str, ...] = (
-    "org.read",
-    "org.manage",
-    "org.member.read",
-    "org.member.manage",
-    "org.group.read",
-    "org.group.manage",
-    "app.read",
-    "app.manage",
-    "app.secret.rotate",
-    "org.invite.manage",
-    "rbac.app_role.assign",
-    "rbac.app_role.read",
-    "rbac.app_role.manage",
-    "rbac.role.read",
-    "rbac.permission.read",
-    "ops.model.read",
-    "ops.model.manage",
-    "ops.theme.manage",
-    "ops.audit.read",
-    "ops.authz.simulate",
-)
-# G32：存量 L3 可能仍持有该码；预置时显式剥离（_grant_codes 只增不减）。
-L3_REVOKED_PERMISSION_CODES: tuple[str, ...] = ("rbac.permission.manage",)
-# L2 应用管理员模板：钉死单应用的平台侧管理——应用配置/密钥 + 角色/成员/邀请/组/主题/审计；
-# 组织域（organization.*）归 L3，应用生命周期（创建/删除）同样归 L3。不能再任命应用管理员。
+# L2 应用管理员：当前用户所有应用的数据——应用配置/密钥 + 应用角色/成员 + 主题/审计；
+# 不能创建删除应用，不能再任命应用管理员（任命是租户级能力）。
 L2_ROLE_KEY = "app.admin"
-L2_PERMISSION_CODES: tuple[str, ...] = (
-    "app.read",
-    "app.manage",
-    "app.secret.rotate",
-    "rbac.app_role.read",
-    "rbac.app_role.manage",
-    "org.member.read",
-    "org.member.manage",
-    "org.invite.manage",
-    "org.group.read",
-    "org.group.manage",
-    "ops.theme.manage",
-    "ops.audit.read",
-    "ops.model.read",
-    "rbac.permission.read",
-    "ops.authz.simulate",
-)
-# 多应用管理员：与 L2 同级钉住单个应用，管 N 个应用 = 绑 N 次；比 L2 多任命权。
-L2M_ROLE_KEY = "apps.admin"
-L2M_PERMISSION_CODES: tuple[str, ...] = L2_PERMISSION_CODES + ("rbac.app_role.assign",)
-# L4 应用普通成员模板：平台侧只表示「属于该应用」；业务码/菜单只挂在应用角色上。
+# L4 应用成员模板：平台侧只表示「属于该应用」；业务码/菜单只挂在应用角色上。
 L4_ROLE_KEY = "app.member"
 
-# 五个种子模板角色：产品上全部是平台角色。其余钉应用的自定义 key 才是应用角色。
-TEMPLATE_ROLE_KEYS: frozenset[str] = frozenset({
-    L1_ROLE_KEY, L3_ROLE_KEY, L2M_ROLE_KEY, L2_ROLE_KEY, L4_ROLE_KEY,
-})
-# 钉住应用的平台管理员（多应用 + 单应用）。
-APP_SCOPED_ADMIN_ROLE_KEYS: tuple[str, ...] = (L2M_ROLE_KEY, L2_ROLE_KEY)
+# 四个种子模板角色：产品上全部是平台角色。其余钉应用的自定义 key 才是应用角色。
+TEMPLATE_ROLE_KEYS: frozenset[str] = frozenset(TEMPLATE_ROLE_SCOPES)
 # 可进管理台配权的角色（不含应用成员）。
-CONSOLE_ADMIN_ROLE_KEYS: tuple[str, ...] = (L3_ROLE_KEY, L2M_ROLE_KEY, L2_ROLE_KEY)
-# 授权权码：仍用于文案/能力说明；P405 起不再禁止自定义角色持有，改为「看得见才能配」。
+CONSOLE_ADMIN_ROLE_KEYS: tuple[str, ...] = (L3_ROLE_KEY, L2_ROLE_KEY)
+# 授权权码：仅用于文案/能力说明；配权以「看得见才能配 + 范围只能向下」收口。
 AUTHORITY_MANAGE_CODES: frozenset[str] = frozenset({
-    "rbac.app_role.manage",
-    "org.member.manage",
-    "org.invite.manage",
-    "org.group.manage",
+    "button.app_role.manage",
+    "button.users.manage",
+    "button.invitations.manage",
+    "button.groups.manage",
 })
+
+# ── 模板持有的菜单/按钮节点（管理面只有这两类）────────────────────────────
+
+# 租户管理员：全部菜单（平台治理写按钮仅超管）；写按钮不含租户管理/模型写。
+L3_GRANT_NODE_CODES: tuple[str, ...] = (
+    "menu.overview",
+    "menu.organization_workspace",
+    "menu.users",
+    "menu.invitations",
+    "menu.application_workspace",
+    "menu.roles",
+    "menu.groups",
+    "menu.tenants",
+    "menu.themes",
+    "menu.models",
+    "menu.model_usage",
+    "menu.audit",
+    "menu.authz",
+    "button.users.manage",
+    "button.org.manage",
+    "button.groups.manage",
+    "button.invitations.manage",
+    "button.apps.manage",
+    "button.apps.secret",
+    "button.app_role.manage",
+    "button.app_role.assign",
+    "button.roles.manage",
+    "button.themes.manage",
+    "button.authz.simulate",
+)
+# 应用管理员：应用域菜单 + 用户只读 + 角色配置（仅能配应用级）；无组织/租户/模型/邀请/用户组。
+L2_GRANT_NODE_CODES: tuple[str, ...] = (
+    "menu.overview",
+    "menu.users",
+    "menu.application_workspace",
+    "menu.roles",
+    "menu.themes",
+    "menu.audit",
+    "menu.authz",
+    "button.apps.manage",
+    "button.apps.secret",
+    "button.app_role.manage",
+    "button.roles.manage",
+    "button.themes.manage",
+    "button.authz.simulate",
+)
 
 
 def is_custom_role(role: Role) -> bool:
-    """五个模板 key 之外一律视为自定义角色。"""
+    """四个模板 key 之外一律视为自定义角色。"""
     return role.key not in TEMPLATE_ROLE_KEYS
 
 
 def is_platform_class_role(role: Role) -> bool:
-    """产品「平台角色」：五级模板，或未钉应用的自定义租户/平台角色。"""
+    """产品「平台角色」：四模板，或未钉应用的自定义租户/平台角色。"""
     return role.key in TEMPLATE_ROLE_KEYS or role.application_id is None
 
 
 def is_application_class_role(role: Role) -> bool:
-    """产品「应用角色」：钉住应用且不是五级平台模板。"""
+    """产品「应用角色」：钉住应用且不是平台模板。"""
     return role.application_id is not None and role.key not in TEMPLATE_ROLE_KEYS
 
 
@@ -119,6 +131,7 @@ def _ensure_role(
     key: str,
     name: str,
     description: str,
+    scope: str,
 ) -> tuple[Role, bool]:
     """幂等获取或创建角色；唯一键与部分索引保证 (tenant, application, key) 唯一。"""
     statement = select(Role).where(
@@ -136,6 +149,7 @@ def _ensure_role(
         key=key,
         name=name,
         description=description,
+        scope=scope,
     )
     db.add(role)
     db.flush()
@@ -154,7 +168,7 @@ def _grant_codes(db: Session, role: Role, codes: tuple[str, ...]) -> None:
 
 
 def _revoke_codes(db: Session, role: Role, codes: tuple[str, ...]) -> None:
-    """从模板角色剥离已不再属于模板的码；目录缺失时静默跳过。"""
+    """从模板角色剥离已不再属于模板的节点；目录缺失时静默跳过。"""
     if not codes:
         return
     permission_ids = set(db.scalars(
@@ -168,40 +182,61 @@ def _revoke_codes(db: Session, role: Role, codes: tuple[str, ...]) -> None:
     ))
 
 
-def provision_tenant_admin_role(db: Session, tenant_id: UUID) -> Role:
-    """租户开通时预置 L3 组织管理员角色（幂等）。"""
+# 存量模板残留的旧接口码 / 已下线目录码：预置时显式剥离（_grant_codes 只增不减）。
+LEGACY_REVOKED_NODE_CODES: tuple[str, ...] = (
+    "menu.permissions",
+    "button.permissions.manage",
+    "menu.permission_health",
+)
+
+
+def PLATFORM_TENANT_ID(db: Session) -> UUID:
+    """解析平台管理租户（slug=platform）ID：平台类角色的全局宿主。
+
+    惰性导入 seed_greenfield 常量规避循环导入；租户缺失说明种子未跑，显式报错
+    防止把平台角色误挂到业务租户。
+    """
+    from app.db.seed_greenfield import PLATFORM_TENANT_SLUG
+
+    tenant_id = db.scalar(select(Tenant.id).where(Tenant.slug == PLATFORM_TENANT_SLUG))
+    if tenant_id is None:
+        raise RuntimeError("平台管理租户不存在：请先运行 seed_greenfield（seed_platform_tenant）")
+    return tenant_id
+
+
+def provision_tenant_admin_role(db: Session, tenant_id: UUID | None = None) -> Role:
+    """幂等确保全局唯一的租户管理员角色（宿主平台管理租户，scope=tenant）。
+
+    平台角色全局化后 tenant.admin 全局一份、不再按业务租户预置副本；
+    tenant_id 参数仅为兼容旧签名保留，一律忽略。
+    """
+    del tenant_id  # 全局一份：传入的租户 ID 不再决定角色宿主。
     role, _ = _ensure_role(
-        db, tenant_id=tenant_id, application_id=None, kind="tenant",
+        db, tenant_id=PLATFORM_TENANT_ID(db), application_id=None, kind="tenant",
         key=L3_ROLE_KEY, name="租户管理员",
-        description="L3：当前租户下的一切——应用、业务权限码、模型、主题、组织、成员、用户组、审计；可任命应用管理员。平台权限目录写仍仅 L1",
+        description="租户级：当前用户所有租户的数据——应用、组织、成员、用户组、邀请、主题、审计；可任命应用管理员。建删租户与平台治理仅超管",
+        scope=ROLE_SCOPE_TENANT,
     )
-    _grant_codes(db, role, L3_PERMISSION_CODES)
-    # G32：平台目录写仅 L1，存量 L3 上的 rbac.permission.manage 必须剥掉。
-    _revoke_codes(db, role, L3_REVOKED_PERMISSION_CODES)
-    db.flush()
-    return role
-
-
-def provision_multi_app_admin_role(db: Session, tenant_id: UUID, application_id: UUID) -> Role:
-    """应用创建时预置多应用管理员模板（幂等，钉住该应用）。管多个应用需分别绑定。"""
-    role, _ = _ensure_role(
-        db, tenant_id=tenant_id, application_id=application_id, kind="application",
-        key=L2M_ROLE_KEY, name="多应用管理员",
-        description="可管理本应用的平台侧配置，并任命该应用的应用管理员；不能新建或删除应用",
-    )
-    _grant_codes(db, role, L2M_PERMISSION_CODES)
+    if role.scope != ROLE_SCOPE_TENANT:
+        role.scope = ROLE_SCOPE_TENANT
+    _grant_codes(db, role, L3_GRANT_NODE_CODES)
+    _revoke_codes(db, role, LEGACY_REVOKED_NODE_CODES)
     db.flush()
     return role
 
 
 def provision_application_admin_role(db: Session, tenant_id: UUID, application_id: UUID) -> Role:
-    """应用创建时预置应用管理员模板角色（幂等，钉住该应用）。"""
+    """应用创建时预置应用管理员模板角色（幂等，钉住该应用，scope=app）。"""
     role, _ = _ensure_role(
         db, tenant_id=tenant_id, application_id=application_id, kind="application",
         key=L2_ROLE_KEY, name="应用管理员",
-        description="本应用的平台侧管理——配置、密钥、成员与应用角色；不能再任命应用管理员，不能新建应用",
+        description="应用级：当前用户所有应用的数据——本应用配置、密钥、成员与应用角色；不能建删应用，不能再任命应用管理员",
+        scope=ROLE_SCOPE_APP,
     )
-    _grant_codes(db, role, L2_PERMISSION_CODES)
+    if role.scope != ROLE_SCOPE_APP:
+        role.scope = ROLE_SCOPE_APP
+    _grant_codes(db, role, L2_GRANT_NODE_CODES)
+    _revoke_codes(db, role, LEGACY_REVOKED_NODE_CODES)
     db.flush()
     return role
 
@@ -211,15 +246,17 @@ def provision_application_member_role(db: Session, tenant_id: UUID, application_
     role, _ = _ensure_role(
         db, tenant_id=tenant_id, application_id=application_id, kind="application",
         key=L4_ROLE_KEY, name="应用成员",
-        description="平台侧表示属于该应用；无管理面码。菜单与按钮由另行绑定的应用角色决定",
+        description="平台侧表示属于该应用；无管理面节点。菜单与按钮由另行绑定的应用角色决定",
+        scope=ROLE_SCOPE_MEMBER,
     )
+    if role.scope != ROLE_SCOPE_MEMBER:
+        role.scope = ROLE_SCOPE_MEMBER
     db.flush()
     return role
 
 
-def provision_application_platform_roles(db: Session, tenant_id: UUID, application_id: UUID) -> tuple[Role, Role, Role]:
-    """应用开通时预置三个平台角色模板：多应用管理员、应用管理员、应用成员。"""
-    multi = provision_multi_app_admin_role(db, tenant_id, application_id)
+def provision_application_platform_roles(db: Session, tenant_id: UUID, application_id: UUID) -> tuple[Role, Role]:
+    """应用开通时预置两个平台角色模板：应用管理员、应用成员（多应用管理员已并入应用管理员）。"""
     admin = provision_application_admin_role(db, tenant_id, application_id)
     member = provision_application_member_role(db, tenant_id, application_id)
-    return multi, admin, member
+    return admin, member

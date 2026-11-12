@@ -17,16 +17,20 @@ from app.models.identity import Tenant, TenantMembership, User
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRefreshToken
 from app.models.organization import MembershipOrganization, Organization, RoleDataScope
 from app.services.admin_authorization import (
+    ORGANIZATION_MANAGE,
     has_application_admin_access,
     has_organization_admin_access,
     require_organization_admin_access,
 )
-from app.services.rbac_guards import bump_memberships_holding_role
+# F4 数据范围写分级：写操作要求 button.org.manage 节点 + L3 角色双条件（判权工具只 import 不改）。
+from app.services.rbac_guards import bump_memberships_holding_role, ensure_codes, ensure_roles
+from app.services.role_provisioning import L3_ROLE_KEY
 from app.schemas.organizations import (
     MembershipOrganizationsUpdate,
     MembershipStatusUpdate,
     OrganizationCreate,
     OrganizationUpdate,
+    RoleDataScopeItem,
     RoleDataScopesUpdate,
 )
 from app.db.seed_greenfield import PLATFORM_TENANT_SLUG
@@ -443,15 +447,92 @@ def _role_data_scopes_payload(role: Role, db: Session) -> list[dict]:
             for policy, permission in rows]
 
 
+def _require_data_scope_write_access(actor: User, tenant_id: UUID, db: Session) -> None:
+    """数据范围写分级（F4）：平台管理员放行；否则须同时持 button.org.manage 节点与 L3 租户管理员角色。
+
+    读仍走 has_organization_admin_access（超管/租户级/应用级可读）；写收紧为租户级起。
+    ensure_codes 与 ensure_roles 双条件互为纵深防御：应用级即便被手工扩权
+    挂上 button.org.manage 节点，也会因缺少 L3 tenant.admin 角色被拒（403）。
+    """
+    ensure_codes(
+        actor, db, ORGANIZATION_MANAGE, tenant_id=tenant_id,
+        detail="缺少数据范围管理权限：button.org.manage",
+    )
+    ensure_roles(
+        actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id,
+        detail="数据范围仅租户管理员（L3）及以上可配置",
+    )
+
+
+def _sync_data_scope_leaf_grants(db: Session, role: Role, policies: list[RoleDataScopeItem]) -> int:
+    """过渡期双写（F4）：把替换后的策略镜像为 *.scope.* 数据叶子码授权。
+
+    复用 permission_kinds 的 ensure_data_scope_children（叶子缺失先补建）与
+    data_scope_code（scope_type → 叶子后缀映射），按 map_role_data_scopes_to_codes
+    的单条映射算法落 RolePermission 授权；同时收敛本角色不再被策略映射的旧叶子
+    授权，保证替换后 evaluate_access 的「叶子码 ∪ RoleDataScope」并集与策略一致，
+    不残留放宽范围。旧表 RoleDataScope 照写，本函数只负责叶子码一侧（幂等）。
+    """
+    from app.services.permission_kinds import (
+        data_scope_code,
+        ensure_data_scope_children,
+        split_data_scope_code,
+    )
+
+    # 逐条映射：对策略涉及的业务权限确保叶子存在，并收集目标叶子授权集合。
+    target_leaf_ids: set[UUID] = set()
+    for item in policies:
+        parent = db.get(Permission, item.permission_id)
+        if parent is None:
+            continue
+        ensure_data_scope_children(db, parent)
+        leaf = db.scalar(select(Permission).where(
+            Permission.code == data_scope_code(parent.code, item.scope_type)))
+        if leaf is not None:
+            target_leaf_ids.add(leaf.id)
+    # 镜像收敛：先删除本角色已不被策略映射的旧叶子授权（含替换前遗留），防止残留放宽范围。
+    stale_leaf_ids = {
+        permission_id for permission_id, code in db.execute(
+            select(RolePermission.permission_id, Permission.code)
+            .join(Permission, Permission.id == RolePermission.permission_id)
+            .where(RolePermission.role_id == role.id)
+        ).all()
+        if split_data_scope_code(code)[1] and permission_id not in target_leaf_ids
+    }
+    if stale_leaf_ids:
+        db.execute(delete(RolePermission).where(
+            RolePermission.role_id == role.id,
+            RolePermission.permission_id.in_(stale_leaf_ids),
+        ))
+    # 补授缺失的目标叶子授权；已持有则跳过。
+    held_leaf_ids = set(db.scalars(select(RolePermission.permission_id).where(
+        RolePermission.role_id == role.id,
+        RolePermission.permission_id.in_(target_leaf_ids),
+    )).all()) if target_leaf_ids else set()
+    added = [RolePermission(role_id=role.id, permission_id=leaf_id)
+             for leaf_id in target_leaf_ids - held_leaf_ids]
+    if added:
+        db.add_all(added)
+        db.flush()
+    return len(added)
+
+
 @router.put("/roles/{role_id}/data-scopes")
 def replace_role_data_scopes(role_id: UUID, body: RoleDataScopesUpdate, request: Request,
                              actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> list[dict]:
-    """批量替换角色数据范围；权限唯一、组织清单必须属于角色所在租户。"""
+    """批量替换角色数据范围；权限唯一、组织清单必须属于角色所在租户。
+
+    F4 写分级：读可见性保持原口径，写操作要求 org.manage 码且 L3 起（L2 只读）；
+    替换落库后向数据叶子码授权双写（过渡期：旧表与叶子授权并存）。
+    """
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
-    if not has_organization_admin_access(actor, role.tenant_id, db, manage=True):
+    # 读可见性（L1/L3/L2 任一即可见，越权者 404 隐藏存在性）。
+    if not has_organization_admin_access(actor, role.tenant_id, db):
         raise HTTPException(404, "角色不存在")
+    # 写分级：org.manage 码 + L3 角色双条件，L2 只读（挂码也无法绕过）。
+    _require_data_scope_write_access(actor, role.tenant_id, db)
     # 与权限撤销共享角色行锁，确保数据范围不会和其前置授权发生竞态。
     role = db.scalar(select(Role).where(Role.id == role_id).with_for_update())
     if not role:
@@ -475,6 +556,8 @@ def replace_role_data_scopes(role_id: UUID, body: RoleDataScopesUpdate, request:
     db.add_all([RoleDataScope(tenant_id=role.tenant_id, role_id=role.id, permission_id=item.permission_id,
                               scope_type=item.scope_type, organization_ids=[str(value) for value in item.organization_ids])
                 for item in body.policies])
+    # F4 过渡期双写：策略落库的同时镜像叶子码授权（叶子缺失先补建，替换残留收敛）。
+    _sync_data_scope_leaf_grants(db, role, body.policies)
     # 数据范围替换即时收敛持有者旧凭证（绿场规则：数据范围变更建议 bump）。
     bump_memberships_holding_role(db, role.id)
     audit(db, actor, request, "role.data_scopes.replace", "role", str(role.id),

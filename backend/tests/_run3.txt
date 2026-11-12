@@ -1,0 +1,27 @@
+﻿.\.venv\Scripts\python.exe : test_application_role_cross_tenant_binding_rejected (tests.test_global_platform_roles.Glob
+alPlatformRoleTests.test_application_role_cross_tenant_binding_rejected)
+At C:\Users\刘少华\AppData\Local\Temp\trae-agent-toolhost\jobs\job-71eccb2b0f724bb3ad24d75ccb40a439\command.ps1:15 char:51
+77
++ ... oads-test'; .\.venv\Scripts\python.exe -m unittest tests.test_global_ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (test_applicatio...nding_rejected):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+钉在租户 X 应用上的应用角色绑定到租户 Y 成员 → 422（业务侧约束保留）。 ... ok
+test_capabilities_exclude_platform_tenant_for_non_superadmin (tests.test_global_platform_roles.GlobalPlatformRoleTests.
+test_capabilities_exclude_platform_tenant_for_non_superadmin)
+非超管 L3 的 capabilities.tenants 不含平台管理租户（业务租户正常收录）。 ... ok
+test_global_role_effective_in_every_bound_tenant (tests.test_global_platform_roles.GlobalPlatformRoleTests.test_global_
+role_effective_in_every_bound_tenant)
+用户绑租户 X、Y + 全局 tenant.admin → 在 X/Y 上下文均命中同一角色。 ... ok
+test_non_superadmin_bind_role_to_platform_tenant_member_rejected (tests.test_global_platform_roles.GlobalPlatformRoleTe
+sts.test_non_superadmin_bind_role_to_platform_tenant_member_rejected)
+非超管 bind_role 向平台管理租户成员绑定角色 → 422。 ... ok
+test_non_superadmin_create_user_into_platform_tenant_rejected (tests.test_global_platform_roles.GlobalPlatformRoleTests
+.test_non_superadmin_create_user_into_platform_tenant_rejected)
+非超管 create_user 把成员落进平台管理租户 → 422。 ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 1.002s
+
+OK

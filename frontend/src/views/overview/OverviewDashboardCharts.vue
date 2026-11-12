@@ -29,15 +29,22 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-// 色板渲染时从 token 取值：浅色墨阶三级 + 蓝/绿/琥珀语义点缀，深色主题自动翻转为近白墨阶。
+// 色板：单一石墨墨阶（D2 重设计）——数据用明度区分而非色相区分，
+// 与全站黑白灰体系同语言；暗色主题下 token 自动翻转为近白墨阶。
+// U8：暗色取暗色 token 链整体上移一档（亮度下限 zinc-600）——原样直接翻转会拿到
+// #2e2e32/#3f3f46 两段，压在 #18181b 卡上不可见（小切片+最暗双重劣势）。图表为数据画布，
+// 不属组件 chrome，暗色档允许字面 zinc 阶（与 token 同源 zinc 系）。
 function palette(): string[] {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+  if (isDark) {
+    return ['#fafafa', '#d4d4d8', '#a1a1aa', '#71717a', '#52525b']
+  }
   return [
     cssVar('--color-text-primary', '#18181b'),
     cssVar('--color-text-secondary', '#52525b'),
     cssVar('--color-text-muted', '#a1a1aa'),
-    cssVar('--color-info', '#2563eb'),
-    cssVar('--color-success', '#059669'),
-    cssVar('--color-warning', '#d97706'),
+    cssVar('--color-border-strong', '#d4d4d8'),
+    cssVar('--color-border', '#e4e4e7'),
   ]
 }
 

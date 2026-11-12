@@ -2,9 +2,11 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { api } from '@/api'
+import { ADMIN_API_PREFIX, cachedHasAny } from '@/api/capabilities'
 import { resolveThemeAssetUrl, themeCardShadow, themeChoice, themeFontFamily, themeHex, themeNumber, themeRgba } from '@/styles/theme'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminColorField from '@/components/AdminColorField.vue'
+import AdminTable from '@/components/AdminTable.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 
 interface ThemeConfig {
@@ -55,8 +57,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:selectedApplicationId': [id: string]
-  navigate: [page: 'applications']
+  navigate: [page: 'application_workspace']
 }>()
+
+const canManageThemes = computed(() => cachedHasAny(['button.themes.manage']))
 
 function createDefaultTheme(): ThemeConfig {
   return {
@@ -183,7 +187,7 @@ async function loadThemeHistory(applicationId: string): Promise<void> {
   if (applicationId !== props.selectedApplicationId) return
   const requestSequence = ++historyRequestSequence
   try {
-    const versions = await api<ThemeHistoryRow[]>(`/admin/themes?application_id=${encodeURIComponent(applicationId)}`)
+    const versions = await api<ThemeHistoryRow[]>(`${ADMIN_API_PREFIX}/themes?application_id=${encodeURIComponent(applicationId)}`)
     // 选中应用切换很快时忽略旧请求，防止旧主题覆盖新应用表单。
     if (requestSequence !== historyRequestSequence || applicationId !== props.selectedApplicationId) return
     themeHistory.value = versions
@@ -239,7 +243,7 @@ async function restoreThemeVersion(row: ThemeHistoryRow, publish: boolean): Prom
   if (!applicationId) return
   restoringVersionId.value = row.id
   try {
-    await api(`/admin/themes/${encodeURIComponent(applicationId)}/${encodeURIComponent(row.id)}/restore${publish ? '?publish=true' : ''}`, { method: 'POST' })
+    await api(`${ADMIN_API_PREFIX}/themes/${encodeURIComponent(applicationId)}/${encodeURIComponent(row.id)}/restore${publish ? '?publish=true' : ''}`, { method: 'POST' })
     message.success(publish ? `已从版本 ${row.version} 恢复并发布` : `已从版本 ${row.version} 恢复为新草稿`)
     themeDirty = false
     await loadThemeHistory(applicationId)
@@ -267,7 +271,7 @@ async function uploadThemeAsset(file: File, target: 'background' | 'logo'): Prom
   uploadingAsset.value = target
   try {
     const buffer = await file.arrayBuffer()
-    const result = await api<{ url: string }>(`/admin/uploads/theme-assets?application_id=${encodeURIComponent(applicationId)}`, {
+    const result = await api<{ url: string }>(`${ADMIN_API_PREFIX}/uploads/theme-assets?application_id=${encodeURIComponent(applicationId)}`, {
       method: 'POST',
       headers: { 'Content-Type': file.type },
       body: buffer,
@@ -298,7 +302,7 @@ async function saveTheme(publish: boolean): Promise<void> {
 
   themeSaving.value = true
   try {
-    await api(`/admin/themes/${applicationId}?publish=${publish}`, {
+    await api(`${ADMIN_API_PREFIX}/themes/${applicationId}?publish=${publish}`, {
       method: 'PUT',
       body: JSON.stringify({ config: { ...themeDraft.value } }),
     })
@@ -335,7 +339,7 @@ async function saveTheme(publish: boolean): Promise<void> {
           <a-form-item label="登录标题"><a-input v-model:value="themeDraft.title" :maxlength="60" /></a-form-item>
           <a-form-item label="品牌色"><AdminColorField :model-value="themeDraft.primary_color" aria-label="品牌色" @update:model-value="(hex) => applyDraftColor('primary_color', hex)" /></a-form-item>
         </div>
-        <a-form-item label="欢迎文案"><a-input v-model:value="themeDraft.welcome_text" :maxlength="120" /></a-form-item>
+        <a-form-item label="欢迎文案"><a-input v-model:value="themeDraft.welcome_text" :maxlength="120" placeholder="欢迎语，例如：安全访问您的工作空间" /></a-form-item>
         <div class="theme-field-grid">
           <a-form-item label="页面底色"><AdminColorField :model-value="themeDraft.background_color" aria-label="页面底色" @update:model-value="(hex) => applyDraftColor('background_color', hex)" /></a-form-item>
           <a-form-item label="登录卡片宽度"><a-input-number v-model:value="themeDraft.card_width" :min="320" :max="720" :step="10" addon-after="px" style="width:100%" /></a-form-item>
@@ -417,7 +421,7 @@ async function saveTheme(publish: boolean): Promise<void> {
           </div>
         </details>
         <p class="theme-help">为安全起见，预览和发布仅接受 HTTPS/站内图片、颜色和固定样式预设；不会执行上传脚本、HTML 或任意 CSS。</p>
-        <a-space>
+        <a-space v-if="canManageThemes">
           <a-button :loading="themeSaving" :disabled="!selectedApplicationId" @click="saveTheme(false)">保存草稿</a-button>
           <a-button type="primary" :loading="themeSaving" :disabled="!selectedApplicationId" @click="saveTheme(true)">发布主题</a-button>
         </a-space>
@@ -455,7 +459,8 @@ async function saveTheme(publish: boolean): Promise<void> {
       </a-card>
       <a-card class="data-card history-card" title="版本历史">
         <p class="history-caption">保存草稿和发布操作都会生成版本记录。</p>
-        <a-table
+        <!-- 统一表格组件：版本历史（size=small 经 $attrs 透传） -->
+        <AdminTable
           :data-source="themeHistory"
           :columns="[
             { title: '版本', dataIndex: 'version', key: 'version', width: 80 },
@@ -467,11 +472,13 @@ async function saveTheme(publish: boolean): Promise<void> {
           :pagination="false"
           size="small"
           :scroll="{ x: 480 }"
+          empty-emoji="🎨"
+          empty-text="暂无主题版本"
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'actions'">
               <!-- G17：恢复历史版本——恢复为草稿不改变线上；恢复并发布立即生效。 -->
-              <a-space :size="0">
+              <a-space v-if="canManageThemes" :size="0">
                 <a-button type="link" size="small" :loading="restoringVersionId === record.id"
                   @click="restoreThemeVersion(record, false)">恢复为草稿</a-button>
                 <a-button type="link" size="small" danger :loading="restoringVersionId === record.id"
@@ -479,14 +486,13 @@ async function saveTheme(publish: boolean): Promise<void> {
               </a-space>
             </template>
           </template>
-          <template #emptyText><AdminEmpty emoji="🎨" description="暂无主题版本" /></template>
-        </a-table>
+        </AdminTable>
       </a-card>
     </div>
   </div>
   <a-card v-else class="data-card">
     <AdminEmpty emoji="🧩" description="请先创建应用，再配置该应用的登录主题">
-      <a-button type="primary" @click="emit('navigate', 'applications')">前往应用管理</a-button>
+      <a-button type="primary" @click="emit('navigate', 'application_workspace')">前往应用工作台创建</a-button>
     </AdminEmpty>
   </a-card>
 </template>

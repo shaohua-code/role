@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { DownOutlined } from '@/plugins/icons'
+import { DownOutlined, PlusOutlined } from '@/plugins/icons'
 import { api } from '@/api'
-import { cachedHas } from '@/api/capabilities'
+import { cachedHasAny } from '@/api/capabilities'
 import AdminListPage from '@/components/AdminListPage.vue'
 import GroupRelationModal from '@/components/GroupRelationModal.vue'
 
@@ -33,7 +33,7 @@ const creatableTenantOptions = computed(() => tenants.value
   .filter(tenant => tenant.slug !== 'platform')
   .map(tenant => ({ value: tenant.id, label: tenant.name })))
 
-const canManage = computed(() => cachedHas('org.group.manage'))
+const canManage = computed(() => cachedHasAny(['button.groups.manage']))
 const tenantId = ref('')
 const loading = ref(false)
 const saving = ref(false)
@@ -216,24 +216,23 @@ watch(() => props.active, active => {
 
 <template>
   <section class="groups-page">
-        <a-alert type="info" show-icon class="mb-3" message="高级列表：用户组完整 CRUD。组织上下文请到「组织工作台」。" />
 <AdminListPage
       eyebrow="IDENTITY GROUPS"
       title="用户组"
       subtitle="按租户组织成员并继承角色；直接角色和多个用户组角色都会参与统一授权判定。"
-      hint="停用用户组会暂停角色继承，重新启用后恢复。"
+      hint="用户组完整 CRUD，组织上下文请到「组织工作台」；停用用户组会暂停角色继承，重新启用后恢复。"
       :columns="columns"
       :data-source="groups"
       :loading="loading"
       row-key="id"
       class="scroll-actions-on-mobile"
-      :scroll="{ x: 980, y: 'calc(100vh - 430px)' }"
-      :pagination="{ pageSize: 10, showSizeChanger: true }"
+      :scroll="{ x: 980, y: 'calc(max(360px, 100vh - 430px))' }"
+      :pagination="{ pageSize: 10, showSizeChanger: true, showTotal: (count: number) => `共 ${count} 条` }"
       empty-emoji="👥"
       :empty-text="tenantId ? '当前租户还没有用户组' : '当前筛选条件下还没有用户组'"
     >
       <template #header-extra>
-        <a-button v-if="canManage" type="primary" :disabled="!tenants.length" @click="createGroup">＋ 新建用户组</a-button>
+        <a-button v-if="canManage" type="primary" :disabled="!tenants.length" @click="createGroup"><PlusOutlined class="mr-1" />新建用户组</a-button>
       </template>
       <a-select v-model:value="tenantId" placeholder="全部租户" allow-clear class="admin-filter-wide"
         :options="tenants.map(tenant => ({ value: tenant.id, label: tenant.name }))" @change="loadGroups" />
