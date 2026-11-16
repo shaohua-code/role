@@ -18,11 +18,10 @@ from app.models import (
     UserGroupRole,
 )
 from app.models.organization import MembershipOrganization, Organization, RoleDataScope
-from app.services.authorization import evaluate_access
+from app.services.authorization import AuthorizationEvaluator
 from app.services.permission_impact import (
+    PermissionImpactService,
     StaleRolePermissionPreview,
-    apply_role_permissions,
-    preview_role_permissions,
 )
 from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import Session
@@ -69,7 +68,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_matching_grant_explains_role_without_changing_live_api_shape(self) -> None:
-        evaluation = evaluate_access(self.body, self.user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(self.body, self.user, self.db)
 
         self.assertEqual(evaluation["decision"], {"allowed": True, "reason": "matching_role_grant"})
         self.assertEqual(evaluation["matching_roles"], [{
@@ -84,7 +83,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         self.db.add(other_user)
         self.db.commit()
 
-        evaluation = evaluate_access(self.body, other_user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(self.body, other_user, self.db)
 
         self.assertFalse(evaluation["decision"]["allowed"])
         self.assertEqual(evaluation["decision"]["reason"], "no_active_tenant_membership")
@@ -95,7 +94,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
     def test_missing_data_scope_still_fails_closed_and_shows_matching_grant(self) -> None:
         body = self.make_body(include_data_scope=True)
 
-        evaluation = evaluate_access(body, self.user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(body, self.user, self.db)
 
         self.assertFalse(evaluation["decision"]["allowed"])
         self.assertEqual(evaluation["decision"]["reason"], "data_scope_policy_missing")
@@ -116,13 +115,13 @@ class AuthorizationSimulationTests(unittest.TestCase):
         ])
         self.db.commit()
 
-        allowed = evaluate_access(self.body, self.user, self.db)
+        allowed = AuthorizationEvaluator.evaluate_access(self.body, self.user, self.db)
         self.assertTrue(allowed["decision"]["allowed"])
         self.assertEqual([role["id"] for role in allowed["matching_roles"]], [str(inherited_role.id)])
 
         group.status = "disabled"
         self.db.commit()
-        denied = evaluate_access(self.body, self.user, self.db)
+        denied = AuthorizationEvaluator.evaluate_access(self.body, self.user, self.db)
         self.assertFalse(denied["decision"]["allowed"])
         self.assertEqual(denied["decision"]["reason"], "no_matching_grant")
 
@@ -132,7 +131,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         self.db.commit()
         body = self.make_body(include_data_scope=True)
 
-        evaluation = evaluate_access(body, self.user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(body, self.user, self.db)
 
         self.assertTrue(evaluation["decision"]["allowed"])
         self.assertEqual(evaluation["decision"]["data_scope"]["constraints"], [{
@@ -146,7 +145,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
                                   permission_id=self.permission.id, scope_type="tenant", organization_ids=[]))
         self.db.commit()
 
-        evaluation = evaluate_access(self.make_body(include_data_scope=True), self.user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(self.make_body(include_data_scope=True), self.user, self.db)
 
         self.assertTrue(evaluation["decision"]["allowed"])
         self.assertEqual(evaluation["decision"]["data_scope"], {
@@ -172,7 +171,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         ])
         self.db.commit()
 
-        evaluation = evaluate_access(self.make_body(include_data_scope=True), self.user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(self.make_body(include_data_scope=True), self.user, self.db)
 
         constraint = evaluation["decision"]["data_scope"]["constraints"][0]
         self.assertEqual(constraint["kind"], "organizations")
@@ -197,7 +196,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         ))
         self.db.commit()
 
-        evaluation = evaluate_access(self.make_body(include_data_scope=True), self.user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(self.make_body(include_data_scope=True), self.user, self.db)
 
         constraint = evaluation["decision"]["data_scope"]["constraints"][0]
         self.assertEqual(constraint["organization_ids"], [str(selected.id)])
@@ -210,7 +209,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         self.db.add(additional_permission)
         self.db.commit()
 
-        impact = preview_role_permissions(self.role.id, [self.permission.id, additional_permission.id], self.db)
+        impact = PermissionImpactService.preview_role_permissions(self.role.id, [self.permission.id, additional_permission.id], self.db)
 
         self.assertEqual(impact["grant_permission_codes"], [additional_permission.code])
         self.assertEqual(impact["revoke_permission_codes"], [])
@@ -223,7 +222,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
                                   permission_id=self.permission.id, scope_type="self", organization_ids=[]))
         self.db.commit()
 
-        impact = preview_role_permissions(self.role.id, [], self.db)
+        impact = PermissionImpactService.preview_role_permissions(self.role.id, [], self.db)
 
         self.assertEqual(impact["revoke_permission_codes"], [self.permission.code])
         self.assertEqual(impact["data_scopes_to_delete"], [{
@@ -239,7 +238,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         ])
         self.db.commit()
 
-        impact = preview_role_permissions(self.role.id, [], self.db)
+        impact = PermissionImpactService.preview_role_permissions(self.role.id, [], self.db)
 
         self.assertEqual(impact["data_scopes_to_delete"], [])
 
@@ -248,7 +247,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
                                   permission_id=self.permission.id, scope_type="self", organization_ids=[]))
         self.db.commit()
 
-        result = apply_role_permissions(self.role.id, [], [self.permission.id], self.db)
+        result = PermissionImpactService.apply_role_permissions(self.role.id, [], [self.permission.id], self.db)
 
         self.assertTrue(result["changed"])
         self.assertEqual(self.db.query(RolePermission).filter_by(role_id=self.role.id).count(), 0)
@@ -262,7 +261,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
         ])
         self.db.commit()
 
-        result = apply_role_permissions(self.role.id, [], [self.permission.id], self.db)
+        result = PermissionImpactService.apply_role_permissions(self.role.id, [], [self.permission.id], self.db)
 
         self.assertTrue(result["changed"])
         self.assertEqual(self.db.query(RolePermission).filter_by(role_id=self.role.id).count(), 1)
@@ -270,7 +269,7 @@ class AuthorizationSimulationTests(unittest.TestCase):
 
     def test_batch_permission_update_rejects_stale_preview_without_writing(self) -> None:
         with self.assertRaises(StaleRolePermissionPreview):
-            apply_role_permissions(self.role.id, [], [], self.db)
+            PermissionImpactService.apply_role_permissions(self.role.id, [], [], self.db)
 
         self.assertEqual(self.db.query(RolePermission).filter_by(role_id=self.role.id).count(), 1)
 

@@ -227,9 +227,9 @@ def current_user(
     # OIDC 入场与 evaluate_access 共用同一有效角色实现（直连绑定 ∪ 活跃用户组继承）。
     has_effective_role = False
     if app and tenant and user and membership:
-        from app.services.effective_roles import list_effective_roles
+        from app.services.effective_roles import EffectiveRoleResolver
 
-        has_effective_role = bool(list_effective_roles(
+        has_effective_role = bool(EffectiveRoleResolver.list_effective_roles(
             db, membership_id=membership.id, tenant_id=tenant_id, application_id=app.id,
         ))
     if (not has_effective_role
@@ -250,19 +250,20 @@ def is_platform_admin_user(user: User, db: Session | None = None) -> bool:
     """L1 判定：持 platform 层级有效角色，或灾备破窗开启时匹配引导邮箱。
 
     破窗默认关闭（ALLOW_BOOTSTRAP_EMAIL_BYPASS=false）；开启时调用方应
-    在写审计中携带 break_glass 标记（见 rbac_guards.user_is_break_glass）。
+    在写审计中携带 break_glass 标记（见 ActorVisibility.user_is_break_glass）。
     为兼容旧调用方，db 参数缺省时允许传入 Session 的调用方走角色判定；
     未提供 db 的旧签名调用只走破窗分支并返回 False（不可作为授权依据）。
     """
-    from app.services.rbac_guards import user_is_break_glass, user_is_platform_admin
+    from app.services.effective_roles import EffectiveRoleResolver
+    from app.services.rbac_guards import ActorVisibility
 
-    if db is not None and user_is_platform_admin(user, db):
+    if db is not None and EffectiveRoleResolver.user_is_platform_admin(user, db):
         return True
-    return user_is_break_glass(user)
+    return ActorVisibility.user_is_break_glass(user)
 
 
 def platform_admin(user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> User:
-    """已弱化为「持任一平台层级角色」的依赖别名；新路由一律用 rbac_guards.ensure_roles / require_roles。"""
+    """已弱化为「持任一平台层级角色」的依赖别名；新路由一律用 PermissionEnforcer.ensure_roles。"""
     if not is_platform_admin_user(user, db):
         raise HTTPException(status_code=403, detail="需要平台管理员权限")
     return user

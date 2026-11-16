@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str | None = None
     # 破窗开关默认关闭：平台权限只认角色绑定。仅在灾备时临时开启邮箱旁路，且写审计须标记 break_glass。
     allow_bootstrap_email_bypass: bool = False
+    # 登录/登出回调白名单默认仅 HTTPS（localhost HTTP 限本机开发）；内网/测试 HTTP 部署的
+    # 业务系统需运维显式开启本开关放行任意 http 回调——授权码经浏览器 URL 明文回传，存在截获风险。
+    allow_insecure_redirect_uris: bool = False
     # 仅供受信任的模型网关上报用量；生产中由 Secret Manager 注入，不提供默认值。
     model_usage_api_key: str = ""
     # 配额预留执行默认关闭，必须在模型网关与故障策略验收后显式开启。

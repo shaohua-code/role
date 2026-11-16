@@ -10,13 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.models import Application, Role, RoleBinding, Tenant, TenantMembership, User
 from app.models.authorization import Permission, RolePermission
-from app.services.rbac_guards import (
-    ensure_codes,
-    ensure_roles,
-    list_actor_roles,
-    list_management_capabilities,
-    user_has_any_role,
-)
+from app.services.rbac_guards import ActorVisibility, PermissionEnforcer
 from app.services.role_provisioning import L1_ROLE_KEY, L2_ROLE_KEY, L3_ROLE_KEY
 from tests.greenfield_fixture import make_platform_admin_binding
 
@@ -83,37 +77,37 @@ class RoleGuardTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_l1_passes_any_ensure_roles(self) -> None:
-        ensure_roles(self.l1_user, self.db, [L3_ROLE_KEY], tenant_id=self.tenant.id)
+        PermissionEnforcer.ensure_roles(self.l1_user, self.db, [L3_ROLE_KEY], tenant_id=self.tenant.id)
 
     def test_l3_has_tenant_org_admin(self) -> None:
-        self.assertTrue(user_has_any_role(
+        self.assertTrue(PermissionEnforcer.user_has_any_role(
             self.l3_user, self.db, [L3_ROLE_KEY], tenant_id=self.tenant.id,
         ))
-        ensure_roles(self.l3_user, self.db, [L3_ROLE_KEY], tenant_id=self.tenant.id)
+        PermissionEnforcer.ensure_roles(self.l3_user, self.db, [L3_ROLE_KEY], tenant_id=self.tenant.id)
 
     def test_l2_scoped_to_application(self) -> None:
-        self.assertTrue(user_has_any_role(
+        self.assertTrue(PermissionEnforcer.user_has_any_role(
             self.l2_user, self.db, [L2_ROLE_KEY],
             tenant_id=self.tenant.id, application_id=self.application.id,
         ))
         other_app = uuid4()
-        self.assertFalse(user_has_any_role(
+        self.assertFalse(PermissionEnforcer.user_has_any_role(
             self.l2_user, self.db, [L2_ROLE_KEY],
             tenant_id=self.tenant.id, application_id=other_app,
         ))
 
     def test_l4_denied_management_roles(self) -> None:
         with self.assertRaises(HTTPException) as ctx:
-            ensure_roles(
+            PermissionEnforcer.ensure_roles(
                 self.l4_user, self.db, [L3_ROLE_KEY, L2_ROLE_KEY],
                 tenant_id=self.tenant.id, allow_platform_admin=True,
             )
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_list_actor_roles_and_capabilities_include_roles(self) -> None:
-        roles = list_actor_roles(self.l2_user, self.db)
+        roles = ActorVisibility.list_actor_roles(self.l2_user, self.db)
         self.assertTrue(any(item["key"] == L2_ROLE_KEY for item in roles))
-        caps = list_management_capabilities(self.l2_user, self.db)
+        caps = ActorVisibility.list_management_capabilities(self.l2_user, self.db)
         self.assertIn("roles", caps)
         self.assertTrue(any(item["key"] == L2_ROLE_KEY for item in caps["roles"]))
 
@@ -122,27 +116,13 @@ class RoleGuardTests(unittest.TestCase):
     def test_sensitive_node_codes_derive_from_button_catalog(self) -> None:
         """统一清单 = BUTTON_CODES 全集；别名入口与函数入口已由节点清单取代。"""
         from app.services.permission_kinds import BUTTON_CODES
-        from app.services.rbac_guards import (
-            SENSITIVE_API_CODES,
-            SENSITIVE_NODE_CODES,
-        )
+        from app.services.rbac_guards import SENSITIVE_NODE_CODES
 
         expected = frozenset(BUTTON_CODES)
         self.assertEqual(SENSITIVE_NODE_CODES, expected)
-        # 旧常量名保留为别名，指向同一节点清单。
-        self.assertEqual(SENSITIVE_API_CODES, expected)
         # 三个关键敏感节点必须被覆盖（建租户/建人/轮换密钥均为写类按钮）。
         for code in ("button.users.manage", "button.tenants.manage", "button.apps.secret"):
             self.assertIn(code, SENSITIVE_NODE_CODES)
-
-    def test_sensitive_legacy_alias_still_works(self) -> None:
-        """旧常量名保留为别名：SENSITIVE_API_CODES 委托按钮节点全集（双查集合已随码目录删除）。"""
-        from app.services.rbac_guards import SENSITIVE_API_CODES, SENSITIVE_NODE_CODES
-
-        self.assertIn("button.apps.secret", SENSITIVE_API_CODES)
-        self.assertIn("button.users.manage", SENSITIVE_API_CODES)
-        for code in SENSITIVE_NODE_CODES:
-            self.assertIn(code, SENSITIVE_API_CODES)
 
     def test_ensure_codes_node_gate(self) -> None:
         """节点判权：持对应菜单/按钮节点放行；无节点 403；模板回退已删除。"""
@@ -156,10 +136,10 @@ class RoleGuardTests(unittest.TestCase):
         )])
         self.db.commit()
         # 持节点：放行。
-        ensure_codes(self.l3_user, self.db, "menu.groups", tenant_id=self.tenant.id)
+        PermissionEnforcer.ensure_codes(self.l3_user, self.db, "menu.groups", tenant_id=self.tenant.id)
         # 无节点：403（不再有 role_keys 回退）。
         with self.assertRaises(HTTPException) as ctx:
-            ensure_codes(self.l3_user, self.db, "button.groups.manage", tenant_id=self.tenant.id)
+            PermissionEnforcer.ensure_codes(self.l3_user, self.db, "button.groups.manage", tenant_id=self.tenant.id)
         self.assertEqual(ctx.exception.status_code, 403)
 
 

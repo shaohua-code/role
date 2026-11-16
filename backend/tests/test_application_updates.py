@@ -38,7 +38,7 @@ class ApplicationContractTests(unittest.TestCase):
         db.scalar.return_value = row
         request, actor = Mock(), Mock()
 
-        with patch("app.api.v1.admin.applications.has_application_admin_access", return_value=True), patch("app.api.v1.admin.applications.audit") as write_audit, patch(
+        with patch("app.services.admin_authorization.AdminAccessGuard.has_application_admin_access", return_value=True), patch("app.api.v1.admin.applications.audit") as write_audit, patch(
             "app.api.v1.admin.applications.commit_or_conflict"
         ) as commit:
             result = set_application_status(
@@ -184,7 +184,12 @@ class ApplicationUpdateIntegrationTests(unittest.TestCase):
         )
 
         self.db.refresh(self.application)
-        audit_event = self.db.scalar(select(AuditEvent).where(AuditEvent.action == "application.update"))
+        # 开发库残留既往 application.update 审计（READ COMMITTED 可见）：按 target_id
+        # 限定本用例写入的事件，避免无序查询捞到历史行导致误报（同 test_session_management 先例）。
+        audit_event = self.db.scalar(select(AuditEvent).where(
+            AuditEvent.action == "application.update",
+            AuditEvent.target_id == str(self.application_id),
+        ))
         self.assertEqual(self.application.name, "Updated App")
         self.assertIsNone(self.application.description)
         self.assertEqual(self.application.tenant_id, self.tenant_id)
@@ -216,8 +221,12 @@ class ApplicationUpdateIntegrationTests(unittest.TestCase):
         result = rotate_application_secret(self.application_id, request, response, self.actor, self.db)
 
         self.db.refresh(self.application)
+        # 同上：按 target_id 限定本用例的轮换审计，防开发库残留历史行干扰。
         audit_event = self.db.scalar(
-            select(AuditEvent).where(AuditEvent.action == "application.secret.rotate")
+            select(AuditEvent).where(
+                AuditEvent.action == "application.secret.rotate",
+                AuditEvent.target_id == str(self.application_id),
+            )
         )
         self.assertGreaterEqual(len(result["client_secret"]), 48)
         self.assertTrue(verify_password(result["client_secret"], self.application.client_secret_hash))

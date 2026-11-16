@@ -29,12 +29,8 @@ from app.schemas.access_control import (
     RolePermissionsUpdate,
     RoleUpdate,
 )
-from app.services.authorization import evaluate_access
-from app.services.permission_impact import (
-    StaleRolePermissionPreview,
-    apply_role_permissions,
-    preview_role_permissions,
-)
+from app.services.authorization import AuthorizationEvaluator
+from app.services.permission_impact import PermissionImpactService, StaleRolePermissionPreview
 from app.services.permission_kinds import (
     GRANTABLE_ROLE_SCOPES,
     MANAGEMENT_NODE_CODES,
@@ -47,12 +43,7 @@ from app.services.permission_kinds import (
     ROLE_SCOPE_TENANT,
     TEMPLATE_ROLE_SCOPES,
     ROLE_SCOPE_LABELS,
-    build_permission_trees,
-    effective_role_scope_label,
-    ensure_data_scope_children,
-    infer_permission_kind,
-    node_allows_scope,
-    permission_kind_of,
+    PermissionCatalog,
 )
 from app.services.permission_namespace import (
     is_management_code,
@@ -61,19 +52,9 @@ from app.services.permission_namespace import (
     resolve_permission_namespace,
 )
 from app.services.rbac_guards import (
-    actor_grantable_management_codes,
-    assert_actor_can_manage_role,
-    assert_actor_can_see_role,
-    bump_membership_versions,
-    bump_memberships_holding_role,
-    effective_role_scope,
-    ensure_codes,
-    ensure_scope,
-    ensure_tenant_in_actor_scope,
-    list_actor_management_tenant_ids,
-    list_actor_visible_application_ids,
-    list_actor_visible_business_namespaces,
-    operator_scope,
+    ActorVisibility,
+    AuthVersionService,
+    PermissionEnforcer,
 )
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
@@ -82,10 +63,8 @@ from app.services.role_provisioning import (
     L3_GRANT_NODE_CODES,
     L3_ROLE_KEY,
     L4_ROLE_KEY,
-    PLATFORM_TENANT_ID,
     TEMPLATE_ROLE_KEYS,
-    is_application_class_role,
-    is_platform_class_role,
+    RoleProvisioning,
 )
 
 router = APIRouter(tags=["RBAC 权限管理"])
@@ -101,13 +80,13 @@ def simulate_authorization(body: AuthorizationSimulation, actor: User = Depends(
 
     L2/L3 模拟对象限本租户（11 号文档 §4.4）：目标租户不在 actor 管理范围时 403。
     """
-    ensure_codes(actor, db, "button.authz.simulate", detail="缺少管理权限：button.authz.simulate")
+    PermissionEnforcer.ensure_codes(actor, db, "button.authz.simulate", detail="缺少管理权限：button.authz.simulate")
     target_user = db.get(User, body.user_id)
     if not target_user:
         raise HTTPException(404, "模拟用户不存在")
     check = AuthorizationCheck(**body.model_dump(exclude={"user_id"}))
     # 范围校验：非 L1 只能预演自己租户内的授权场景，防止跨租户策略探测。
-    ensure_tenant_in_actor_scope(actor, db, check.tenant_id)
+    ActorVisibility.ensure_tenant_in_actor_scope(actor, db, check.tenant_id)
     # 目标归属校验（P2-4）：模拟对象必须是请求租户的活跃成员，防止借 user_id 探测任意账号存在性。
     target_membership = db.scalar(select(TenantMembership.id).where(
         TenantMembership.user_id == target_user.id,
@@ -116,7 +95,7 @@ def simulate_authorization(body: AuthorizationSimulation, actor: User = Depends(
     ))
     if not target_membership:
         raise HTTPException(404, "模拟用户不存在")
-    evaluation = evaluate_access(check, target_user, db, enforce_token_context=False)
+    evaluation = AuthorizationEvaluator.evaluate_access(check, target_user, db, enforce_token_context=False)
     return {
         "subject": {"user_id": str(target_user.id), "email": target_user.email,
                     "display_name": target_user.display_name, "status": target_user.status},
@@ -147,15 +126,15 @@ def list_roles(q: str | None = Query(default=None, max_length=120),
     role_class=platform 只出模板 + 未钉应用的自定义平台角色；
     role_class=application 只出自定义应用角色。
     """
-    ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
     if kind not in (None, "platform", "tenant", "application"):
         raise HTTPException(422, "kind 仅支持 platform、tenant 或 application")
     if status not in (None, "active", "disabled"):
         raise HTTPException(422, "status 仅支持 active 或 disabled")
     if role_class not in (None, "platform", "application"):
         raise HTTPException(422, "role_class 仅支持 platform 或 application")
-    operator_rank = ROLE_SCOPE_RANK[operator_scope(actor, db)]
-    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    operator_rank = ROLE_SCOPE_RANK[ActorVisibility.operator_scope(actor, db)]
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     if tenant_scope is not None:
         if not tenant_scope:
             return {"items": [], "total": 0, "limit": limit, "offset": offset}
@@ -169,9 +148,9 @@ def list_roles(q: str | None = Query(default=None, max_length=120),
         # 平台类角色全局可见；应用类角色限操作者数据边界内的租户。
         statement = statement.where(
             or_(Role.application_id.is_(None), Role.tenant_id.in_(tenant_scope)))
-    # 修复 NULL-scope 旁路：scope 空值行不再无条件放行，按 effective_role_scope 同口径推导过滤
+    # 修复 NULL-scope 旁路：scope 空值行不再无条件放行，按 ActorVisibility.effective_role_scope 同口径推导过滤
     # （存量回填迁移 0007 验证后可简化为 Role.scope.in_(allowed_scopes)）。
-    # 推导口径对齐 services/rbac_guards.py::effective_role_scope：
+    # 推导口径对齐 services/rbac_guards.py::ActorVisibility.effective_role_scope：
     # scope 非空用列值 → 模板 key 用固定范围 → 钉应用（application_id 非空）为 app → 其余平台角色为 tenant。
     template_keys_by_scope: dict[str, list[str]] = {}
     for template_key, template_scope in TEMPLATE_ROLE_SCOPES.items():
@@ -199,7 +178,7 @@ def list_roles(q: str | None = Query(default=None, max_length=120),
         statement = statement.where(Role.scope.in_(allowed_scopes))
     if operator_rank < ROLE_SCOPE_RANK[ROLE_SCOPE_TENANT]:
         # 应用级：应用角色必须在可见应用集合内。
-        visible_apps = list_actor_visible_application_ids(actor, db) or set()
+        visible_apps = ActorVisibility.list_actor_visible_application_ids(actor, db) or set()
         if not visible_apps:
             return {"items": [], "total": 0, "limit": limit, "offset": offset}
         statement = statement.where(or_(Role.application_id.is_(None), Role.application_id.in_(visible_apps)))
@@ -241,7 +220,7 @@ def list_roles(q: str | None = Query(default=None, max_length=120),
         codes_by_role.setdefault(role_id, []).append(code)
     items = [{"id": str(r.id), "tenant_id": str(r.tenant_id), "application_id": str(r.application_id) if r.application_id else None,
              "kind": r.kind, "key": r.key, "name": r.name, "description": r.description, "status": r.status,
-             "scope": effective_role_scope(r), "scope_label": effective_role_scope_label(r),
+             "scope": ActorVisibility.effective_role_scope(r), "scope_label": PermissionCatalog.effective_role_scope_label(r),
              "is_template": r.key in TEMPLATE_ROLE_KEYS,
              "permission_codes": sorted(codes_by_role.get(r.id, []))}
             for r in rows]
@@ -254,14 +233,14 @@ def list_role_holders(role_id: UUID, actor: User = Depends(current_user),
     """G22 角色持有者反查：回答「改/停/删这个角色影响谁」。
 
     返回直连绑定与经由用户组继承两类来源；组来源标注具体组名（继承语义与
-    list_effective_roles 一致：组停用即不生效，因此只统计 active 组）。
+    EffectiveRoleResolver.list_effective_roles 一致：组停用即不生效，因此只统计 active 组）。
     """
-    ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
     # 非超管限数据边界内；范围只能向下。
-    assert_actor_can_see_role(actor, db, role)
+    ActorVisibility.assert_actor_can_see_role(actor, db, role)
 
     holders: dict[UUID, dict] = {}
 
@@ -310,7 +289,7 @@ def create_role(body: RoleCreate, request: Request, actor: User = Depends(curren
     不需要也不接受所属租户维度；应用角色仍要求 tenant_id 与应用租户匹配（超管入口）。
     授权范围只能向下：所选 scope 秩不得高于操作者；缺省按钉应用推导（app/tenant）。
     """
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     if body.key in TEMPLATE_ROLE_KEYS:
         raise HTTPException(422, "不能新建系统预置平台角色")
     scope = body.scope or (ROLE_SCOPE_APP if body.application_id else ROLE_SCOPE_TENANT)
@@ -319,14 +298,14 @@ def create_role(body: RoleCreate, request: Request, actor: User = Depends(curren
     if scope == ROLE_SCOPE_SUPER and body.application_id:
         raise HTTPException(422, "应用角色的授权范围不能是超管")
     # 范围只能向下：操作者范围秩必须 ≥ 所选范围。
-    ensure_scope(actor, db, scope, detail="不能创建高于自己授权范围的角色")
+    PermissionEnforcer.ensure_scope(actor, db, scope, detail="不能创建高于自己授权范围的角色")
     if body.application_id:
         # 应用角色保持原约束：仅超管入口，且必须落在应用所属租户。
         if not is_platform_admin_user(actor, db):
             raise HTTPException(422, "应用角色请在应用工作台创建")
         if body.tenant_id is None:
             raise HTTPException(422, "应用角色必须指定所属租户")
-        ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
+        ActorVisibility.ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
         if not db.get(Tenant, body.tenant_id): raise HTTPException(404, "租户不存在")
         app = db.get(Application, body.application_id)
         if not app or app.tenant_id != body.tenant_id: raise HTTPException(422, "应用必须属于所选租户")
@@ -334,7 +313,7 @@ def create_role(body: RoleCreate, request: Request, actor: User = Depends(curren
         kind = "application"
     else:
         # 平台类角色全局宿主平台管理租户：忽略传入 tenant_id（前端已移除所属租户字段）。
-        host_tenant_id = PLATFORM_TENANT_ID(db)
+        host_tenant_id = RoleProvisioning.PLATFORM_TENANT_ID(db)
         kind = "tenant"
     role = Role(tenant_id=host_tenant_id, application_id=body.application_id,
                 kind=kind,
@@ -344,7 +323,7 @@ def create_role(body: RoleCreate, request: Request, actor: User = Depends(curren
         "id": str(role.id), "key": role.key, "name": role.name,
         "tenant_id": str(role.tenant_id),
         "application_id": str(role.application_id) if role.application_id else None,
-        "kind": role.kind, "scope": scope, "scope_label": effective_role_scope_label(scope),
+        "kind": role.kind, "scope": scope, "scope_label": PermissionCatalog.effective_role_scope_label(scope),
         "status": role.status, "permission_codes": [],
     }
 
@@ -353,13 +332,13 @@ def create_role(body: RoleCreate, request: Request, actor: User = Depends(curren
 def clone_role(role_id: UUID, body: RoleCloneRequest, request: Request,
                actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """在源租户和应用范围内原子复制角色；成员绑定和组绑定始终留在源角色。"""
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     # 锁定源角色，使其状态/范围在复制事务中保持稳定，并与角色权限维护采用相同锁顺序。
     source = db.scalar(select(Role).where(Role.id == role_id).with_for_update())
     if not source:
         raise HTTPException(404, "角色不存在")
     # 范围只能向下：不能克隆比自己范围更高的角色。
-    assert_actor_can_manage_role(actor, db, source)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, source)
 
     clone = Role(
         tenant_id=source.tenant_id,
@@ -368,7 +347,7 @@ def clone_role(role_id: UUID, body: RoleCloneRequest, request: Request,
         key=body.key,
         name=body.name,
         description=body.description,
-        scope=effective_role_scope(source),
+        scope=ActorVisibility.effective_role_scope(source),
         # 复制停用角色时不意外恢复访问；管理员可在确认影响后单独启用副本。
         status=source.status,
     )
@@ -454,11 +433,11 @@ def clone_role(role_id: UUID, body: RoleCloneRequest, request: Request,
 def update_role(role_id: UUID, body: RoleUpdate, request: Request,
                 actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """编辑角色名称/说明；自定义角色可调授权范围（只能向下），模板角色范围固定。"""
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
-    assert_actor_can_manage_role(actor, db, role)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, role)
     changes = body.model_dump(exclude_unset=True)
     if "scope" in changes:
         new_scope = changes.pop("scope")
@@ -468,7 +447,7 @@ def update_role(role_id: UUID, body: RoleUpdate, request: Request,
             if new_scope not in GRANTABLE_ROLE_SCOPES:
                 raise HTTPException(422, "授权范围仅支持 super、tenant 或 app")
             # 范围只能向下：调整后不得高于操作者自身范围。
-            ensure_scope(actor, db, new_scope, detail="不能把角色授权范围调到高于自己")
+            PermissionEnforcer.ensure_scope(actor, db, new_scope, detail="不能把角色授权范围调到高于自己")
             role.scope = new_scope
     for field, value in changes.items():
         setattr(role, field, value)
@@ -478,25 +457,25 @@ def update_role(role_id: UUID, body: RoleUpdate, request: Request,
     commit_or_conflict(db)
     return {"id": str(role.id), "tenant_id": str(role.tenant_id), "application_id": str(role.application_id) if role.application_id else None,
             "key": role.key, "name": role.name, "description": role.description,
-            "scope": effective_role_scope(role), "scope_label": effective_role_scope_label(role),
+            "scope": ActorVisibility.effective_role_scope(role), "scope_label": PermissionCatalog.effective_role_scope_label(role),
             "updated_fields": sorted(changes)}
 
 
 @router.patch("/roles/{role_id}/status")
 def set_role_status(role_id: UUID, status: str, request: Request, actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """启停角色；停用即时收敛持有者凭证，平台超管角色受种子保护禁止停用。"""
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     if status not in {"active", "disabled"}: raise HTTPException(422, "状态仅支持 active 或 disabled")
     role = db.get(Role, role_id)
     if not role: raise HTTPException(404, "角色不存在")
-    assert_actor_can_manage_role(actor, db, role)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, role)
     # 种子保护：禁止停用 L1 平台超管角色，避免锁死平台管理面。
     if status == "disabled" and role.kind == "platform" and role.key in PROTECTED_PLATFORM_ROLE_KEYS:
         raise HTTPException(422, "平台超管角色为种子保护角色，不允许停用")
     role.status = status
     if status == "disabled":
         # 角色停用后持有者权限即时收敛，必须使其旧 OIDC 凭证失效。
-        bump_memberships_holding_role(db, role.id)
+        AuthVersionService.bump_memberships_holding_role(db, role.id)
     audit(db, actor, request, "role.status.change", "role", str(role.id), {"status": status, "tenant_id": str(role.tenant_id)}); commit_or_conflict(db)
     return {"id": str(role.id), "status": role.status}
 
@@ -507,11 +486,11 @@ def delete_role(role_id: UUID, request: Request, actor: User = Depends(current_u
 
     平台超管角色（platform.admin）为种子保护角色，永久禁止删除。
     """
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
-    assert_actor_can_manage_role(actor, db, role)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, role)
     if role.kind == "platform" and role.key in PROTECTED_PLATFORM_ROLE_KEYS:
         raise HTTPException(422, "平台超管角色为种子保护角色，不允许删除")
     # UserInvitation 对角色为 RESTRICT：存在引用该角色的邀请时给出可操作文案而非数据库约束错误。
@@ -522,7 +501,7 @@ def delete_role(role_id: UUID, request: Request, actor: User = Depends(current_u
     db.execute(update(Application).where(Application.registration_role_id == role.id)
                .values(registration_role_id=None))
     # 删除前 bump 持有者：直连绑定与组继承成员的旧 OIDC 凭证即时失效；绑定随后随角色级联清除。
-    bump_memberships_holding_role(db, role.id)
+    AuthVersionService.bump_memberships_holding_role(db, role.id)
     audit(db, actor, request, "role.delete", "role", str(role.id),
           {"tenant_id": str(role.tenant_id), "key": role.key, "name": role.name})
     db.delete(role)
@@ -541,8 +520,8 @@ def bind_role(body: RoleBindingCreate, request: Request, actor: User = Depends(c
     任命天花板（只能向下）：platform.admin / tenant.admin 仅超管可任命；
     app.admin 任命需要租户级及以上（应用级不能向上）；自定义角色按范围秩判定。
     """
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
-    ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    ActorVisibility.ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
     platform_actor = is_platform_admin_user(actor, db)
     if not platform_actor:
         # 平台租户隔离：平台管理租户为系统保留租户，仅超管可为其成员增删绑定。
@@ -561,17 +540,17 @@ def bind_role(body: RoleBindingCreate, request: Request, actor: User = Depends(c
         raise HTTPException(403, "不能任命租户管理员")
     if role.key == L2_ROLE_KEY and role.application_id and not platform_actor:
         # 任命应用管理员是租户级能力（应用级不能向上）。
-        ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="任命应用管理员需要租户级及以上范围")
+        PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="任命应用管理员需要租户级及以上范围")
     elif role.key not in TEMPLATE_ROLE_KEYS:
         # 自定义角色：操作者范围秩必须 ≥ 角色范围（只能向下）。
-        ensure_scope(actor, db, effective_role_scope(role), detail="不能绑定高于自己授权范围的角色")
+        PermissionEnforcer.ensure_scope(actor, db, ActorVisibility.effective_role_scope(role), detail="不能绑定高于自己授权范围的角色")
     if role.application_id:
         # 应用角色按其所属应用生效（可跨租户任命）；非超管仅可绑定数据边界内应用的角色。
         role_app = db.get(Application, role.application_id)
         if not role_app:
             raise HTTPException(422, "角色绑定的应用不存在或已停用")
         if not platform_actor:
-            visible_apps = list_actor_visible_application_ids(actor, db)
+            visible_apps = ActorVisibility.list_actor_visible_application_ids(actor, db)
             if visible_apps is not None and role.application_id not in visible_apps:
                 raise HTTPException(403, "不能绑定不在你数据边界内的应用角色")
     existing = db.scalar(select(RoleBinding.id).where(RoleBinding.membership_id == membership.id, RoleBinding.role_id == role.id))
@@ -579,7 +558,7 @@ def bind_role(body: RoleBindingCreate, request: Request, actor: User = Depends(c
     if not existing:
         db.add(RoleBinding(membership_id=membership.id, role_id=role.id))
     provisioned_member = False
-    if is_application_class_role(role) and role.application_id:
+    if RoleProvisioning.is_application_class_role(role) and role.application_id:
         member_role = db.scalar(select(Role).where(
             Role.tenant_id == role.tenant_id,
             Role.application_id == role.application_id,
@@ -595,7 +574,7 @@ def bind_role(body: RoleBindingCreate, request: Request, actor: User = Depends(c
         # 幂等语义：判权与目标校验已全部通过，重复绑定静默成功（不重复 bump/审计）。
         return
     # 绑定变更即时生效：bump 让目标成员旧 OIDC 凭证在下一次请求时失效重签。
-    bump_membership_versions(db, [membership.id])
+    AuthVersionService.bump_membership_versions(db, [membership.id])
     audit(db, actor, request, "role.bind", "user", str(body.user_id), {"tenant_id": str(body.tenant_id), "role_id": str(role.id)})
     commit_or_conflict(db)
 
@@ -607,8 +586,8 @@ def unbind_role(body: RoleBindingCreate, request: Request, actor: User = Depends
     平台角色全局化：平台类角色解绑不再要求角色与成员同租户；
     应用类角色按其所属应用生效（跨租户任命对称放开），解绑同样不限角色租户。
     """
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
-    ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    ActorVisibility.ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
     if not is_platform_admin_user(actor, db):
         # 平台租户隔离：平台管理租户为系统保留租户，仅超管可为其成员增删绑定。
         target_tenant = db.get(Tenant, body.tenant_id)
@@ -624,7 +603,7 @@ def unbind_role(body: RoleBindingCreate, request: Request, actor: User = Depends
     ))
     if not result.rowcount:
         raise HTTPException(404, "该成员未绑定此角色")
-    bump_membership_versions(db, [membership.id])
+    AuthVersionService.bump_membership_versions(db, [membership.id])
     audit(db, actor, request, "role.unbind", "user", str(body.user_id), {"tenant_id": str(body.tenant_id), "role_id": str(role.id)})
     commit_or_conflict(db)
 
@@ -642,8 +621,8 @@ def list_user_role_bindings(
 
     平台角色全局化：平台类角色跨租户生效，不再按角色租户过滤；应用类角色仍限该租户。
     """
-    ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
-    ensure_tenant_in_actor_scope(actor, db, tenant_id)
+    PermissionEnforcer.ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
+    ActorVisibility.ensure_tenant_in_actor_scope(actor, db, tenant_id)
     membership = db.scalar(select(TenantMembership).where(
         TenantMembership.user_id == user_id,
         TenantMembership.tenant_id == tenant_id,
@@ -691,8 +670,8 @@ def replace_user_role_bindings(
     平台租户隔离：非超管不得替换平台管理租户成员的绑定（422）。
     任命天花板与 bind_role 一致：模板管理员仅上级范围可任命，自定义角色按范围秩判定。
     """
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
-    ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    ActorVisibility.ensure_tenant_in_actor_scope(actor, db, body.tenant_id)
     platform_actor = is_platform_admin_user(actor, db)
     if not platform_actor:
         # 平台租户隔离：平台管理租户为系统保留租户，仅超管可为其成员增删绑定。
@@ -723,23 +702,23 @@ def replace_user_role_bindings(
                 raise HTTPException(403, "不能任命租户管理员")
             if role.key == L2_ROLE_KEY and role.application_id and not platform_actor:
                 # 任命应用管理员是租户级能力（应用级不能向上）。
-                ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="任命应用管理员需要租户级及以上范围")
+                PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="任命应用管理员需要租户级及以上范围")
             elif role.key not in TEMPLATE_ROLE_KEYS:
-                ensure_scope(actor, db, effective_role_scope(role), detail="不能绑定高于自己授权范围的角色")
+                PermissionEnforcer.ensure_scope(actor, db, ActorVisibility.effective_role_scope(role), detail="不能绑定高于自己授权范围的角色")
             if role.application_id:
                 # 应用角色按其所属应用生效（可跨租户任命）；非超管仅可绑定数据边界内应用的角色。
                 role_app = db.get(Application, role.application_id)
                 if not role_app:
                     raise HTTPException(422, "角色绑定的应用不存在或已停用")
                 if not platform_actor:
-                    visible_apps = list_actor_visible_application_ids(actor, db)
+                    visible_apps = ActorVisibility.list_actor_visible_application_ids(actor, db)
                     if visible_apps is not None and role.application_id not in visible_apps:
                         raise HTTPException(403, "不能绑定不在你数据边界内的应用角色")
         # 分配应用角色时自动补齐该应用的平台成员。
         bound_ids = {role.id for role in roles}
         extra: list[Role] = []
         for role in roles:
-            if not is_application_class_role(role) or not role.application_id:
+            if not RoleProvisioning.is_application_class_role(role) or not role.application_id:
                 continue
             member_role = db.scalar(select(Role).where(
                 Role.tenant_id == role.tenant_id,
@@ -753,7 +732,7 @@ def replace_user_role_bindings(
         roles = roles + extra
     db.execute(delete(RoleBinding).where(RoleBinding.membership_id == membership.id))
     db.add_all([RoleBinding(membership_id=membership.id, role_id=role.id) for role in roles])
-    bump_membership_versions(db, [membership.id])
+    AuthVersionService.bump_membership_versions(db, [membership.id])
     audit(db, actor, request, "role.bindings.replace", "user", str(user_id), {
         "tenant_id": str(body.tenant_id),
         "role_ids": [str(role.id) for role in roles],
@@ -790,7 +769,7 @@ def _permission_payload(permission: Permission, assigned_role_count: int = 0) ->
         "status": permission.status,
         "surface": permission.surface,
         "requires_data_scope": permission.requires_data_scope,
-        "kind": permission_kind_of(permission),
+        "kind": PermissionCatalog.permission_kind_of(permission),
         "assigned_role_count": int(assigned_role_count),
     }
 
@@ -844,9 +823,9 @@ def list_permission_tree(
     管理面只有菜单/按钮两类节点；业务面结构保持供应用工作台复用。
     meta 下发菜单映射、模板节点集与授权范围契约，前端据此删除硬编码。
     """
-    ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
-    grantable = actor_grantable_management_codes(actor, db)
-    namespaces = list_actor_visible_business_namespaces(actor, db)
+    PermissionEnforcer.ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
+    grantable = ActorVisibility.actor_grantable_management_codes(actor, db)
+    namespaces = ActorVisibility.list_actor_visible_business_namespaces(actor, db)
     assigned_roles = (
         select(
             RolePermission.permission_id.label("permission_id"),
@@ -862,7 +841,7 @@ def list_permission_tree(
     rows = db.execute(statement.order_by(Permission.catalog_namespace, Permission.code).limit(5000)).all()
     items = []
     for permission, assigned_role_count in rows:
-        kind = permission_kind_of(permission)
+        kind = PermissionCatalog.permission_kind_of(permission)
         if permission.surface == "management":
             if grantable is not None and permission.code not in grantable:
                 continue
@@ -874,7 +853,7 @@ def list_permission_tree(
             else:
                 continue
         items.append(_permission_payload(permission, assigned_role_count))
-    resource, data = build_permission_trees(items)
+    resource, data = PermissionCatalog.build_permission_trees(items)
     return {"resource": resource, "data": data, "items": resource, "meta": _permission_tree_meta()}
 
 
@@ -893,7 +872,7 @@ def list_permissions(
     P405：默认为 surface=management；可见码 = 操作者已有管理码。
     """
     del application_id  # 业务码不再从本目录按应用过滤，避免混进平台编码页。
-    ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
     empty = {"items": [], "total": 0, "limit": limit, "offset": offset}
     namespace_filter: str | None = None
     if catalog_namespace:
@@ -901,7 +880,7 @@ def list_permissions(
         if namespace_filter != "platform":
             return empty
 
-    grantable = actor_grantable_management_codes(actor, db)
+    grantable = ActorVisibility.actor_grantable_management_codes(actor, db)
 
     assigned_roles = (
         select(
@@ -936,14 +915,14 @@ def create_permission(body: PermissionCreate, request: Request, actor: User = De
     """登记业务码；管理面菜单/按钮节点由种子固定，不再开放登记（编码唯一冲突转 409）。"""
     if body.surface == "management":
         raise HTTPException(422, "管理面菜单/按钮节点由系统目录固定，不能手工登记；本接口仅用于业务码")
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="业务码登记仅超管")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="业务码登记仅超管")
     catalog_namespace = resolve_permission_namespace(
         code=body.code,
         catalog_namespace=body.catalog_namespace,
     )
     if not permission_matches_namespace(body.code, catalog_namespace):
         raise HTTPException(422, "权限编码与 catalog_namespace 不匹配")
-    kind = body.kind or infer_permission_kind(body.code.strip())
+    kind = body.kind or PermissionCatalog.infer_permission_kind(body.code.strip())
     row = Permission(
         code=body.code.strip(),
         catalog_namespace=catalog_namespace,
@@ -956,7 +935,7 @@ def create_permission(body: PermissionCreate, request: Request, actor: User = De
     )
     db.add(row)
     flush_or_conflict(db)
-    ensure_data_scope_children(db, row)
+    PermissionCatalog.ensure_data_scope_children(db, row)
     audit(db, actor, request, "permission.create", "permission", str(row.id), {
         "code": row.code,
         "catalog_namespace": row.catalog_namespace,
@@ -972,7 +951,7 @@ def create_permission(body: PermissionCreate, request: Request, actor: User = De
 def set_permission_status(permission_id: UUID, body: PermissionStatusUpdate, request: Request,
                            actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """停用/恢复稳定权限编码；停用保留历史角色授权并立即从在线判定中排除。"""
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="权限目录启停仅超管")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="权限目录启停仅超管")
     permission = db.scalar(select(Permission).where(Permission.id == permission_id).with_for_update())
     if not permission:
         raise HTTPException(404, "权限项不存在")
@@ -999,7 +978,7 @@ def set_permission_status(permission_id: UUID, body: PermissionStatusUpdate, req
         holder_membership_ids = db.scalars(select(RoleBinding.membership_id).where(
             RoleBinding.role_id.in_(holder_role_ids),
         )).all() if holder_role_ids else []
-        bump_membership_versions(db, holder_membership_ids)
+        AuthVersionService.bump_membership_versions(db, holder_membership_ids)
     audit(db, actor, request, "permission.status.change", "permission", str(permission.id), {
         "code": permission.code,
         "from_status": old_status,
@@ -1016,12 +995,12 @@ def set_permission_status(permission_id: UUID, body: PermissionStatusUpdate, req
 def list_role_permissions(role_id: UUID, actor: User = Depends(current_user),
                           db: Session = Depends(get_db_session)) -> list[dict]:
     """返回角色的通用与资源实例级授权，供管理员准确编辑通用授权集合。"""
-    ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
     # 非超管限数据边界内；范围只能向下。
-    assert_actor_can_see_role(actor, db, role)
+    ActorVisibility.assert_actor_can_see_role(actor, db, role)
     rows = db.execute(
         select(RolePermission, Permission)
         .join(Permission, Permission.id == RolePermission.permission_id)
@@ -1049,16 +1028,16 @@ def _assert_role_permission_scope(role: Role, permission_ids: list[UUID], db: Se
     )).all() if permission_ids else []
     if len(proposed) != len(set(permission_ids)):
         raise HTTPException(422, "权限目录中存在无效权限")
-    if is_platform_class_role(role):
-        role_scope = effective_role_scope(role)
+    if RoleProvisioning.is_platform_class_role(role):
+        role_scope = ActorVisibility.effective_role_scope(role)
         for permission in proposed:
             if permission.id in current_ids:
                 continue
-            if permission.surface != "management" or permission_kind_of(permission) not in ("menu", "button"):
+            if permission.surface != "management" or PermissionCatalog.permission_kind_of(permission) not in ("menu", "button"):
                 raise HTTPException(422, f"平台角色只能挂菜单/按钮节点：{_permission_label(permission)}")
             # 范围只能向下：节点授权下限不得高于角色授权范围（如超管按钮进不了租户级角色）。
-            if not node_allows_scope(permission.code, role_scope):
-                raise HTTPException(422, f"节点「{_permission_label(permission)}」的授权下限高于角色范围（{effective_role_scope_label(role_scope)}）")
+            if not PermissionCatalog.node_allows_scope(permission.code, role_scope):
+                raise HTTPException(422, f"节点「{_permission_label(permission)}」的授权下限高于角色范围（{PermissionCatalog.effective_role_scope_label(role_scope)}）")
         return
     application_namespace = None
     if role.application_id:
@@ -1077,9 +1056,9 @@ def _assert_role_permission_scope(role: Role, permission_ids: list[UUID], db: Se
 def _actor_grantable_codes_or_full(actor: User, db: Session) -> frozenset[str]:
     """操作者可授节点的显式集合：超管（None=全量）展开为 MANAGEMENT_NODE_CODES。
 
-    非 L1 直接使用 actor_grantable_management_codes 的已挂节点并集（看得见才能配）。
+    非 L1 直接使用 ActorVisibility.actor_grantable_management_codes 的已挂节点并集（看得见才能配）。
     """
-    grantable = actor_grantable_management_codes(actor, db)
+    grantable = ActorVisibility.actor_grantable_management_codes(actor, db)
     if grantable is None:
         return frozenset(MANAGEMENT_NODE_CODES)
     return grantable
@@ -1096,7 +1075,7 @@ def _assert_actor_grantable_permissions(
     """新增挂权必须落在操作者已有集合里（看得见才能配）。
 
     grantable 为必传显式集合——超管传 MANAGEMENT_NODE_CODES 全量，
-    非 L1 传 actor_grantable_management_codes 结果；传 None 一律视为调用方编程错误。
+    非 L1 传 ActorVisibility.actor_grantable_management_codes 结果；传 None 一律视为调用方编程错误。
     """
     if grantable is None:
         raise RuntimeError(
@@ -1121,23 +1100,23 @@ def preview_role_permission_update(role_id: UUID, body: RolePermissionsPreview,
                                    actor: User = Depends(current_user),
                                    db: Session = Depends(get_db_session)) -> dict:
     """在保存前预演通用授权增删及可能清理的数据范围策略；该接口只读。"""
-    ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.roles", detail="缺少管理权限：menu.roles")
     # 读取锁避免预览正在被其它管理请求变更的角色授权集合。
     role = db.scalar(select(Role).where(Role.id == role_id).with_for_update(read=True))
     if not role:
         raise HTTPException(404, "角色不存在")
     # 可见性 + 范围只能向下（含预置模板的本级以上限制）。
-    assert_actor_can_see_role(actor, db, role)
-    assert_actor_can_manage_role(actor, db, role)
+    ActorVisibility.assert_actor_can_see_role(actor, db, role)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, role)
     _assert_role_permission_scope(role, body.permission_ids, db)
     # F3：应用角色配权走应用工作台，显式跳过管理码集判定；其余调用必须传显式 grantable 集合。
-    if not is_application_class_role(role):
+    if not RoleProvisioning.is_application_class_role(role):
         _assert_actor_grantable_permissions(
             actor, role, body.permission_ids, db,
             grantable=_actor_grantable_codes_or_full(actor, db),
         )
     try:
-        return preview_role_permissions(role_id, body.permission_ids, db)
+        return PermissionImpactService.preview_role_permissions(role_id, body.permission_ids, db)
     except LookupError as error:
         raise HTTPException(404, str(error)) from error
     except ValueError as error:
@@ -1148,23 +1127,23 @@ def preview_role_permission_update(role_id: UUID, body: RolePermissionsPreview,
 def replace_role_permissions(role_id: UUID, body: RolePermissionsUpdate, request: Request,
                               actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """事务性替换角色通用权限；资源实例级授权不受本表单影响。"""
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
-    assert_actor_can_see_role(actor, db, role)
-    if is_application_class_role(role) and not is_platform_admin_user(actor, db):
+    ActorVisibility.assert_actor_can_see_role(actor, db, role)
+    if RoleProvisioning.is_application_class_role(role) and not is_platform_admin_user(actor, db):
         raise HTTPException(422, "应用角色请在应用工作台配权")
-    assert_actor_can_manage_role(actor, db, role)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, role)
     _assert_role_permission_scope(role, body.permission_ids, db)
     # F3：应用角色配权走应用工作台，显式跳过管理码集判定；其余调用必须传显式 grantable 集合。
-    if not is_application_class_role(role):
+    if not RoleProvisioning.is_application_class_role(role):
         _assert_actor_grantable_permissions(
             actor, role, body.permission_ids, db,
             grantable=_actor_grantable_codes_or_full(actor, db),
         )
     try:
-        impact = apply_role_permissions(
+        impact = PermissionImpactService.apply_role_permissions(
             role_id, body.permission_ids, body.expected_current_permission_ids, db,
         )
     except StaleRolePermissionPreview as error:
@@ -1177,7 +1156,7 @@ def replace_role_permissions(role_id: UUID, body: RolePermissionsUpdate, request
         return impact
 
     # 权限集替换即时收敛持有者旧凭证。
-    bump_memberships_holding_role(db, role_id)
+    AuthVersionService.bump_memberships_holding_role(db, role_id)
     audit(db, actor, request, "role.permissions.replace", "role", str(role_id), {
         "tenant_id": impact["role"]["tenant_id"],
         "granted_permissions": impact["grant_permission_codes"],
@@ -1193,19 +1172,19 @@ def grant_permission(role_id: UUID, permission_id: UUID, request: Request,
                      resource_id: Annotated[str | None, Query(min_length=1, max_length=180)] = None,
                      actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> None:
     """授予角色单条权限（可带资源实例 ID）；已存在则幂等返回，停用权限拒绝新授权。"""
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     # 同一角色授权变更与批量更新串行化，避免并发创建重复授予。
     role = db.scalar(select(Role).where(Role.id == role_id).with_for_update())
     permission = db.scalar(select(Permission).where(Permission.id == permission_id).with_for_update())
     if not role or not permission: raise HTTPException(404, "角色或权限不存在")
-    assert_actor_can_manage_role(actor, db, role)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, role)
     if permission.status != "active": raise HTTPException(409, "停用权限不能新增角色授权")
-    if is_platform_class_role(role):
+    if RoleProvisioning.is_platform_class_role(role):
         _assert_role_permission_scope(role, [permission_id], db)
     exists = db.scalar(select(RolePermission.id).where(RolePermission.role_id == role_id, RolePermission.permission_id == permission_id, RolePermission.resource_id == resource_id))
     if exists: return
     db.add(RolePermission(role_id=role_id, permission_id=permission_id, resource_id=resource_id))
-    bump_memberships_holding_role(db, role_id)
+    AuthVersionService.bump_memberships_holding_role(db, role_id)
     audit(db, actor, request, "role.permission.grant", "role", str(role_id), {"permission": permission.code, "resource_id": resource_id}); commit_or_conflict(db)
 
 
@@ -1219,11 +1198,11 @@ def revoke_permission(
     resource_id: Annotated[str | None, Query(min_length=1, max_length=180)] = None,
 ) -> None:
     """按资源 ID 精确撤销授权；同一权限仍有其他 grant 时保留数据策略。"""
-    ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.roles.manage", detail="缺少管理权限：button.roles.manage")
     role = db.scalar(select(Role).where(Role.id == role_id).with_for_update())
     permission = db.get(Permission, permission_id)
     if not role or not permission: raise HTTPException(404, "角色或权限不存在")
-    assert_actor_can_manage_role(actor, db, role)
+    ActorVisibility.assert_actor_can_manage_role(actor, db, role)
     result = db.execute(delete(RolePermission).where(RolePermission.role_id == role_id,
                                                      RolePermission.permission_id == permission_id,
                                                      RolePermission.resource_id == resource_id))
@@ -1239,7 +1218,7 @@ def revoke_permission(
                 RoleDataScope.role_id == role_id,
                 RoleDataScope.permission_id == permission_id,
             )).rowcount or 0
-        bump_memberships_holding_role(db, role_id)
+        AuthVersionService.bump_memberships_holding_role(db, role_id)
         audit(db, actor, request, "role.permission.revoke", "role", str(role_id), {
             "permission": permission.code,
             "resource_id": resource_id,

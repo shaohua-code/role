@@ -216,7 +216,7 @@ class OIDCConsentIntegrationTests(unittest.TestCase):
         self.assertEqual(current_user(access_bearer, self.db).id, self.user.id)
         self.assertEqual(decode_oidc_jwt(raw_access)["membership_version"], 1)
 
-        with patch("app.api.v1.admin.organizations.require_organization_admin_access"):
+        with patch("app.services.admin_authorization.AdminAccessGuard.require_organization_admin_access"):
             set_user_membership_status(
                 self.user.id, self.tenant.id,
                 MembershipStatusUpdate(expected_status="active", status="disabled"),
@@ -437,6 +437,95 @@ class OIDCConsentIntegrationTests(unittest.TestCase):
             "query_string": b"", "headers": [(b"content-type", b"application/x-www-form-urlencoded")],
             "client": ("127.0.0.1", 51235), "server": ("localhost", 8000),
         }, receive=receive)
+
+    # ── ROPC 密码授权（grant_type=password，仅 trusted 客户端） ──────────────
+
+    def password_grant_request(self, username: str, password: str, *, trusted: bool,
+                               scope: str = "openid profile email offline_access") -> tuple[Request, str]:
+        """构造带 client_secret_basic 的密码授权 token 请求；trusted 按用例覆盖。
+
+        返回 (request, basic_header)——token() 的 authorization 是显式参数，
+        与 Header(default=None) 签名对齐。
+        """
+        self.app.trusted = trusted
+        self.db.flush()
+        basic = f"Basic {base64.b64encode(f'{self.client_id}:{self.client_secret}'.encode()).decode()}"
+        body = urlencode({"grant_type": "password", "username": username,
+                          "password": password, "scope": scope}).encode()
+        path = "/api/v1/oidc/token"
+        sent = False
+
+        async def receive():
+            nonlocal sent
+            if sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request({
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1", "method": "POST", "scheme": "http",
+            "path": path, "raw_path": path.encode(), "root_path": "",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/x-www-form-urlencoded")],
+            "client": ("127.0.0.1", 51236), "server": ("localhost", 8000),
+        }, receive=receive)
+        return request, basic
+
+    def _run_password_grant(self, username: str, password: str, *, trusted: bool,
+                            scope: str = "openid profile email offline_access") -> Response:
+        request, basic = self.password_grant_request(username, password, trusted=trusted, scope=scope)
+        return asyncio.run(token(request, basic, self.db))
+
+    def test_password_grant_issues_tokens_for_trusted_client(self) -> None:
+        """trusted 客户端 + 正确密码 → 与授权码兑换同构的 token 三件套。"""
+        self.user.password_hash = hash_password("Correct-Horse-1")
+        self.db.flush()
+        response = self._run_password_grant(self.user.email, "Correct-Horse-1", trusted=True)
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertIn("refresh_token", payload)
+        claims = decode_oidc_jwt(payload["access_token"])
+        self.assertEqual(claims["sub"], str(self.user.id))
+        self.assertEqual(claims["tenant_id"], str(self.tenant_id))
+        self.assertEqual(claims["aud"], self.client_id)
+        self.assertIn("offline_access", claims["scope"])
+        id_claims = decode_oidc_jwt(payload["id_token"])
+        self.assertEqual(id_claims["email"], self.user.email)
+
+    def test_password_grant_rejected_for_untrusted_client(self) -> None:
+        """非 trusted 客户端不得使用密码授权——受控扩展只开放给明确信任的应用。"""
+        self.user.password_hash = hash_password("Correct-Horse-1")
+        self.db.flush()
+        response = self._run_password_grant(self.user.email, "Correct-Horse-1", trusted=False)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"], "unauthorized_client")
+
+    def test_password_grant_rejects_wrong_password(self) -> None:
+        self.user.password_hash = hash_password("Correct-Horse-1")
+        self.db.flush()
+        response = self._run_password_grant(self.user.email, "wrong-password", trusted=True)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"], "invalid_grant")
+
+    def test_password_grant_requires_active_tenant_role(self) -> None:
+        """密码正确但无应用租户有效角色 → 与 SSO 入场同口径拒绝。"""
+        self.user.password_hash = hash_password("Correct-Horse-1")
+        binding = self.db.scalar(select(RoleBinding).where(RoleBinding.membership_id == self.membership_id))
+        self.db.delete(binding)
+        self.db.flush()
+        response = self._run_password_grant(self.user.email, "Correct-Horse-1", trusted=True)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"], "invalid_grant")
+
+    def test_password_grant_rejects_scope_expansion(self) -> None:
+        """scope 白名单硬编码：密码授权无同意页，不允许客户端自扩。"""
+        self.user.password_hash = hash_password("Correct-Horse-1")
+        self.db.flush()
+        response = self._run_password_grant(self.user.email, "Correct-Horse-1", trusted=True,
+                                            scope="openid admin")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(json.loads(response.body)["error"], "invalid_scope")
 
 
 if __name__ == "__main__":

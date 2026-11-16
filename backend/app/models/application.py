@@ -47,7 +47,7 @@ class Application(Base):
     # OIDC Back-Channel Logout 1.0（G19）：会话撤销时向该 URI 推送签名 logout_token；
     # 留空表示该应用未接入单点登出联动。
     backchannel_logout_uri: Mapped[str | None] = mapped_column(String(500))
-    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

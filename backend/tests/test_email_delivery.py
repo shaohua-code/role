@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.services.email import EmailDeliveryNotConfigured, send_password_reset_email
+from app.services.email import EmailDeliveryNotConfigured, EmailSender
 
 
 class PasswordResetEmailTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class PasswordResetEmailTests(unittest.TestCase):
         with patch("app.services.email.get_settings", return_value=settings), \
                 patch("app.services.email.SMTP") as smtp_factory:
             client = smtp_factory.return_value.__enter__.return_value
-            send_password_reset_email("person@example.test", "opaque-reset-token")
+            EmailSender.send_password_reset_email("person@example.test", "opaque-reset-token")
 
         client.starttls.assert_called_once()
         client.login.assert_called_once_with("iam", "secret")
@@ -32,7 +32,7 @@ class PasswordResetEmailTests(unittest.TestCase):
         settings = SimpleNamespace(smtp_host=None, smtp_from=None)
         with patch("app.services.email.get_settings", return_value=settings):
             with self.assertRaises(EmailDeliveryNotConfigured):
-                send_password_reset_email("person@example.test", "opaque-reset-token")
+                EmailSender.send_password_reset_email("person@example.test", "opaque-reset-token")
 
 
 if __name__ == "__main__":

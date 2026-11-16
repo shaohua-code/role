@@ -461,6 +461,15 @@ html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-arrow {
 
 
 /* —— Management shell (token-driven) —— */
+/* 按钮内图标垂直居中：antd-vue 4.2 的 .ant-btn 是 inline-block + line-height 撑高（React antd v5
+   已改 inline-flex），其 .anticon 自带 vertical-align:-0.125em 基线偏移，图标+文字混排时图标
+   下沉约 2px（截图实测）。flex 化后子项脱离行内排版，vertical-align 失效，图标自然居中；
+   图标-文字间距仍由 antd 自带 `> .anticon + span` margin 规则提供。 */
+.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .mgmt-shell-header {
   height: var(--header-height) !important;
   line-height: var(--header-height) !important;

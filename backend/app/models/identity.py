@@ -25,7 +25,7 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(80), unique=True, index=True, nullable=False)
     # ToC 自助注册只允许显式标记为消费租户的登录域。
     kind: Mapped[str] = mapped_column(String(20), default="organization", server_default="organization", nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -50,7 +50,7 @@ class User(Base):
     # 只保存密码哈希。API 永远不回传这个字段，审计日志也不得记录它。
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
     # 修改密码后递增；在线认证服务据此立即拒绝此前签发的 access token。
     auth_version: Mapped[int] = mapped_column(default=1, nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -249,7 +249,7 @@ class TenantMembership(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
     # 取值 active/disabled/departed；departed 表示成员已离开租户，保留历史记录。
-    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
     # 租户成员状态版本仅撤销这一 tenant 的旧 OIDC 凭证，不会注销同一全局身份的其他产品会话。
     auth_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

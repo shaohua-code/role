@@ -19,10 +19,12 @@ import {
   TenantAccessManagement,
   TenantManagement,
   UserManagement,
+  ProfilePage,
 } from '@/router/loaders'
 
 export const PAGE_COMPONENTS: Partial<Record<PageKey, Component>> = {
   overview: OverviewPage,
+  profile: ProfilePage,
   organization_workspace: OrganizationWorkspace,
   users: UserManagement,
   groups: GroupManagement,

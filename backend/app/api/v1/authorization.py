@@ -12,8 +12,8 @@ from app.models.application import Application
 from app.models.application_resource import ApplicationResource, RoleApplicationResource
 from app.models.identity import TenantMembership, User
 from app.schemas.access_control import AuthorizationCheck, AuthorizationCheckBatch
-from app.services.authorization import evaluate_access
-from app.services.effective_roles import list_effective_roles
+from app.services.authorization import AuthorizationEvaluator
+from app.services.effective_roles import EffectiveRoleResolver
 
 router = APIRouter(prefix="/authorization", tags=["授权判定"])
 
@@ -29,7 +29,7 @@ def _public_decision(decision: dict, user: User) -> dict:
 def check_access(body: AuthorizationCheck, user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """租户 ID 必须与当前用户真实成员关系匹配；调用方传来的租户仅是查找条件，不构成信任依据。"""
     # 业务 API 契约只回传判定和数据条件，不暴露管理模拟使用的内部解释明细。
-    decision = evaluate_access(body, user, db)["decision"]
+    decision = AuthorizationEvaluator.evaluate_access(body, user, db)["decision"]
     # 用量上报需要稳定的应用 UUID；只把服务端验签 OIDC 上下文回给已允许的服务端调用方。
     # 不能把请求体中的 application_id 回显成可信身份，也不向拒绝结果附带主体信息。
     return _public_decision(decision, user)
@@ -46,7 +46,7 @@ def check_access_batch(body: AuthorizationCheckBatch, user: User = Depends(curre
             permission_code=code, resource_id=body.resource_id,
             include_data_scope=body.include_data_scope,
         )
-        results[code] = _public_decision(evaluate_access(check, user, db)["decision"], user)
+        results[code] = _public_decision(AuthorizationEvaluator.evaluate_access(check, user, db)["decision"], user)
     return {"results": results}
 
 
@@ -68,7 +68,7 @@ def list_my_resources(client_id: str, user: User = Depends(current_user), db: Se
     # 逐成员累计有效角色的资源授权并集；租户级角色无资源行，天然为空不影响结果。
     granted_ids: set[UUID] = set()
     for membership in memberships:
-        roles = list_effective_roles(
+        roles = EffectiveRoleResolver.list_effective_roles(
             db, membership_id=membership.id, tenant_id=membership.tenant_id,
             application_id=application.id,
         )

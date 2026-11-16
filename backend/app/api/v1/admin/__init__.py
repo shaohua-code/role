@@ -1,4 +1,4 @@
-"""平台管理 API 路由聚合器。入口只做认证；授权由各路由按角色门禁（ensure_roles）校验。"""
+"""平台管理 API 路由聚合器。入口只做认证；授权由各路由按角色门禁（PermissionEnforcer.ensure_roles）校验。"""
 
 from fastapi import APIRouter, Depends
 
@@ -19,7 +19,7 @@ from app.api.v1.admin.users import router as users_router
 from app.core.security import current_user
 
 # 绿场改造：废除路由级 platform_admin 一刀切；子路由默认仅认证，
-# 必须在 handler 内用 rbac_guards.ensure_roles 授权（敏感写可另做码级双检）。
+# 必须在 handler 内用 rbac_guards.PermissionEnforcer.ensure_roles 授权（敏感写可另做码级双检）。
 router = APIRouter(prefix="/admin", tags=["平台管理"], dependencies=[Depends(current_user)])
 
 for domain_router in (

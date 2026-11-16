@@ -11,3 +11,4 @@ secure-backups/
 __pycache__/
 *.py[cod]
 *.tsbuildinfo
+.ruff_cache/

@@ -19,17 +19,8 @@ from app.schemas.groups import (
     UserGroupRolesUpdate,
     UserGroupUpdate,
 )
-from app.services.permission_kinds import effective_role_scope_label
-from app.services.rbac_guards import (
-    ROLE_SCOPE_RANK,
-    bump_membership_versions,
-    effective_role_scope,
-    ensure_codes,
-    ensure_roles,
-    ensure_scope,
-    list_actor_management_tenant_ids,
-    operator_scope,
-)
+from app.services.permission_kinds import ROLE_SCOPE_RANK, PermissionCatalog
+from app.services.rbac_guards import ActorVisibility, AuthVersionService, PermissionEnforcer
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(prefix="/groups", tags=["用户组管理"])
@@ -70,7 +61,7 @@ def _validate_parent_group(db: Session, group: UserGroup | None, tenant_id: UUID
 def list_user_groups(tenant_id: UUID | None = None, actor: User = Depends(current_user),
                      db: Session = Depends(get_db_session)) -> list[dict]:
     """列出租户用户组和组成员/角色数量；两类关联数通过聚合查询避免逐行访问数据库。"""
-    ensure_codes(actor, db, "menu.groups", tenant_id=tenant_id, detail="缺少管理权限：menu.groups")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.groups", tenant_id=tenant_id, detail="缺少管理权限：menu.groups")
     member_counts = (select(UserGroupMembership.group_id.label("group_id"),
                              func.count(UserGroupMembership.membership_id).label("member_count"))
                      .group_by(UserGroupMembership.group_id).subquery())
@@ -83,7 +74,7 @@ def list_user_groups(tenant_id: UUID | None = None, actor: User = Depends(curren
                  .outerjoin(role_counts, role_counts.c.group_id == UserGroup.id)
                  .order_by(UserGroup.created_at.desc()).limit(500))
     # 数据边界（P1-3）：超管全域；非超管无论是否传 tenant_id 都收敛到自身管理租户。
-    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     if tenant_scope is not None:
         allowed = tenant_scope if tenant_id is None else tenant_scope & {tenant_id}
         if not allowed:
@@ -102,7 +93,7 @@ def list_user_groups(tenant_id: UUID | None = None, actor: User = Depends(curren
 def create_user_group(body: UserGroupCreate, request: Request,
                       actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """创建租户内用户组，唯一键冲突统一走受控的 409 响应。"""
-    ensure_codes(actor, db, "button.groups.manage", tenant_id=body.tenant_id, detail="缺少管理权限：button.groups.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.groups.manage", tenant_id=body.tenant_id, detail="缺少管理权限：button.groups.manage")
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant:
         raise HTTPException(404, "租户不存在")
@@ -133,7 +124,7 @@ def update_user_group(group_id: UUID, body: UserGroupUpdate, request: Request,
     row = db.get(UserGroup, group_id)
     if not row:
         raise HTTPException(404, "用户组不存在")
-    ensure_codes(actor, db, "button.groups.manage", tenant_id=row.tenant_id, detail="缺少管理权限：button.groups.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.groups.manage", tenant_id=row.tenant_id, detail="缺少管理权限：button.groups.manage")
     changes = body.model_dump(exclude_unset=True)
     # G24 组嵌套：变更父组需同租户、启用且不成环。
     if "parent_group_id" in changes:
@@ -163,11 +154,11 @@ def set_user_group_status(group_id: UUID, status: str, request: Request,
     row = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not row:
         raise HTTPException(404, "用户组不存在")
-    ensure_codes(actor, db, "button.groups.manage", tenant_id=row.tenant_id, detail="缺少管理权限：button.groups.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.groups.manage", tenant_id=row.tenant_id, detail="缺少管理权限：button.groups.manage")
     if row.status != status:
         row.status = status
         # 组启停改变成员有效角色，bump 让组内成员旧 OIDC 凭证立即失效。
-        bump_membership_versions(db, _group_member_membership_ids(db, row))
+        AuthVersionService.bump_membership_versions(db, _group_member_membership_ids(db, row))
         audit(db, actor, request, "user_group.status.change", "user_group", str(row.id),
               {"tenant_id": str(row.tenant_id), "status": status})
         commit_or_conflict(db)
@@ -181,9 +172,9 @@ def delete_user_group(group_id: UUID, request: Request,
     group = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_codes(actor, db, "button.groups.manage", tenant_id=group.tenant_id, detail="缺少管理权限：button.groups.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.groups.manage", tenant_id=group.tenant_id, detail="缺少管理权限：button.groups.manage")
     # 组删除改变成员有效角色：先对组内成员统一 bump，再级联删除两张关联表。
-    bump_membership_versions(db, _group_member_membership_ids(db, group))
+    AuthVersionService.bump_membership_versions(db, _group_member_membership_ids(db, group))
     audit(db, actor, request, "user_group.delete", "user_group", str(group.id),
           {"tenant_id": str(group.tenant_id), "key": group.key, "name": group.name})
     db.delete(group)
@@ -197,7 +188,7 @@ def list_user_group_members(group_id: UUID, actor: User = Depends(current_user),
     group = db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_codes(actor, db, "menu.groups", tenant_id=group.tenant_id, detail="缺少管理权限：menu.groups")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.groups", tenant_id=group.tenant_id, detail="缺少管理权限：menu.groups")
     assigned_ids = set(db.scalars(select(UserGroupMembership.membership_id).where(
         UserGroupMembership.group_id == group.id,
         UserGroupMembership.tenant_id == group.tenant_id,
@@ -218,7 +209,7 @@ def replace_user_group_members(group_id: UUID, body: UserGroupMembersUpdate, req
     group = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_codes(actor, db, "button.groups.manage", tenant_id=group.tenant_id, detail="缺少管理权限：button.groups.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.groups.manage", tenant_id=group.tenant_id, detail="缺少管理权限：button.groups.manage")
     requested_ids = set(body.user_ids)
     memberships = db.scalars(select(TenantMembership).where(
         TenantMembership.tenant_id == group.tenant_id,
@@ -242,7 +233,7 @@ def replace_user_group_members(group_id: UUID, body: UserGroupMembersUpdate, req
                                         tenant_id=group.tenant_id)
                     for membership in memberships])
         # 成员进出组立即改变有效角色：对进出集合的并集统一 bump。
-        bump_membership_versions(db, current_ids | next_ids)
+        AuthVersionService.bump_membership_versions(db, current_ids | next_ids)
         audit(db, actor, request, "user_group.members.replace", "user_group", str(group.id),
               {"tenant_id": str(group.tenant_id), "member_count": len(memberships)})
         commit_or_conflict(db)
@@ -256,23 +247,23 @@ def list_user_group_roles(group_id: UUID, actor: User = Depends(current_user),
     group = db.get(UserGroup, group_id)
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_codes(actor, db, "menu.groups", tenant_id=group.tenant_id, detail="缺少管理权限：menu.groups")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.groups", tenant_id=group.tenant_id, detail="缺少管理权限：menu.groups")
     assigned_ids = set(db.scalars(select(UserGroupRole.role_id).where(
         UserGroupRole.group_id == group.id, UserGroupRole.tenant_id == group.tenant_id,
     )).all())
     roles = db.scalars(select(Role).where(Role.tenant_id == group.tenant_id)
                        .order_by(Role.name, Role.key).limit(500)).all()
     # 范围只能向下：仅保留范围秩 ≤ 操作者范围秩的角色，防止借组角色渠道看见越秩角色；
-    # 存量 scope 为 NULL 的行由 effective_role_scope 按模板 key/钉应用推导后同样参与秩比较。
-    actor_rank = ROLE_SCOPE_RANK[operator_scope(actor, db)]
+    # 存量 scope 为 NULL 的行由 ActorVisibility.effective_role_scope 按模板 key/钉应用推导后同样参与秩比较。
+    actor_rank = ROLE_SCOPE_RANK[ActorVisibility.operator_scope(actor, db)]
     # 候选带 scope/scope_label：让管理员直观看到范围层级（可绑角色恒 ≤ 操作者范围）。
     return [{"id": str(role.id), "key": role.key, "name": role.name,
              "status": role.status, "application_id": str(role.application_id) if role.application_id else None,
-             "scope": effective_role_scope(role),
-             "scope_label": effective_role_scope_label(role),
+             "scope": ActorVisibility.effective_role_scope(role),
+             "scope_label": PermissionCatalog.effective_role_scope_label(role),
              "assigned": role.id in assigned_ids}
             for role in roles
-            if ROLE_SCOPE_RANK.get(effective_role_scope(role), 0) <= actor_rank]
+            if ROLE_SCOPE_RANK.get(ActorVisibility.effective_role_scope(role), 0) <= actor_rank]
 
 
 @router.put("/{group_id}/roles")
@@ -282,7 +273,7 @@ def replace_user_group_roles(group_id: UUID, body: UserGroupRolesUpdate, request
     group = db.scalar(select(UserGroup).where(UserGroup.id == group_id).with_for_update())
     if not group:
         raise HTTPException(404, "用户组不存在")
-    ensure_codes(actor, db, "button.groups.manage", tenant_id=group.tenant_id, detail="缺少管理权限：button.groups.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.groups.manage", tenant_id=group.tenant_id, detail="缺少管理权限：button.groups.manage")
     requested_ids = set(body.role_ids)
     roles = db.scalars(select(Role).where(
         Role.tenant_id == group.tenant_id,
@@ -293,8 +284,8 @@ def replace_user_group_roles(group_id: UUID, body: UserGroupRolesUpdate, request
     # 范围只能向下：与 users.py 绑定角色同口径，逐角色校验操作者范围秩 ≥ 角色范围秩，
     # 越秩抛 403 且事务不写入，堵住经用户组挂角色渠道的提权缺口。
     for role in roles:
-        ensure_scope(actor, db, effective_role_scope(role),
-                     detail="不能绑定高于自己授权范围的角色")
+        PermissionEnforcer.ensure_scope(actor, db, ActorVisibility.effective_role_scope(role),
+                                        detail="不能绑定高于自己授权范围的角色")
     current_ids = set(db.scalars(select(UserGroupRole.role_id).where(
         UserGroupRole.group_id == group.id, UserGroupRole.tenant_id == group.tenant_id,
     )).all())
@@ -305,7 +296,7 @@ def replace_user_group_roles(group_id: UUID, body: UserGroupRolesUpdate, request
         db.add_all([UserGroupRole(group_id=group.id, role_id=role.id, tenant_id=group.tenant_id)
                     for role in roles])
         # 组角色替换影响全部组内成员的有效角色，统一 bump。
-        bump_membership_versions(db, _group_member_membership_ids(db, group))
+        AuthVersionService.bump_membership_versions(db, _group_member_membership_ids(db, group))
         audit(db, actor, request, "user_group.roles.replace", "user_group", str(group.id),
               {"tenant_id": str(group.tenant_id), "role_count": len(requested_ids)})
         commit_or_conflict(db)

@@ -20,7 +20,7 @@ from app.models import (  # noqa: F401 - import all mappings before creating the
     UserGroupMembership,
     UserGroupRole,
 )
-from app.services.permission_impact import preview_role_permissions
+from app.services.permission_impact import PermissionImpactService
 
 
 class PermissionImpactTests(unittest.TestCase):
@@ -84,7 +84,7 @@ class PermissionImpactTests(unittest.TestCase):
         ])
         self.db.flush()
 
-        impact = preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
+        impact = PermissionImpactService.preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
 
         self.assertEqual(impact["bound_active_members"], 2)
         self.assertEqual(impact["potentially_affected_members"], 1)
@@ -111,7 +111,7 @@ class PermissionImpactTests(unittest.TestCase):
         ])
         self.db.flush()
 
-        impact = preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
+        impact = PermissionImpactService.preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
 
         self.assertEqual(impact["bound_active_members"], 1)
         self.assertEqual(impact["potentially_affected_members"], 1)
@@ -131,7 +131,7 @@ class PermissionImpactTests(unittest.TestCase):
         ])
         self.db.flush()
 
-        impact = preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
+        impact = PermissionImpactService.preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
         self.assertEqual(impact["bound_active_members"], 0)
         self.assertEqual(impact["potentially_affected_members"], 0)
 
@@ -160,7 +160,7 @@ class PermissionImpactTests(unittest.TestCase):
         ])
         self.db.flush()
 
-        impact = preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
+        impact = PermissionImpactService.preview_role_permissions(self.target_role.id, [self.permission.id], self.db)
 
         self.assertEqual(impact["permission_impacts"][0]["covered_by_other_general_roles"], 0)
         self.assertEqual(impact["permission_impacts"][0]["potentially_affected_members"], 1)

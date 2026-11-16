@@ -30,7 +30,7 @@ class ModelCatalog(Base):
     # 每百万 token 的输入/输出单价，供网关侧费用估算。
     input_cost_per_million: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     output_cost_per_million: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
-    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -559,7 +559,10 @@ watch([
       :subtitle="view === 'catalog' ? '维护租户模型目录、外部凭证引用、价格与调用限额。' : '查看可信网关报告的请求量、Token 消耗和费用估算。可按模型、结果和 UTC 日期筛选。'"
     >
       <template #extra>
-        <a-button v-if="view === 'catalog' && canManageModels" type="primary" :disabled="!tenants.length" @click="createModel"><PlusOutlined class="mr-1" />新建模型</a-button>
+        <a-button v-if="view === 'catalog' && canManageModels" type="primary" :disabled="!tenants.length" @click="createModel">
+          <template #icon><PlusOutlined /></template>
+          新建模型
+        </a-button>
       </template>
     </AdminPageHeader>
 

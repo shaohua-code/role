@@ -20,7 +20,7 @@ from app.core.security import current_user
 from app.db.session import get_db_session
 from app.models.application import Application
 from app.models.identity import User
-from app.services.rbac_guards import ensure_codes, ensure_roles
+from app.services.rbac_guards import PermissionEnforcer
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS
 
 ALLOWED_CONTENT_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
@@ -47,7 +47,7 @@ async def upload_theme_asset(request: Request, application_id: UUID,
     application = db.get(Application, application_id)
     if not application:
         raise HTTPException(404, "应用不存在")
-    ensure_codes(actor, db, "button.themes.manage", tenant_id=application.tenant_id, application_id=application.id, detail="缺少管理权限：button.themes.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.themes.manage", tenant_id=application.tenant_id, application_id=application.id, detail="缺少管理权限：button.themes.manage")
     settings = get_settings()
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     extension = ALLOWED_CONTENT_TYPES.get(content_type)

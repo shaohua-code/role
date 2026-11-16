@@ -16,10 +16,7 @@ from app.db.base import Base
 from app.db.seed_greenfield import seed_permissions
 from app.models.application import Application
 from app.models.identity import Tenant, User
-from app.services.admin_authorization import (
-    has_application_admin_access,
-    list_readable_application_capabilities,
-)
+from app.services.admin_authorization import AdminAccessGuard
 from app.services.role_provisioning import L2_ROLE_KEY, L3_ROLE_KEY
 from tests.greenfield_fixture import make_tenant_role_binding
 
@@ -83,16 +80,16 @@ class ApplicationAdminAccessTests(unittest.TestCase):
             self.db, tenant_id=self.tenant.id, actor=l3,
             role_key=L3_ROLE_KEY, role_name="租户管理员",
         )
-        self.assertTrue(has_application_admin_access(l3, self.tenant.id, self.db, manage=True))
-        self.assertTrue(has_application_admin_access(
+        self.assertTrue(AdminAccessGuard.has_application_admin_access(l3, self.tenant.id, self.db, manage=True))
+        self.assertTrue(AdminAccessGuard.has_application_admin_access(
             l3, self.tenant.id, self.db, manage=True, application_id=self.app_a.id,
         ))
-        self.assertTrue(has_application_admin_access(
+        self.assertTrue(AdminAccessGuard.has_application_admin_access(
             l3, self.tenant.id, self.db, manage=True, application_id=self.app_b.id,
         ))
         # 跨租户边界按成员身份收口：L3 无他租户成员身份 → 他租户应用不可读。
-        self.assertEqual(list_readable_application_capabilities(l3, self.other_tenant.id, self.db), {})
-        caps = list_readable_application_capabilities(l3, self.tenant.id, self.db)
+        self.assertEqual(AdminAccessGuard.list_readable_application_capabilities(l3, self.other_tenant.id, self.db), {})
+        caps = AdminAccessGuard.list_readable_application_capabilities(l3, self.tenant.id, self.db)
         self.assertEqual(set(caps), {self.app_a.id, self.app_b.id})
         self.assertTrue(caps[self.app_a.id]["can_manage"])
         self.assertTrue(caps[self.app_b.id]["can_manage"])
@@ -110,16 +107,16 @@ class ApplicationAdminAccessTests(unittest.TestCase):
                 self._node("button.apps.secret").id,
             ],
         )
-        self.assertTrue(has_application_admin_access(
+        self.assertTrue(AdminAccessGuard.has_application_admin_access(
             l2, self.tenant.id, self.db, manage=True, application_id=self.app_a.id,
         ))
-        self.assertFalse(has_application_admin_access(
+        self.assertFalse(AdminAccessGuard.has_application_admin_access(
             l2, self.tenant.id, self.db, manage=True, application_id=self.app_b.id,
         ))
         # P404：未指定应用视为创建入口，应用级不能向上。
-        self.assertFalse(has_application_admin_access(l2, self.tenant.id, self.db, manage=True))
+        self.assertFalse(AdminAccessGuard.has_application_admin_access(l2, self.tenant.id, self.db, manage=True))
         # 可读能力清单只含钉住的应用。
-        caps = list_readable_application_capabilities(l2, self.tenant.id, self.db)
+        caps = AdminAccessGuard.list_readable_application_capabilities(l2, self.tenant.id, self.db)
         self.assertEqual(set(caps), {self.app_a.id})
         self.assertTrue(caps[self.app_a.id]["can_manage"])
 
@@ -130,10 +127,10 @@ class ApplicationAdminAccessTests(unittest.TestCase):
             role_key="app.member", role_name="应用成员",
             application_id=self.app_a.id,
         )
-        self.assertFalse(has_application_admin_access(
+        self.assertFalse(AdminAccessGuard.has_application_admin_access(
             member, self.tenant.id, self.db, manage=True, application_id=self.app_a.id,
         ))
-        self.assertEqual(list_readable_application_capabilities(member, self.tenant.id, self.db), {})
+        self.assertEqual(AdminAccessGuard.list_readable_application_capabilities(member, self.tenant.id, self.db), {})
 
 
 if __name__ == "__main__":

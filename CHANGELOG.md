@@ -1,4 +1,113 @@
-#﻿# 变更日志
+#﻿##﻿# 变更日志
+
+## 2026-11-16 全仓深度梳理：死代码清理 + 迁移 0008 + 后端服务层深度类化（368/368 全绿 + 前端四项 PASS）
+
+用户要求「深度检查整个项目与数据库表设计、清掉没用的前后端代码与文件、梳理成正常项目、面向对象改造、改造完回归」。三轮执行：清理 → 数据库 → OOP 类化，每轮独立回归。
+
+- **清理（纯删除，零行为变化）：** 删 `_agent_dump/`（71 个 agent 残留文件）、`frontend/_ui_patch_charts.py`、`11-menu-role-relation.md`、`docs/PRD-个人信息页.md`、`docs/prototypes/`（3 个已交付功能的历史原型 HTML）；删前端死代码 `views/_archive/` 全目录（13 文件）与传递性死文件 `utils/permissionGroups.ts`、`applications/ApplicationPermissionDrawer.vue`、孤儿 `components/AdminStatBand.vue` + `components/index.ts` barrel（零 `from '@/components'` 引用，组件均走直接路径导入）；删后端死代码 `rbac_guards.require_roles`（零调用）、`permission_kinds.build_permission_tree` 单数版（零调用）、`__getattr__/SENSITIVE_API_CODES` 兼容层及其自指测试、`tests/_debug_effective.py` + `_run*.txt/_fails1.txt`（7 个测试日志）、全仓 `__pycache__`/`tsbuildinfo`；package.json 移除零引用依赖 `@vue/devtools-api`（host pnpm 损坏，经 `npx pnpm@12.6.0 install --lockfile-only` 对齐 lockfile，Dockerfile `--frozen-lockfile` 构建不受影响）；.gitignore 补 `.ruff_cache/`。审计误报两处已核实保留：`TenantCreate/TenantKindUpdate/ThemeUpdate/AuthorizationSimulation` schema 均在用，`AdminDetailDrawer.vue` 被租户页使用。
+- **数据库（迁移 0008，已授权执行）：** 表设计审查实测推翻两项审计——`role_bindings.role_id` 已有索引、`role_permissions` 唯一约束属投机加固（写入路径 delete+insert 已保证幂等）且存在存量数据依赖风险，均撤销；实际落地为 8 张表（tenants/users/tenant_memberships/roles/applications/user_groups/organizations/model_catalog）status 列补 `server_default='active'`（原仅 Python 侧 default，裸 SQL 写入会非空违规）。前置受保护备份 `backups/iam-postgres-20261116T062825Z-59bd81af.dump`（SHA-256 sidecar 在案），开发库 `0007 → 0008_status_server_default` 已应用并验证 information_schema 默认值生效；**迁移 head 现为 0008**。
+- **后端深度类化（13 模块 → 15 服务类，全程静态方法、签名与行为零变化）：** effective_roles→`EffectiveRoleResolver`；rbac_guards 拆三类 `PermissionEnforcer`（判权门禁）/`ActorVisibility`（可见性与数据边界）/`AuthVersionService`（凭证版本联动），`SENSITIVE_NODE_CODES` 保留模块层；role_provisioning→`RoleProvisioning`；permission_kinds→`PermissionCatalog`；admin_authorization→`AdminAccessGuard`；authorization→`AuthorizationEvaluator`；permission_impact→`PermissionImpactService`；public_registration→`RegistrationFlow`；login_throttle→`LoginThrottleService`；email→`EmailSender`；backchannel_logout→`BackchannelLogoutService`；maintenance→`CredentialMaintenanceService`；access_log_redaction→`AccessLogRedaction`+`AccessLogRedactionInstaller`。常量/异常/数据类保留模块层；`permission_namespace.py` 有意保持函数式（被 models 模块导入期引用，类化零收益）。调用方全量更新：app 层 33 文件 + 测试 17 文件，约 200+ 处；`mock.patch` 目标同步迁到类路径（`patch("app.services.rbac_guards.user_is_platform_admin")` → `app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin` 等）。
+- **回归（全部实际运行）：** 基线（清理+迁移后）隔离 PG 套件 368/368 OK（98.8s，历史 6 个陈旧失败已消失）；Wave A 类化后修复 2 处代理误替换（groups.py 漏 import AuthVersionService、test_role_guards 测试方法名被误改）后 368/368 OK；Wave B 类化后修复 5 类失效 patch 目标（patch 路由模块上的旧函数名 → 服务类属性）后 368/368 OK；后端全模块导入冒烟 59 模块 OK。前端 `vue-tsc -b` + `vite build` + `eslint --max-warnings 0` + `smoke-nav`（19 pageKeys）全 PASS。api/console 容器重启加载新代码，healthcheck（/ready 探针）healthy。
+- **注意（后续会话必读）：** 服务层调用一律类限定（如 `PermissionEnforcer.ensure_codes(...)`），禁止再 from-import 裸函数；新增 mock 时 patch 类属性路径。host 无 python/pnpm 损坏的事实不变；`docker.exe` 需显式 `-DockerPath` 传入备份脚本。
+
+## 2026-11-16 回调白名单放行开关：IAM_ALLOW_INSECURE_REDIRECT_URIS 支持内网 HTTP 回调（后端 4 测试 PASS + build PASS）
+
+用户问「为什么只允许 HTTPS，想要 HTTP 也支持」。原限制是安全默认：OAuth 授权码经浏览器 URL 回传，非 localhost 的 HTTP 明文传输存在中间人截获风险。按「默认拒绝 + 运维显式放行」原则落地为配置开关，不直接放开。
+
+- **后端（3 文件改 + 1 测试新建）：** ① config.py 新增 `allow_insecure_redirect_uris`（默认 false）；② admin/common.py 新增 `valid_login_redirect_uri`——默认与 `valid_redirect_uri` 同口径（HTTPS 或 localhost/127.0.0.1 HTTP），开关开启后放行任意 http 回调；fragment / userinfo（凭据注入）形态任何开关下都拒绝；③ applications.py 创建应用（登录+登出回调）换用新函数，422 文案给出可操作的开关提示；**Back-Channel Logout（:250）与模型网关 endpoint（models.py）保持 valid_redirect_uri 不受开关影响**——服务端间传输 id_token / 计量凭证，明文风险更高。回调白名单创建后只读（ApplicationUpdate 契约无 redirect_uris），仅创建入口需覆盖。
+- **前端（2 文件）：** CreateApplicationModal 的 isSafeRedirectUri 预校验放宽为 http(s) + 禁凭据/片段（开关状态仅服务端可知，最终判定交服务端，422 文案可操作）；警告文案同步；integration-guide/guideContent.ts 对接指南契约文案同步。
+- **部署与文档：** .env.compose.example 补开关示例与安全注释；产品需求 §6.2 / §6.3 同步开关口径与服务端间地址的 HTTPS 边界。
+- **测试与验证：** tests/test_redirect_uri_policy.py 4 用例 PASS（默认拒内网 HTTP / 开关仅放行 http / fragment+userinfo+无 scheme 恒拒 / 服务端间地址不读开关）；连同 test_auth_profile 3 用例共 7 测试全绿；前端 `npm run build` PASS。ruff 对改动文件报告 3 处 **存量** E701/E702（applications.py 104/119/122 行同行分号写法，非本次改动行，不扩散修复）；浏览器 UI 走查未运行。
+- **使用方式：** `.env` 加 `IAM_ALLOW_INSECURE_REDIRECT_URIS=true` 后重建 api 容器生效；随后在应用工作台即可登记 `http://<内网IP>:<端口>/callback` 形态回调。生产网络暴露面慎开。
+
+## 2026-11-13 全站图标居中修复：8 处「antd Button 内联图标+文字」混排改 #icon slot（build/lint PASS）
+
+用户截图「编辑资料」按钮图标下沉，要求深度检查全站同类问题。根因：`<a-button>` 内直接内联 `<XxxOutlined class="mr-1" />文字`——图标作为普通子节点参与 inline 基线排版导致下沉，`mr-1` 只能挤水平间距救不了垂直对齐。官方姿势是 `#icon` slot（antd 自动包 `.ant-btn-icon`，flex 居中 + 标准间距）。
+
+- **修复 8 处（同款模式全清）：** profile/index.vue 编辑资料 + 修改密码、ModelGovernancePage 新建模型、GroupManagement 新建用户组、InvitationManagement 新建邀请、RoleManagement 新建平台角色、TenantManagement 新建租户、UserManagement 新建用户——统一改 `<template #icon><XOutlined /></template>` 并去掉手工 `mr-1`。
+- **排查口径与不动项：** 全局正则扫 `<a-button>` 开头内联图标、`Outlined class="m*"` 边距混排、文字在前后两种顺序；纯图标按钮（菜单/齿轮/省略号等单节点）无基线混合在 antd flex 按钮内自然居中，不动；AuditLogPage 筛选按钮已有 flex+gap 历史修复（注释在案），不动；`_archive` 归档目录不修。
+- **验证：** `npm run build` + `npm run lint`（--max-warnings 0）PASS；浏览器视觉复验未运行（DevTools MCP 仍中断），待恢复后核对 8 个按钮图标垂直居中。
+
+## 2026-11-13 个人信息页第二轮：视觉升级 + 展示名自助编辑（PATCH /auth/me，后端 3 测试 PASS + 前端 build/lint PASS；UI 待复走查）
+
+执行用户指令「有点丑，升级个人信息页面，支持有必要的编辑」。视觉按轻奢黑白灰精修重排；编辑范围按 PRD 开放问题 1 建议口径落地为**仅展示名**（邮箱 / 手机号是登录标识，涉及验证通道与账号接管风险，仍走管理员路径，表单文案明示）。
+
+- **后端（2 文件改 + 1 测试新建）：** ① schemas/auth.py 新增 `ProfileUpdate`（display_name 1–120，与注册 / 邀请同款约束）；② api/v1/auth.py 新增 `PATCH /auth/me`——strip 后空白守卫 422、新旧值相同短路不写审计、变更写审计 `auth.profile.update`（含新旧展示名），不提升 auth_version 不撤销会话（展示名非凭证）；③ tests/test_auth_profile.py 3 用例全绿（改名 + strip + 审计详情断言 / 空白 422 零副作用 / 同名短路零审计）。改动文件借 DeerFlow venv ruff 全绿。
+- **前端（3 文件）：** ① views/profile/index.vue 整页重排——身份卡两段式（72px 方圆角石墨黑头像 + 姓名状态徽标邮箱 + 右上唯一主按钮「编辑资料」；底部 bg-subtle 信息条承载用户 ID mono 可复制 + 创建时间，消除原大片空洞留白）；原「账号信息」卡与身份卡字段完全重复故删除；双列改为「管理范围」（label/value 行 + hairline 分割）与「安全」（改密入口 + 会话撤销 / 审计说明）；有效角色行加 32px kind 图标容器锚点（平台/租户/应用三色图标映射）+ hover row-hover；空态换通用 AdminEmpty（emoji 灰阶口径）。② 编辑弹窗（a-modal + a-form：required + whitespace 校验、show-count 120、提交 PATCH、成功后本地更新 + emit profileUpdated + 关闭重置）。③ App.vue 监听 profile-updated 同步 currentUser.display_name（顶栏芯片与下拉身份卡头即时更新）。
+- **文档：** PRD §2/§4 新增 FR-03/§6 开放问题 1 闭环（已决策：做）/§7 验收标准第 7 条/§8 实施状态；产品需求 §2.1 与 §11.14 由「页面只读」修正为「除展示名自助编辑外只读」。
+- **验证：** 后端 unittest 3 用例 PASS（venv 直跑）+ ruff PASS；前端 `npm run build` + `npm run lint`（--max-warnings 0）PASS；真实环境 curl 探测 `PATCH /api/v1/auth/me` 未授权返回 401「未登录或认证服务未配置」= 路由已挂载（容器已加载新代码）。**UI 走查未运行**——Chrome DevTools MCP 连接中断未恢复；待浏览器恢复后走查：新页面视觉、编辑弹窗全流程（空白拦截 / 成功同步顶栏 / 审计事件 `auth.profile.update` 出现在审计页）。
+- **口径备注：** 编辑仅展示名是有意的安全边界——邮箱 / 手机号是登录标识；若将来开放须带 OTP 验证通道并重新评审。
+
+## 2026-11-13 浏览器走查「个人信息页 + 顶栏菜单」：发现并修复 2 个真 bug + Esc 加固（深链/注册时机，build/lint PASS；深色与 375 视口待复验）
+
+用户启动本地环境（8002/5175）后浏览器实机走查。发现「进不了个人信息页」，逐层定位出两个真 bug 并当场修复复验：
+
+- **Bug 1（阻断级）a-dropdown 解析失败：** 顶栏点击无下拉面板，console 报 `Failed to resolve component: a-dropdown`。根因：`Dropdown` 只注册在登录后延迟加载的 `registerManagementUi`，而 App.vue 模板直接使用的组件按 antd.ts 注释约定必须在 `installPublicUi` 首帧注册（App 根组件 renderCache 会缓存解析 miss）。修复：Dropdown 提升进 installPublicUi；registerManagementUi 移除重复项（double-install 会触发 `Plugin has already been applied` 警告，实测复现后一并消除）。
+- **Bug 2（体验级）深链刷新被弹回：** `/profile` 刷新后 1 秒内被 `router.replace('/overview')` 弹回。根因：`initializeConsole` 租户模式分支硬编码 `firstPage = visibleNavigation[0]`，未像平台分支那样用 `isPageReachable(page)` 保持可达深链（Wave 4 遗留不对等）。修复：租户分支对齐平台口径——刷新落在可达页（含 profile 非侧栏页）原地保留。复验 PASS：reload 后 URL 保持 /profile、面包屑「租户工作台 / 个人信息」。
+- **加固：** Esc 收起下拉改为 window 级 keydown 监听（antd Dropdown 无原生键盘关闭路径，焦点位置不可控；实测面板确已收起——antd 收起时不加 `ant-dropdown-hidden` 而是内联 display:none，初判「未生效」系检测选择器误判，加固保留）。
+- **走查已验证（shaohua_code@163.com 租户级，4 角色）：** 登录页渲染正常；顶栏下拉面板（身份卡头 123456/shaohua_code@163.com + 个人信息/修改密码/退出登录）正常弹出；「个人信息」跳转 /profile 成功；页面四卡完整（状态徽标「正常」、授权范围「租户级」、持有管理码 24 项、有效角色 4 行含租户名「DeerFlow」回查与 kind 标签映射）；侧栏无该页无错误高亮。
+- **验证：** 修复后 `npm run build` PASS + `npm run lint` PASS（--max-warnings 0）。**未复验项：** 深色主题可读性与 375 视口不溢出——浏览器 MCP 连接中途断开（chrome-devtools 工具全部 not found，疑似浏览器进程关闭），代码层面均走 CSS token 与 Tailwind sm 断点（同旧版顶栏惯例），风险低；待浏览器恢复后按 PRD §7 验收标准 5/6 复验。favicon 404 为存量缺失，与本功能无关。
+- **经验：** App.vue 模板新增 antd 组件必须同步进 installPublicUi 首帧清单（renderCache 缓存 miss 不可自愈，延迟注册形同虚设）；走查断言要看计算样式而非 class 名（antd 动画面板 class 不含 hidden 后缀）。
+
+## 2026-11-13 新增「个人信息页 + 顶栏用户菜单」：PRD + 前端实现（8 文件，build/lint PASS；浏览器走查未运行）
+
+执行用户指令「结合当前项目用 prd-authoring 写 PRD」→「开始开发」。先产出自审 PRD（[docs/PRD-个人信息页.md](docs/PRD-个人信息页.md)），按其 FR-01/FR-02 落地：顶栏平铺用户区（头像+名字+改密+退出四件套）收敛为单一用户下拉（身份卡头 + 个人信息 / 修改密码 / 退出登录），新增只读个人信息页 `/profile`（身份卡 / 账号信息 / 管理范围 / 有效角色四卡）。零后端改动、零新权限码；数据仅取 `/auth/me` 现有契约。
+
+- **前端（frontend/src，7 文件改 + 1 新建）：** ① navigation.ts：PageKey/PAGE_PATHS(`/profile`)/PAGE_INFO 增 profile；② router/index.ts：守卫在能力判权前对 profile 放行（登录即可达，含 L4）；③ loaders.ts + layout/page-registry.ts：ProfilePage 注册进 PageKey→feature 目录；④ plugins/icons.ts：补 LogoutOutlined 具名导出；⑤ views/profile/index.vue（新建，folder/index 写法）：onMounted 拉 `/auth/me`，状态徽标语义色（active/disabled/locked），角色 kind 映射（platform/tenant/application），租户名按壳层字典回查缺失回退 ID，失败态错误卡+重试，空角色引导空态；⑥ App.vue 脚本区：userMenuOpen 受控开关 + openProfile/openChangePassword/signOutFromMenu 三动作（先收面板再执行）+ isPageReachable 对 profile 特判放行；模板：顶栏 a-dropdown（受控 open + Esc 收起，窄屏只留头像图标）替换原平铺区，profile 渲染块置于 no_access 分支之外（v-show 与能力守卫复用 visitedPages 机制）。改密仍走壳层既有 ChangePasswordModal（G02），退出走既有 signOut。
+- **文档：** 产品需求 §2.1 包含项、§7 关键状态表、§11 验收标准第 14 条同步；PRD 状态待评审改实现完成口径未动（评审备注在 PRD §8）。
+- **验证：** `npm run build` PASS（vue-tsc 类型检查 + vite build，profile 独立分包 5.84 kB gzip 2.55 kB）；`npm run lint` PASS（--max-warnings 0 零告警）。**浏览器走查未运行**——本机 shell 无 docker CLI/Docker Desktop（`docker.exe` 全路径探测 NOT FOUND），8002/5175 均未监听，无法起后端登录走查；待用户在有 Docker 的环境启动后按 PRD §7 验收标准 1/2/5 走查（登录 → 顶栏下拉三项 → /profile 深链刷新 → 375 视口）。
+- **口径备注：** 个人信息页不判管理码是有意设计（只展示本人数据，符合最小权限）；若后续加「自助编辑展示名」等写操作，须重新评审（PRD 开放问题 1）。
+
+## 2026-11-13 修复自定义租户级角色「缺少应用角色成员管理权限」：应用角色成员绑定闸门补节点判权分支（1 源码 + 2 测试文件，真实环境 204 PASS）
+
+用户以自定义租户级平台角色（测试角色deerflow，挂 24 节点含 `button.app_role.manage`/`button.app_role.assign`）在应用工作台绑定应用角色成员被 403「缺少应用角色成员管理权限」。根因：`application_roles.py` 的 `_ensure_app_role_binding_permission` 任命链只认模板角色 key（L3 `tenant.admin` / 本应用 L2），不认节点——而路由入口 `_authorized_application` 与 `has_application_admin_access` 均按「节点+范围」判权（租户级直接放行），同一用户进得了页面、过不了绑定闸门，自相矛盾；且按 §3.3「写接口认按钮节点」口径（L3 模板种子本身就以 `button.app_role.manage` 授权该能力），自定义角色持同节点理应同权。
+
+- **修复（backend/app/api/v1/tenant_admin/application_roles.py）：** 在 L3 模板分支后新增节点分支——`user_has_management_code(actor, db, "button.app_role.manage", tenant_id=tenant_id)` 放行（钉租户防跨租户节点泄漏，与 `has_application_admin_access` 的 rotate_secret 同风格）。安全边界不变式保持：任命 L2 的范围闸门在该分支之前已收口（应用级不能向上）；应用级操作者的数据边界由入口按钉住的应用收口；范围不足（member 级）不可能持该 min_scope=app 节点。
+- **测试：** test_p405_layering 新增 2 用例（自定义租户级角色持 manage 节点可绑成员 PASS / 只持菜单节点仍 403 断言原文）；顺带修复 test_application_updates 两处存量 flaky——审计断言不带 target_id 过滤，开发库残留的历史 `application.update`/`application.secret.rotate` 审计行（READ COMMITTED 可见，含早期 DeerFlow 应用操作）被无序查询捞中导致租户 id 断言误报，按 test_session_management 先例限定本用例 target_id（经 git stash 复跑确认为存量失败，与本修复无关）。
+- **验证：** 容器内全量 unittest **362 用例全绿**（含 5 ROPC + 2 新 P405 用例）；改动文件 ruff 全绿（借 DeerFlow backend venv ruff，宿主机/容器均无独立 ruff）；真实环境端到端——以 shaohua_code@163.com 管理登录（Bearer management token）调 `PUT /tenant-admin/applications/{deerflow}/role-bindings` 由修复前 403 变 **204**。api 容器代码为源码挂载，已 restart 加载新代码，健康检查通过。浏览器 UI 待用户刷新重试「添加成员」确认。
+- **口径备注（未改动的既有行为）：** 任命应用管理员（L2 模板）分支仅做范围闸门（`ensure_scope` 租户级），未校验 `button.app_role.assign` 节点——自定义租户级角色未勾该节点也能经 API 任命 L2，与节点目录语义有出入，后续可考虑收紧（L3/L2 模板均持该节点，收紧不影响模板）。
+
+## 2026-11-13 排查「shaohua_code@163.com 密码直登 DeerFlow 401」：本地旧账号邮箱占用，管理员手动关联 IAM 身份后 PASS（数据修复，两侧零代码改动）
+
+用户以 IAM 新建账号 `shaohua_code@163.com`（当日 20:17 建号并配好 DeerFlow 租户角色）在 DeerFlow 登录页直登报 401「Incorrect email or password」。逐层定位：IAM 侧 curl 复现 401 → 审计表 `oidc.token.password` 三次全 **success**（密码/active/租户判权全过，统一错误码掩盖真实折点）→ DeerFlow Gateway 日志给出真因：`provisioning failed: An account with this email already exists`。
+
+- **根因（既有安全设计，非本次改造缺陷）：** DeerFlow 库（flow-desk-postgres，deerflow.users）存在 **10-23 本地注册的同邮箱账号**（id 9f06db75…，oauth 字段为空）。`user_provisioning.py` 第 4 步明确「绝不自动把 SSO 身份挂到已有本地账号」（防 SSO 登录劫持同邮箱密码账号），抛 409 被 `/login/iam` 折叠为 401。对照组 `deerflow-user` 能登录正因其账号本就由 SSO provision。
+- **修复（管理员手动关联，即报错文案所指路径）：** `UPDATE deerflow.users SET oauth_provider='iam', oauth_id='<IAM user id>' WHERE id='9f06db75…' AND oauth_provider IS NULL`（带空值守卫）。oauth_id 口径经 `deerflow-user` 行印证 = IAM `users.id`（id_token sub claim）。旧账号本地密码仍可登录，历史数据归属不变。
+- **验证：** curl 重放 `POST /login/iam` 200 + Set-Cookie；`/me` 返回 `shaohua_code@163.com` oauth_provider=iam 全量 32 权限；`/api/v1/auth/iam/resources` `source=iam` 8 码全量。浏览器侧待用户复登确认。
+- **经验：** 密码直登报「账号或密码不正确」≠ 密码错——IAM 统一 invalid_grant + DeerFlow 再折叠为 invalid_credentials，**必看 Gateway 日志或 IAM 审计定位真实折点**；同邮箱本地旧账号是密码直登/SSO 共同的占用性故障源，处理口径即管理员手动关联。
+
+## 2026-11-13 IAM 开放 password grant（ROPC 受控扩展）+ DeerFlow 登录页账号密码直登（跨仓库改造，端到端 curl PASS）
+
+执行用户指令「帮我重新改造deerflow项目 登录用权限平台的账号密码」——不再跳转 IAM 登录页，在 DeerFlow 登录页直接输入 IAM 平台账号密码登录。历史对话确认过 IAM OIDC 仅有授权码流程、无 ROPC 缺口，本轮跨两侧补齐。链路：DeerFlow 登录页表单 → `POST /api/v1/auth/login/iam` → Gateway discovery + ROPC → IAM token 端点 `grant_type=password`（trusted 门 + 密码校验 + 应用入场判权）→ 三件套 → 验 id_token → provision 用户 → IAM token 入加密 vault → 本地会话 cookie。
+
+- **IAM（backend/app/api/v1/oidc_provider/tokens.py）：** token 端点在 refresh_token 分支后新增 password grant 分支（约 206-235 行）：① 仅 `app.trusted=True` 客户端可用，否则 `unauthorized_client`；② scope 白名单硬编码 {openid, profile, email, offline_access} 且必须含 openid，不允许客户端自扩（`invalid_scope`）——密码授权不过授权同意页；③ 与管理登录同口径防时序（`func.lower(email)` 匹配 + 无用户时对比一次性 dummy_password_hash），用户不存在/密码错/非 active 统一 `invalid_grant`「账号或密码不正确」；④ 入场判权复用 `_app_membership`（effective roles，同 SSO 口径，无租户授权 `invalid_grant`）；⑤ 签发复用 `_token_payload`（access + id_token + refresh 同构），审计事件 `oidc.token.password`。**新增 5 个 unittest 用例**（tests/test_oidc_consent.py，password_grant_request helper 返回 (request, basic) 元组适配 `token(request, authorization, db)` 三参签名）：trusted 签发成功+claims 断言、untrusted 拒绝、密码错拒绝、无有效租户角色拒绝（删 RoleBinding）、scope 越权拒绝。
+- **DeerFlow 后端：** ① `auth/oidc.py` 把 `authenticate_callback` 的 id_token 验证 + identity 构建尾段抽为 `_identity_from_tokens`，新增 `authenticate_password`（构造 grant_type=password 表单，client_secret_basic 时 body 不带 client_id（RFC 6749 §2.3.1），HTTPStatusError 折叠为 OIDCError 且解析 error_description 防账号枚举）；② `routers/auth.py` 新增 `POST /login/iam`（找第一个 `password_grant_login` 的 provider → discover → authenticate_password → OIDCError 统一 401「Incorrect email or password」→ `get_or_provision_oidc_user` → audit `auth.iam_password.*` → `persist_iam_authentication` 入 vault → 本地 JWT + 会话 cookie）；`list_auth_providers` 响应新增 `password_login_provider` 字段（enabled/disabled 两分支均带）；③ 上一轮已加的 `auth.local.password_login_enabled` 配置开关 + `login_local` 403 守卫（`LOCAL_LOGIN_DISABLED` 错误码）保留；④ **中间件两处公开路径**：`csrf_middleware.py` `_AUTH_EXEMPT_PATHS` 与 `auth_middleware.py` `_PUBLIC_EXACT_PATHS` 均加 `/api/v1/auth/login/iam`（先后踩 401 not_authenticated 与 403 CSRF token missing 两个坑后补齐；CSRF 列表豁免 double-submit 但保留 Origin 校验，与 login/local 同防护）。
+- **DeerFlow 前端三态登录页（src/app/(auth)/login/page.tsx）：** 读 providers 的 `local_login_enabled` 与 `password_login_provider`（老 Gateway 回退兼容）→ 派生三态：`iamForm`（有 password_login_provider 且本地登录开 → 密码表单提交 /login/iam，表单顶提示「使用 {provider显示名} 的账号密码登录」）、`ssoOnly`（本地登录关 → 纯 SSO 按钮）、默认（本地表单 + SSO 按钮）。**config.yaml：** `auth.local.password_login_enabled: true`、iam provider 段 `password_grant_login: true`。
+- **验证：** IAM 容器内 unittest 17 项全过（含 5 新 ROPC 用例）；DeerFlow pytest 27 项全过（test_local_registration_gate 13 含 5 新 password_login_enabled 用例 + test_iam_token_vault 14）+ 改动文件 ruff 全绿 + `pnpm lint` 过滤确认 login/page.tsx 无问题（唯一存量 error 在 incremental-stream-state.dom.test.tsx，与本次无关）；真实环境 curl 端到端 PASS——providers 带 `password_login_provider=iam` → login/iam 200 + Set-Cookie → me 返回 oauth_provider=iam 用户 32 项权限 → `/api/v1/auth/iam/resources` `source=iam` 8 码全量。**前端浏览器 UI 未验证**（浏览器 IDE 通道持续超时），待用户在 `http://localhost:3000/login` 手动以 `deerflow-user@deerflow.example.com` 登录确认表单渲染与跳转。
+- **安全说明与运维提示：** ROPC 在 OAuth 2.1 已移除，此处为部署方明确信任的受控扩展——仅 trusted 客户端 + scope 白名单 + 与 SSO 同入场判权，非 trusted 客户端零影响；回滚开关：DeerFlow `config.yaml` 把 `password_grant_login` 改 false（登录页回退 SSO 按钮）或 IAM 侧取消应用 trusted 标记（token 端点直接 `unauthorized_client`）。本次过程另含：诊断 Gateway 后台进程被回收导致「deerflow 用不了」（杀 8001 重启恢复，启动仍须环境变量注入 DEERFLOW_IAM_CLIENT_SECRET 等，见 11-12 运维提示）；WatchFiles --reload 改后端文件会杀后台 job，每次改后重启 Gateway。
+
+## 2026-11-12 DeerFlow 对接完成：IAM 资源树真控制菜单/按钮（三阶段，浏览器端到端 PASS；IAM 侧零代码改动）
+
+执行用户明确指令「对接 deerflow，只配菜单和按钮，其他权限先不控制」（本阶段范围外的用户授权扩展），经确认采用「IAM 资源树真控制 + 应用挂新建专用租户」方案。三阶段全部完成：IAM 配置 → OIDC SSO 打通 → 资源树显隐联动。
+
+- **阶段一 IAM 配置（数据，幂等脚本执行后已删）：** 新建专用租户（DeerFlow 租户）+ 机密应用 `client_id=deerflow`（trusted=true，client_secret_basic）+ 资源树 6 菜单 + 2 按钮（`deerflow.overview/chats/agents/scheduled-tasks/files/capabilities` 菜单，`deerflow.chats.new/runs.cancel` 按钮）+ 应用角色（勾全部 8 项）+ 测试用户 `deerflow-user@deerflow.example.com`（初始角色）。application 99febbb3…、角色 c572e358…。
+- **阶段二 SSO 打通（上轮已 PASS）：** 授权码 + PKCE S256 + nonce，token 恒带 tenant_id claim；DeerFlow `config.yaml` 启用 `auth.oidc.providers.iam`（iam_token_vault_enabled + offline_access），Gateway 加密保管 IAM token 并自动刷新。
+- **阶段三资源树真控制（改在 DeerFlow，本仓库零改动）：** 后端新增 `backend/app/gateway/auth/iam_resources.py`（服务端用 vault token 调 IAM `my-resources`，展平 code 集合，进程内 60s TTL 缓存，任何取不到/调不通 fail-open 返回 null）+ 端点 `GET /api/v1/auth/iam/resources`（routers/auth.py）+ `tests/test_iam_resources.py` 4 用例；前端新增 `core/auth/iam-resources.tsx`（Provider + `useIamResources`/`useIamHas`，仅 SSO 用户拉取，本地用户/降态恒真），`navigation.ts` 菜单项加 `iamCode` 第 4 参过滤，侧栏菜单（workspace-nav-chat-list）、「新建对话」（workspace-header）、「停止运行」（chat-page 与本地 runs:cancel 双条件）接显隐，撤权全空时侧栏给出「未获授权」空态。
+- **顺带修复 DeerFlow 既有 vault 两个真实 bug（不修则资源控制整体不可用）：** ① `iam_token_vault.py` 读取路径 `isinstance(user.id, str)` 恒假——域模型 `User.id` 是 `uuid.UUID`（models.py:20），写路径本就 `str()` 规范化而读路径没有，导致 vault 凭据永远读不到；补 str 规范化（通过进程内插桩定位：gate1 返回 `uid=UUID(…)`）。② refresh 闭包 `refresh_tokens(provider_config, refresh_token)` 与 `OIDCService.refresh_tokens` 五参签名（metadata/client_id/client_secret/refresh_token/auth_method）不匹配，token 过期后自动刷新必 TypeError；改为与回调一致的 discovery + 五参调用。测试适配：test_iam_token_vault 的 mock 增 discover 并更新五参断言。
+- **验证：** pytest 定向全绿（test_iam_resources 4、test_iam_token_vault 14、test_authorization_route_permissions 38），改动文件 ruff 通过；浏览器端到端 PASS——deerflow-user SSO 登录进 /workspace，侧栏 5 菜单（工作总览/对话/智能体/定时任务/能力中心）+「新对话」入口可见，`/api/v1/auth/iam/resources` 200 且 `source=iam` codes 含全部 8 码（其中一轮走的是 token 过期后的 refresh 链路），控制台无错误。curl 直连复验同结果。
+- **撤权联动实测（观察项）：** 摘掉角色 `deerflow.chats.new` 后，IAM 侧按既定安全设计立即 bump 持有者 `membership.auth_version`（rbac_guards.py:605 注释明示「使旧 OIDC 凭证立即失效」）→ 旧 access/refresh token 同代作废（比资源缓存 60s TTL 更强的联动），DeerFlow 侧 my-resources 收 401「账号、租户、应用或角色授权已失效」→ 按 fail-open 降级全显；已恢复 8 项绑定，用户重新 SSO 即恢复 source=iam。待跟进：授权收窄期间降级为「全显」而非「收窄到剩余资源」，后续可考虑 401 时强制 refresh 重试一次。
+- **运维提示：** DeerFlow Gateway 以 cwd=backend 启动时其 `load_dotenv()` 读不到根 `.env`，须以进程环境变量注入 `DEER_FLOW_PROJECT_ROOT` / `DEERFLOW_IAM_CLIENT_SECRET` / `DEERFLOW_IAM_TOKEN_ENCRYPTION_KEY`（本次启动形态：`.venv\Scripts\uvicorn.exe app.gateway.app:app --port 8001 --reload`）；侧栏「文件中心」当前被 DeerFlow 部署开关 `features.files: false` 关闭（侧栏 5 项非 6 项，与 IAM 无关）。两个 DeerFlow 本地服务保持运行；临时诊断/配置脚本已全部删除，凭据不入库不入档。
+
+## 2026-11-12 复验 DeerFlow OIDC SSO 登录链路：端到端 PASS（IAM 零改动，DeerFlow 侧修 2 处）
+
+接续上午「平台侧链路已通、缺真实第三方应用端到端联调」的结论，本轮以真实应用 DeerFlow（Flow Desk）完成 OIDC 授权码 + PKCE 登录链路浏览器复验。本仓库（IAM 管理台与绿场后端）代码零改动。
+
+- **环境恢复：** IAM Docker Compose 三容器（api 8002 / console 5175 / postgres）本就 Up 且 healthy；DeerFlow Gateway（8001）与前端（3000）由本会话拉起。踩坑两条：① TRAE 命令沙箱只放行 `D:\project\role`，DeerFlow 写 `.deer-flow`/`.next` 运行时目录被拒 → 非沙箱启动；② Windows 本机裸跑 uvicorn（无 `--reload`）时 psycopg 异步连库失败 → 按其 `product/deploy/README.md` 加 `--loop asyncio:SelectorEventLoop`。
+- **前置配置核实（只读）：** `applications` 表 `client_id=deerflow` active，redirect 与 DeerFlow `config.yaml` 一致；discovery 200；专用测试账号 `deerflow-user@deerflow.example.com`（今日 16:56 建，DeerFlow 租户唯一 active 成员）。
+- **复验过程与两次拦截（均为产品正确行为）：** DeerFlow 登录页「使用 统一身份平台 登录」→ authorize（PKCE S256 + state + nonce）→ 管理台 DeerFlow 品牌化登录页。① `admin@example.com` 登录后被 `access_denied（账号没有该应用的活动租户角色授权）` 拒绝——符合 §6 SSO 入场判权（需应用所属租户有效角色，平台管理员无该租户成员关系）；经管理台「更多 → 重置密码」为测试账号设置新密码（审计 `user.password.reset`）后改用 `deerflow-user` 登录。② 授权码签发成功但 token 兑换 400「客户端只能通过 client_secret_basic 认证」。
+- **根因与修复（改在 DeerFlow，不改 IAM）：** DeerFlow `backend/app/gateway/auth/oidc.py` 的 `exchange_code`/`refresh_tokens` 在 `client_secret_basic` 模式下仍把 `client_id` 放进 token 请求体，与 Basic 头构成双重客户端认证方式，违反 RFC 6749 §2.3.1，被 IAM token 端点（`tokens.py` 拒绝 body 携带 client 凭据）严格拒绝——IAM 侧行为正确。修复：basic 分支 `data.pop("client_id")`（2 处，各带注释），重启 Gateway 后生效。
+- **通过证据：** 审计链 `auth.login → oidc.authorize → oidc.token.exchange`（09:47 UTC）；`oauth_refresh_tokens` 为 deerflow-user@deerflow 签发（scope 含 offline_access，未撤销）；Gateway 日志 `Auto-created ordinary OIDC user (provider=iam)`；浏览器自动回跳 `http://localhost:3000/workspace` 会话生效，工作台数据接口全部 200；设置 → 账号显示邮箱/角色 User/「SSO: Iam」，且提示「密码由你的 SSO 提供商管理」。截图存 `%TEMP%\sso-verify\account-sso-iam.png`。
+- **验证与未覆盖项：** 本轮为浏览器端到端实测 PASS；IAM 侧 355 项测试未重跑（本仓库零代码改动）；refresh 轮换、登出回调、IAM token vault 解密读取、SDK 真实调用未在本轮覆盖。两个 DeerFlow 本地服务保持运行（Gateway 后台任务 job-4ec6…，前端 job-bb4e…），凭据不入库不入档。
 
 ## 2026-11-12 重设计「项目对接指南」页：契约文档 → 人话旅程（墨韵编辑风，2 文件）
 

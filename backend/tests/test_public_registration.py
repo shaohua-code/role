@@ -23,15 +23,8 @@ from app.models import (
 )
 from app.schemas.auth import RegisterRequest, RegisterVerifyRequest
 from app.services.public_registration import (
-    _code_digest,
-    _derived_code,
-    application_registration_details,
-    eligible_registration_role,
-    registration_email_hash,
-    registration_role_fingerprint,
-    request_registration_code,
+    RegistrationFlow,
     RegistrationPolicyChanged,
-    verify_registration_code,
 )
 
 
@@ -104,13 +97,13 @@ class PublicRegistrationContractTests(unittest.TestCase):
         application_id, challenge_id = uuid4(), uuid4()
 
         self.assertEqual(
-            registration_email_hash(old_settings, application_id, "user@example.test"),
-            registration_email_hash(rotated_jwt_settings, application_id, "user@example.test"),
+            RegistrationFlow.registration_email_hash(old_settings, application_id, "user@example.test"),
+            RegistrationFlow.registration_email_hash(rotated_jwt_settings, application_id, "user@example.test"),
         )
-        self.assertEqual(_derived_code(old_settings, challenge_id),
-                         _derived_code(rotated_jwt_settings, challenge_id))
-        self.assertEqual(_code_digest(old_settings, challenge_id, "123456"),
-                         _code_digest(rotated_jwt_settings, challenge_id, "123456"))
+        self.assertEqual(RegistrationFlow._derived_code(old_settings, challenge_id),
+                         RegistrationFlow._derived_code(rotated_jwt_settings, challenge_id))
+        self.assertEqual(RegistrationFlow._code_digest(old_settings, challenge_id, "123456"),
+                         RegistrationFlow._code_digest(rotated_jwt_settings, challenge_id, "123456"))
 
 
 class PublicRegistrationPolicyTests(unittest.TestCase):
@@ -144,7 +137,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
         self.application.registration_role_id = self.role.id
         self.db.add_all([self.application, self.role])
         self.db.flush()
-        self.role_fingerprint = registration_role_fingerprint(self.db, self.role)
+        self.role_fingerprint = RegistrationFlow.registration_role_fingerprint(self.db, self.role)
         self.theme = ApplicationTheme(
             id=uuid4(), application_id=self.application.id, version=1, status="published",
             config={
@@ -161,7 +154,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_open_policy_needs_published_legal_theme_and_same_app_role(self) -> None:
-        details = application_registration_details(
+        details = RegistrationFlow.application_registration_details(
             self.db, self.application, settings=self.settings,
         )
         self.assertIsNotNone(details)
@@ -170,14 +163,14 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
 
         self.theme.config = {"show_register": False}
         self.db.commit()
-        self.assertIsNone(application_registration_details(
+        self.assertIsNone(RegistrationFlow.application_registration_details(
             self.db, self.application, settings=self.settings,
         ))
 
     def test_organization_tenant_cannot_offer_public_registration(self) -> None:
         self.tenant.kind = "organization"
         self.db.commit()
-        self.assertIsNone(application_registration_details(
+        self.assertIsNone(RegistrationFlow.application_registration_details(
             self.db, self.application, settings=self.settings,
         ))
 
@@ -186,7 +179,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
 
     def test_stale_policy_url_is_rejected_before_creating_registration_request(self) -> None:
         with self.assertRaises(RegistrationPolicyChanged):
-            request_registration_code(
+            RegistrationFlow.request_registration_code(
                 self.db,
                 application=self.application,
                 email="person@example.com",
@@ -205,13 +198,13 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
             public_registration_secret="s" * 32,
             smtp_host="smtp.example.test", smtp_from="no-reply@example.test",
         )
-        self.assertIsNone(application_registration_details(
+        self.assertIsNone(RegistrationFlow.application_registration_details(
             self.db, self.application, settings=disabled_settings,
         ))
 
         self.application.registration_policy = "disabled"
         self.db.commit()
-        self.assertIsNone(application_registration_details(
+        self.assertIsNone(RegistrationFlow.application_registration_details(
             self.db, self.application, settings=self.settings,
         ))
 
@@ -225,7 +218,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
         self.db.add(RolePermission(role_id=self.role.id, permission_id=admin_permission.id))
         self.db.commit()
 
-        self.assertIsNone(eligible_registration_role(self.db, self.application, self.role.id))
+        self.assertIsNone(RegistrationFlow.eligible_registration_role(self.db, self.application, self.role.id))
 
     def test_registration_role_cannot_grant_tenant_or_organization_data_scope(self) -> None:
         permission = Permission(
@@ -246,7 +239,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
         ])
         self.db.commit()
 
-        self.assertIsNone(eligible_registration_role(self.db, self.application, self.role.id))
+        self.assertIsNone(RegistrationFlow.eligible_registration_role(self.db, self.application, self.role.id))
 
     def test_registration_role_can_keep_personal_data_scope(self) -> None:
         permission = Permission(
@@ -267,7 +260,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
         ])
         self.db.commit()
 
-        self.assertEqual(eligible_registration_role(self.db, self.application, self.role.id).id, self.role.id)
+        self.assertEqual(RegistrationFlow.eligible_registration_role(self.db, self.application, self.role.id).id, self.role.id)
 
     def test_code_attempt_limit_consumes_challenge(self) -> None:
         now = datetime.now(timezone.utc)
@@ -281,7 +274,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
             existing_user_id=None,
             registration_role_id=self.role.id,
             registration_role_fingerprint=self.role_fingerprint,
-            verification_code_hash=_code_digest(self.settings, challenge_id, "123456"),
+            verification_code_hash=RegistrationFlow._code_digest(self.settings, challenge_id, "123456"),
             terms_version="terms-v1",
             privacy_version="privacy-v1",
             terms_url="https://product.example.test/terms",
@@ -293,7 +286,7 @@ class PublicRegistrationPolicyTests(unittest.TestCase):
         self.db.commit()
 
         for attempt in range(1, 4):
-            self.assertFalse(verify_registration_code(
+            self.assertFalse(RegistrationFlow.verify_registration_code(
                 self.db, challenge, "000000", now=now, settings=self.settings,
             ))
             self.assertEqual(challenge.failed_attempts, attempt)

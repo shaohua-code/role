@@ -23,12 +23,11 @@ from app.models.identity import Tenant, TenantMembership, User
 from app.models.organization import Organization, RoleDataScope
 from app.schemas.access_control import AuthorizationCheck
 from app.schemas.organizations import RoleDataScopeItem, RoleDataScopesUpdate
-from app.services.authorization import evaluate_access
+from app.services.authorization import AuthorizationEvaluator
 from app.services.role_provisioning import (
     L2_GRANT_NODE_CODES,
     L3_GRANT_NODE_CODES,
-    provision_application_platform_roles,
-    provision_tenant_admin_role,
+    RoleProvisioning,
 )
 from tests.greenfield_fixture import make_platform_admin_binding
 
@@ -78,9 +77,9 @@ class DataScopeGradingTests(unittest.TestCase):
         self.l3 = self._user("l3")
         self.l2 = self._user("l2")
         self.member = self._user("member")
-        l3_role = provision_tenant_admin_role(self.db, self.tenant.id)
+        l3_role = RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
         # 应用开通预置 (应用管理员, 应用成员) 二元组（多应用管理员已并入应用管理员）。
-        self.admin_role, self.member_role = provision_application_platform_roles(
+        self.admin_role, self.member_role = RoleProvisioning.provision_application_platform_roles(
             self.db, self.tenant.id, self.application.id,
         )
         self._bind(self.l3, l3_role)
@@ -164,7 +163,7 @@ class DataScopeGradingTests(unittest.TestCase):
             tenant_id=self.tenant.id, application_id=self.application.id,
             permission_code=self.business.code, include_data_scope=True,
         )
-        return evaluate_access(check, self.member, self.db)["decision"]
+        return AuthorizationEvaluator.evaluate_access(check, self.member, self.db)["decision"]
 
     # ── 写分级：L2 只读 ─────────────────────────────────────────────────────
 

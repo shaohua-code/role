@@ -57,6 +57,8 @@ export const router = createRouter({
 // 无任何管理码（L4）→ /no-access；能力尚未加载（刷新首跳）时放行，由 App 纠正。
 router.beforeEach(to => {
   if (!getToken()) return true
+  // 个人信息页：自助数据，不依赖管理码，所有登录用户可达（含 L4 / no_access 场景）。
+  if (to.name === 'profile') return true
   if (to.name === 'no_access') {
     // P2-8：能力就绪且存在可见页时不滞留 /no-access（URL/内容/侧栏高亮三态一致）；
     // 能力未加载（刷新首跳，由 App 纠正）或确无可见页（L4）才放行。

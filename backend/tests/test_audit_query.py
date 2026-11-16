@@ -118,7 +118,7 @@ class AuditQueryTests(unittest.TestCase):
             "db": self.db,
         }
         arguments.update(overrides)
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True):
             return search_audit(**arguments)
 
     def test_combined_filters_and_end_time_are_applied(self) -> None:
@@ -147,7 +147,7 @@ class AuditQueryTests(unittest.TestCase):
         self.assertFalse(second_page.has_more)
 
     def test_legacy_endpoint_keeps_array_response(self) -> None:
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True):
             result = list_audit(limit=2, action="role.update", actor=Mock(), db=self.db)
 
         self.assertIsInstance(result, list)

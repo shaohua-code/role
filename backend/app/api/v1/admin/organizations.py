@@ -16,14 +16,9 @@ from app.models.groups import UserGroupMembership
 from app.models.identity import Tenant, TenantMembership, User
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRefreshToken
 from app.models.organization import MembershipOrganization, Organization, RoleDataScope
-from app.services.admin_authorization import (
-    ORGANIZATION_MANAGE,
-    has_application_admin_access,
-    has_organization_admin_access,
-    require_organization_admin_access,
-)
+from app.services.admin_authorization import ORGANIZATION_MANAGE, AdminAccessGuard
 # F4 数据范围写分级：写操作要求 button.org.manage 节点 + L3 角色双条件（判权工具只 import 不改）。
-from app.services.rbac_guards import bump_memberships_holding_role, ensure_codes, ensure_roles
+from app.services.rbac_guards import AuthVersionService, PermissionEnforcer
 from app.services.role_provisioning import L3_ROLE_KEY
 from app.schemas.organizations import (
     MembershipOrganizationsUpdate,
@@ -42,7 +37,7 @@ router = APIRouter(tags=["组织与数据范围"])
 def list_organizations(tenant_id: UUID, actor: User = Depends(current_user),
                        db: Session = Depends(get_db_session)) -> list[dict]:
     """组织树以平面记录返回，避免深层结构形成不可控的大型嵌套响应。"""
-    require_organization_admin_access(actor, tenant_id, db)
+    AdminAccessGuard.require_organization_admin_access(actor, tenant_id, db)
     if not db.get(Tenant, tenant_id):
         raise HTTPException(404, "租户不存在")
     rows = db.scalars(select(Organization).where(Organization.tenant_id == tenant_id)
@@ -71,7 +66,7 @@ def list_organization_members(
     organization = db.get(Organization, organization_id)
     if not organization:
         raise HTTPException(404, "组织不存在")
-    require_organization_admin_access(actor, organization.tenant_id, db)
+    AdminAccessGuard.require_organization_admin_access(actor, organization.tenant_id, db)
     stmt = (select(MembershipOrganization, TenantMembership, User)
             .join(TenantMembership, TenantMembership.id == MembershipOrganization.membership_id)
             .join(User, User.id == TenantMembership.user_id)
@@ -102,7 +97,7 @@ def list_tenant_members(
     actor: User = Depends(current_user),
 ) -> dict:
     """只列出目标租户自己的成员；搜索条件不能扩大到其他租户的全局身份。"""
-    require_organization_admin_access(actor, tenant_id, db)
+    AdminAccessGuard.require_organization_admin_access(actor, tenant_id, db)
     if not db.get(Tenant, tenant_id):
         raise HTTPException(404, "租户不存在")
 
@@ -141,7 +136,7 @@ def list_tenant_members(
 def list_tenant_roles(tenant_id: UUID, actor: User = Depends(current_user),
                       db: Session = Depends(get_db_session)) -> list[dict]:
     """角色目录强制限制在授权租户内，供租户管理员配置该租户的数据范围。"""
-    require_organization_admin_access(actor, tenant_id, db)
+    AdminAccessGuard.require_organization_admin_access(actor, tenant_id, db)
     if not db.get(Tenant, tenant_id):
         raise HTTPException(404, "租户不存在")
     roles = db.scalars(select(Role).where(Role.tenant_id == tenant_id)
@@ -160,7 +155,7 @@ def list_tenant_roles(tenant_id: UUID, actor: User = Depends(current_user),
 def create_organization(body: OrganizationCreate, request: Request,
                         actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """新组织的父节点必须是同一活动租户里的有效部门。"""
-    require_organization_admin_access(actor, body.tenant_id, db, manage=True)
+    AdminAccessGuard.require_organization_admin_access(actor, body.tenant_id, db, manage=True)
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant or tenant.status != "active":
         raise HTTPException(404, "活动租户不存在")
@@ -201,7 +196,7 @@ def update_organization(organization_id: UUID, body: OrganizationUpdate, request
     row = db.get(Organization, organization_id)
     if not row:
         raise HTTPException(404, "组织不存在")
-    if not has_organization_admin_access(actor, row.tenant_id, db, manage=True):
+    if not AdminAccessGuard.has_organization_admin_access(actor, row.tenant_id, db, manage=True):
         raise HTTPException(404, "组织不存在")
     if body.name is not None:
         if not body.name.strip():
@@ -257,7 +252,7 @@ def delete_organization(organization_id: UUID, request: Request,
     row = db.scalar(select(Organization).where(Organization.id == organization_id).with_for_update())
     if not row:
         raise HTTPException(404, "组织不存在")
-    if not has_organization_admin_access(actor, row.tenant_id, db, manage=True):
+    if not AdminAccessGuard.has_organization_admin_access(actor, row.tenant_id, db, manage=True):
         raise HTTPException(404, "组织不存在")
     # 父引用为 RESTRICT：必须先删除或移动子组织，避免留下孤儿层级。
     child_exists = db.scalar(select(Organization.id).where(Organization.parent_id == row.id).limit(1))
@@ -273,7 +268,7 @@ def delete_organization(organization_id: UUID, request: Request,
 def get_user_organizations(user_id: UUID, tenant_id: UUID, actor: User = Depends(current_user),
                            db: Session = Depends(get_db_session)) -> dict:
     """查看用户在指定租户的组织挂接与主组织（共享序列化见 _user_organization_payload）。"""
-    require_organization_admin_access(actor, tenant_id, db)
+    AdminAccessGuard.require_organization_admin_access(actor, tenant_id, db)
     membership = db.scalar(select(TenantMembership).where(TenantMembership.user_id == user_id,
                                                             TenantMembership.tenant_id == tenant_id))
     if not membership:
@@ -309,7 +304,7 @@ def list_user_memberships(user_id: UUID, actor: User = Depends(current_user),
              "membership_status": membership.status, "tenant_status": tenant.status}
             for membership, tenant in rows
             if platform_admin
-            or has_organization_admin_access(actor, tenant.id, db)
+            or AdminAccessGuard.has_organization_admin_access(actor, tenant.id, db)
             # 自己的 membership 是身份上下文发现信息；它不授予跨用户成员目录读取权。
             or user_id == actor.id]
 
@@ -326,7 +321,7 @@ def set_user_membership_status(
     """停用只暂停单租户访问；离职会清除该租户授权并要求重新邀请后才能加入。"""
     # organizations_router 同时挂在 /admin 与 /tenant-admin 下；必须在 handler 内
     # 再按目标 tenant 做 manage 判权，不能依赖 platform-admin 聚合路由的保护。
-    require_organization_admin_access(actor, tenant_id, db, manage=True)
+    AdminAccessGuard.require_organization_admin_access(actor, tenant_id, db, manage=True)
     membership = db.scalar(select(TenantMembership).where(
         TenantMembership.user_id == user_id,
         TenantMembership.tenant_id == tenant_id,
@@ -383,7 +378,7 @@ def set_user_membership_status(
 def set_user_organizations(user_id: UUID, body: MembershipOrganizationsUpdate, request: Request,
                            actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """替换用户在单个租户中的组织归属；跨租户关系还由 PostgreSQL 复合外键兜底。"""
-    require_organization_admin_access(actor, body.tenant_id, db, manage=True)
+    AdminAccessGuard.require_organization_admin_access(actor, body.tenant_id, db, manage=True)
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant or tenant.status != "active":
         raise HTTPException(404, "活动租户不存在")
@@ -415,7 +410,7 @@ def get_role_data_scopes(role_id: UUID, actor: User = Depends(current_user),
     role = db.get(Role, role_id)
     if not role:
         raise HTTPException(404, "角色不存在")
-    if not has_organization_admin_access(actor, role.tenant_id, db):
+    if not AdminAccessGuard.has_organization_admin_access(actor, role.tenant_id, db):
         raise HTTPException(404, "角色不存在")
     return _role_data_scopes_payload(role, db)
 
@@ -425,7 +420,7 @@ def list_tenant_role_permissions(role_id: UUID, actor: User = Depends(current_us
                                  db: Session = Depends(get_db_session)) -> list[dict]:
     """返回该租户角色已有的权限编码，数据范围编辑器不得读取全局权限目录。"""
     role = db.get(Role, role_id)
-    if not role or not has_organization_admin_access(actor, role.tenant_id, db):
+    if not role or not AdminAccessGuard.has_organization_admin_access(actor, role.tenant_id, db):
         raise HTTPException(404, "角色不存在")
     rows = db.execute(
         select(Permission.id, Permission.code, Permission.status)
@@ -450,15 +445,15 @@ def _role_data_scopes_payload(role: Role, db: Session) -> list[dict]:
 def _require_data_scope_write_access(actor: User, tenant_id: UUID, db: Session) -> None:
     """数据范围写分级（F4）：平台管理员放行；否则须同时持 button.org.manage 节点与 L3 租户管理员角色。
 
-    读仍走 has_organization_admin_access（超管/租户级/应用级可读）；写收紧为租户级起。
-    ensure_codes 与 ensure_roles 双条件互为纵深防御：应用级即便被手工扩权
+    读仍走 AdminAccessGuard.has_organization_admin_access（超管/租户级/应用级可读）；写收紧为租户级起。
+    PermissionEnforcer.ensure_codes 与 PermissionEnforcer.ensure_roles 双条件互为纵深防御：应用级即便被手工扩权
     挂上 button.org.manage 节点，也会因缺少 L3 tenant.admin 角色被拒（403）。
     """
-    ensure_codes(
+    PermissionEnforcer.ensure_codes(
         actor, db, ORGANIZATION_MANAGE, tenant_id=tenant_id,
         detail="缺少数据范围管理权限：button.org.manage",
     )
-    ensure_roles(
+    PermissionEnforcer.ensure_roles(
         actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id,
         detail="数据范围仅租户管理员（L3）及以上可配置",
     )
@@ -467,17 +462,13 @@ def _require_data_scope_write_access(actor: User, tenant_id: UUID, db: Session) 
 def _sync_data_scope_leaf_grants(db: Session, role: Role, policies: list[RoleDataScopeItem]) -> int:
     """过渡期双写（F4）：把替换后的策略镜像为 *.scope.* 数据叶子码授权。
 
-    复用 permission_kinds 的 ensure_data_scope_children（叶子缺失先补建）与
+    复用 PermissionCatalog 的 ensure_data_scope_children（叶子缺失先补建）与
     data_scope_code（scope_type → 叶子后缀映射），按 map_role_data_scopes_to_codes
     的单条映射算法落 RolePermission 授权；同时收敛本角色不再被策略映射的旧叶子
-    授权，保证替换后 evaluate_access 的「叶子码 ∪ RoleDataScope」并集与策略一致，
+    授权，保证替换后 AuthorizationEvaluator.evaluate_access 的「叶子码 ∪ RoleDataScope」并集与策略一致，
     不残留放宽范围。旧表 RoleDataScope 照写，本函数只负责叶子码一侧（幂等）。
     """
-    from app.services.permission_kinds import (
-        data_scope_code,
-        ensure_data_scope_children,
-        split_data_scope_code,
-    )
+    from app.services.permission_kinds import PermissionCatalog
 
     # 逐条映射：对策略涉及的业务权限确保叶子存在，并收集目标叶子授权集合。
     target_leaf_ids: set[UUID] = set()
@@ -485,9 +476,9 @@ def _sync_data_scope_leaf_grants(db: Session, role: Role, policies: list[RoleDat
         parent = db.get(Permission, item.permission_id)
         if parent is None:
             continue
-        ensure_data_scope_children(db, parent)
+        PermissionCatalog.ensure_data_scope_children(db, parent)
         leaf = db.scalar(select(Permission).where(
-            Permission.code == data_scope_code(parent.code, item.scope_type)))
+            Permission.code == PermissionCatalog.data_scope_code(parent.code, item.scope_type)))
         if leaf is not None:
             target_leaf_ids.add(leaf.id)
     # 镜像收敛：先删除本角色已不被策略映射的旧叶子授权（含替换前遗留），防止残留放宽范围。
@@ -497,7 +488,7 @@ def _sync_data_scope_leaf_grants(db: Session, role: Role, policies: list[RoleDat
             .join(Permission, Permission.id == RolePermission.permission_id)
             .where(RolePermission.role_id == role.id)
         ).all()
-        if split_data_scope_code(code)[1] and permission_id not in target_leaf_ids
+        if PermissionCatalog.split_data_scope_code(code)[1] and permission_id not in target_leaf_ids
     }
     if stale_leaf_ids:
         db.execute(delete(RolePermission).where(
@@ -529,7 +520,7 @@ def replace_role_data_scopes(role_id: UUID, body: RoleDataScopesUpdate, request:
     if not role:
         raise HTTPException(404, "角色不存在")
     # 读可见性（L1/L3/L2 任一即可见，越权者 404 隐藏存在性）。
-    if not has_organization_admin_access(actor, role.tenant_id, db):
+    if not AdminAccessGuard.has_organization_admin_access(actor, role.tenant_id, db):
         raise HTTPException(404, "角色不存在")
     # 写分级：org.manage 码 + L3 角色双条件，L2 只读（挂码也无法绕过）。
     _require_data_scope_write_access(actor, role.tenant_id, db)
@@ -559,7 +550,7 @@ def replace_role_data_scopes(role_id: UUID, body: RoleDataScopesUpdate, request:
     # F4 过渡期双写：策略落库的同时镜像叶子码授权（叶子缺失先补建，替换残留收敛）。
     _sync_data_scope_leaf_grants(db, role, body.policies)
     # 数据范围替换即时收敛持有者旧凭证（绿场规则：数据范围变更建议 bump）。
-    bump_memberships_holding_role(db, role.id)
+    AuthVersionService.bump_memberships_holding_role(db, role.id)
     audit(db, actor, request, "role.data_scopes.replace", "role", str(role.id),
           {"tenant_id": str(role.tenant_id), "policy_count": len(body.policies)})
     commit_or_conflict(db)

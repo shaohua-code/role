@@ -11,7 +11,7 @@ from app.core.config import get_settings
 from app.models.application import Application
 from app.models.authorization import Role
 from app.models.identity import AuditEvent, User
-from app.services.login_throttle import client_ip_for_request
+from app.services.login_throttle import LoginThrottleService
 
 
 def audit(
@@ -46,14 +46,14 @@ def audit(
             related_app = db.get(Application, UUID(str(details["application_id"])) )
             tenant_id = related_app.tenant_id if related_app else None
     # 破窗旁路（默认关闭）产生的写审计必须显式标记，便于灾备后复盘。
-    from app.services.rbac_guards import user_is_break_glass
+    from app.services.rbac_guards import ActorVisibility
 
     audit_details = dict(details or {})
-    if user_is_break_glass(actor):
+    if ActorVisibility.user_is_break_glass(actor):
         audit_details.setdefault("break_glass", True)
     db.add(AuditEvent(actor_user_id=actor.id, tenant_id=tenant_id, action=action,
                       target_type=target_type, target_id=target_id,
-                      source_ip=client_ip_for_request(request, get_settings()), details=audit_details))
+                      source_ip=LoginThrottleService.client_ip_for_request(request, get_settings()), details=audit_details))
 
 
 def commit_or_conflict(db: Session) -> None:
@@ -75,7 +75,11 @@ def flush_or_conflict(db: Session) -> None:
 
 
 def valid_redirect_uri(value: str) -> bool:
-    """校验外部 URL：生产只接受 HTTPS，开发例外限定 localhost。"""
+    """校验外部 URL：生产只接受 HTTPS，开发例外限定 localhost。
+
+    服务端间地址（Back-Channel Logout、模型网关 endpoint）始终走本规则；
+    浏览器登录/登出回调走 valid_login_redirect_uri（受放行开关控制）。
+    """
     try:
         parsed = urlsplit(value)
         if parsed.fragment or not parsed.netloc or parsed.username or parsed.password:
@@ -85,3 +89,28 @@ def valid_redirect_uri(value: str) -> bool:
         )
     except ValueError:
         return False
+
+
+def valid_login_redirect_uri(value: str) -> bool:
+    """登录/登出回调白名单 URI 校验。
+
+    默认与 valid_redirect_uri 同口径（HTTPS 或 localhost HTTP）；运维配置
+    IAM_ALLOW_INSECURE_REDIRECT_URIS=true 后放行任意 http 回调，服务内网/测试
+    HTTP 部署的业务系统。fragment 与 userinfo 形态在任何开关下都拒绝，杜绝
+    开放重定向与凭据注入形态。
+    """
+    if valid_redirect_uri(value):
+        return True
+    if not get_settings().allow_insecure_redirect_uris:
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "http"
+        and bool(parsed.netloc)
+        and not parsed.fragment
+        and not parsed.username
+        and not parsed.password
+    )

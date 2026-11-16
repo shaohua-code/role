@@ -30,13 +30,9 @@ from app.models.organization import RoleDataScope
 from app.schemas.access_control import AuthorizationCheck, RoleBindingCreate
 from app.api.v1.admin.access_control import bind_role, unbind_role
 from app.core.config import get_settings
-from app.services.authorization import evaluate_access
-from app.services.effective_roles import list_effective_roles
-from app.services.rbac_guards import (
-    ensure_codes,
-    user_has_management_code,
-    user_is_platform_admin,
-)
+from app.services.authorization import AuthorizationEvaluator
+from app.services.effective_roles import EffectiveRoleResolver
+from app.services.rbac_guards import PermissionEnforcer
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from tests.greenfield_fixture import make_platform_admin_binding
@@ -117,14 +113,14 @@ class GreenfieldRbacAcceptanceTests(unittest.TestCase):
         """bypass 默认 false：同名邮箱不等于平台权限。"""
         settings = get_settings()
         self.assertFalse(settings.allow_bootstrap_email_bypass)
-        self.assertFalse(user_is_platform_admin(self.l3_user, self.db))
+        self.assertFalse(EffectiveRoleResolver.user_is_platform_admin(self.l3_user, self.db))
 
     def test_l1_holds_all_management_codes_but_denied_without_binding(self) -> None:
-        ensure_codes(self.l1_user, self.db, "rbac.role.manage")
-        ensure_codes(self.l1_user, self.db, "platform.tenant.manage")
+        PermissionEnforcer.ensure_codes(self.l1_user, self.db, "rbac.role.manage")
+        PermissionEnforcer.ensure_codes(self.l1_user, self.db, "platform.tenant.manage")
         # 无 L1 绑定的用户即使同名邮箱也拿不到管理码（无旁路）。
         with self.assertRaises(HTTPException) as ctx:
-            ensure_codes(self.l3_user, self.db, "rbac.role.manage")
+            PermissionEnforcer.ensure_codes(self.l3_user, self.db, "rbac.role.manage")
         self.assertEqual(ctx.exception.status_code, 403)
 
     def test_l2_l3_mutual_exclusion(self) -> None:
@@ -134,19 +130,19 @@ class GreenfieldRbacAcceptanceTests(unittest.TestCase):
             application_id=self.application.id,
         )
         # 只有应用角色时：应用可读，组织 manage 拒绝。
-        self.assertTrue(user_has_management_code(
+        self.assertTrue(PermissionEnforcer.user_has_management_code(
             self.l3_user, self.db, "app.read",
             tenant_id=self.tenant.id, application_id=self.application.id,
         ))
-        self.assertFalse(user_has_management_code(
+        self.assertFalse(PermissionEnforcer.user_has_management_code(
             self.l3_user, self.db, "org.manage", tenant_id=self.tenant.id,
         ))
         # L3 角色授予组织码后仍无 role.manage（L1 专属码未授予）。
         self._grant_tenant_role(self.l4_user, [self.perm_org_manage], key="tenant.admin")
-        self.assertTrue(user_has_management_code(
+        self.assertTrue(PermissionEnforcer.user_has_management_code(
             self.l4_user, self.db, "org.manage", tenant_id=self.tenant.id,
         ))
-        self.assertFalse(user_has_management_code(
+        self.assertFalse(PermissionEnforcer.user_has_management_code(
             self.l4_user, self.db, "rbac.role.manage", tenant_id=self.tenant.id,
         ))
         self.assertIsNotNone(l2_role)
@@ -255,7 +251,7 @@ class GreenfieldRbacAcceptanceTests(unittest.TestCase):
             tenant_id=self.tenant.id, permission_code=self.perm_document_read.code,
             include_data_scope=False,
         )
-        evaluation = evaluate_access(body, self.l4_user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(body, self.l4_user, self.db)
         self.assertFalse(evaluation["decision"]["allowed"])
         self.assertEqual(evaluation["decision"]["reason"], "data_scope_policy_missing")
 
@@ -265,7 +261,7 @@ class GreenfieldRbacAcceptanceTests(unittest.TestCase):
                                   permission_id=self.perm_document_read.id,
                                   scope_type="self", organization_ids=[]))
         self.db.commit()
-        evaluation = evaluate_access(body, self.l4_user, self.db)
+        evaluation = AuthorizationEvaluator.evaluate_access(body, self.l4_user, self.db)
         self.assertTrue(evaluation["decision"]["allowed"])
         self.assertEqual(evaluation["decision"]["data_scope"]["constraints"][0]["kind"], "owner")
 
@@ -287,7 +283,7 @@ class GreenfieldRbacAcceptanceTests(unittest.TestCase):
         ])
         self.db.commit()
 
-        effective = list_effective_roles(
+        effective = EffectiveRoleResolver.list_effective_roles(
             self.db, membership_id=membership.id, tenant_id=self.tenant.id,
             application_id=self.application.id,
         )
@@ -296,7 +292,7 @@ class GreenfieldRbacAcceptanceTests(unittest.TestCase):
         # 停用组后组角色立即退出有效集合。
         group.status = "disabled"
         self.db.commit()
-        effective = list_effective_roles(
+        effective = EffectiveRoleResolver.list_effective_roles(
             self.db, membership_id=membership.id, tenant_id=self.tenant.id,
             application_id=self.application.id,
         )

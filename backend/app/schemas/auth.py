@@ -107,6 +107,15 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=12, max_length=128)
 
 
+class ProfileUpdate(BaseModel):
+    """登录态自助更新个人资料：仅开放展示名（约束与注册/邀请一致）。
+
+    邮箱与手机号是登录标识，变更涉及验证通道与账号接管风险，仍走管理员路径。
+    """
+
+    display_name: str = Field(min_length=1, max_length=120)
+
+
 class AdminPasswordReset(BaseModel):
     """管理员重置用户密码：新口令仅经受保护管理请求进入，不在响应回显。"""
 

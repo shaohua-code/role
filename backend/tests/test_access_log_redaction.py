@@ -5,18 +5,18 @@ import unittest
 
 import app.main as main_module
 from app.services.access_log_redaction import (
+    AccessLogRedaction,
     UvicornAccessLogRedactionFilter,
-    redact_request_target,
 )
 
 
 class AccessLogRedactionTests(unittest.TestCase):
     def test_redacts_the_entire_query_but_keeps_path(self) -> None:
         target = "/api/v1/oidc/logout?id_token_hint=signed-secret&state=opaque"
-        self.assertEqual(redact_request_target(target), "/api/v1/oidc/logout?[QUERY_REDACTED]")
+        self.assertEqual(AccessLogRedaction.redact_request_target(target), "/api/v1/oidc/logout?[QUERY_REDACTED]")
 
     def test_keeps_path_when_there_is_no_query(self) -> None:
-        self.assertEqual(redact_request_target("/api/v1/ready"), "/api/v1/ready")
+        self.assertEqual(AccessLogRedaction.redact_request_target("/api/v1/ready"), "/api/v1/ready")
 
     def test_uvicorn_access_record_never_formats_query_values(self) -> None:
         record = logging.LogRecord(

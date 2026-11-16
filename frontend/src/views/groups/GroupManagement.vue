@@ -232,7 +232,10 @@ watch(() => props.active, active => {
       :empty-text="tenantId ? '当前租户还没有用户组' : '当前筛选条件下还没有用户组'"
     >
       <template #header-extra>
-        <a-button v-if="canManage" type="primary" :disabled="!tenants.length" @click="createGroup"><PlusOutlined class="mr-1" />新建用户组</a-button>
+        <a-button v-if="canManage" type="primary" :disabled="!tenants.length" @click="createGroup">
+          <template #icon><PlusOutlined /></template>
+          新建用户组
+        </a-button>
       </template>
       <a-select v-model:value="tenantId" placeholder="全部租户" allow-clear class="admin-filter-wide"
         :options="tenants.map(tenant => ({ value: tenant.id, label: tenant.name }))" @change="loadGroups" />

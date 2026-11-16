@@ -747,7 +747,10 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
       empty-text="当前条件下没有用户，可创建用户或调整搜索条件"
     >
       <template #header-extra>
-        <a-button v-if="canManageUsers" type="primary" :disabled="!tenantOptions.length" @click="openCreate"><PlusOutlined class="mr-1" />新建用户</a-button>
+        <a-button v-if="canManageUsers" type="primary" :disabled="!tenantOptions.length" @click="openCreate">
+          <template #icon><PlusOutlined /></template>
+          新建用户
+        </a-button>
       </template>
       <AdminSearchField v-model="searchText" placeholder="搜索邮箱或姓名，回车查询" @search="loadUsers" />
       <template #actions>

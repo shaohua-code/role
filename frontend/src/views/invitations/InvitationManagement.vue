@@ -317,7 +317,10 @@ watch(() => props.active, (active) => {
       <a-space :size="8">
         <!-- G21 批量邀请：一次多邮箱，冲突跳过不阻断。 -->
         <a-button v-if="canManageInvites" @click="openBatch">批量邀请</a-button>
-        <a-button v-if="canManageInvites" type="primary" @click="openCreate"><PlusOutlined class="mr-1" />新建邀请</a-button>
+        <a-button v-if="canManageInvites" type="primary" @click="openCreate">
+          <template #icon><PlusOutlined /></template>
+          新建邀请
+        </a-button>
       </a-space>
     </template>
     <a-select

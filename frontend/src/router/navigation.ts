@@ -15,8 +15,8 @@ import {
   UserOutlined,
 } from '@/plugins/icons'
 
-/** Admin page keys. 接入向导已下线，只读对接指南与应用工作台同权；运营总览为 L1 入口，日常主路径是两个工作台，列表页进「高级管理」。 */
-export type PageKey = 'overview' | 'tenants' | 'applications' | 'application_workspace' | 'integration_guide' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'organization_workspace' | 'tenant_access' | 'roles' | 'authorization_simulation' | 'models' | 'model_usage' | 'themes' | 'audit'
+/** Admin page keys. 接入向导已下线，只读对接指南与应用工作台同权；运营总览为 L1 入口，日常主路径是两个工作台，列表页进「高级管理」。profile 为个人信息页（登录即可达，不占侧栏，入口在顶栏用户菜单）。 */
+export type PageKey = 'overview' | 'profile' | 'tenants' | 'applications' | 'application_workspace' | 'integration_guide' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'organization_workspace' | 'tenant_access' | 'roles' | 'authorization_simulation' | 'models' | 'model_usage' | 'themes' | 'audit'
 
 /** Sidebar groups aligned with user-centent IA + 高级收口。 */
 export type NavGroupKey = 'root' | 'identity' | 'access' | 'advanced' | 'platform' | 'ops'
@@ -28,6 +28,7 @@ export interface NavGroupMeta {
 
 export const PAGE_PATHS: Record<PageKey, string> = {
   overview: '/overview',
+  profile: '/profile',
   tenants: '/tenants',
   applications: '/applications',
   application_workspace: '/application-workspace',
@@ -110,6 +111,7 @@ export const TENANT_MERGED_PAGES: Partial<Record<PageKey, PageKey>> = {
  */
 export const PAGE_INFO: Partial<Record<PageKey, { title: string }>> = {
   overview: { title: '运营总览' },
+  profile: { title: '个人信息' },
   tenants: { title: '租户管理' },
   application_workspace: { title: '应用工作台' },
   integration_guide: { title: '项目对接指南' },

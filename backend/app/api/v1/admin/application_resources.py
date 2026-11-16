@@ -23,8 +23,8 @@ from app.schemas.application_resources import (
     ApplicationResourceUpdate,
     RoleResourcesAssign,
 )
-from app.services.admin_authorization import has_application_admin_access
-from app.services.rbac_guards import bump_memberships_holding_role
+from app.services.admin_authorization import AdminAccessGuard
+from app.services.rbac_guards import AuthVersionService
 
 router = APIRouter(tags=["应用资源树"])
 
@@ -32,7 +32,7 @@ router = APIRouter(tags=["应用资源树"])
 def _load_application(application_id: UUID, actor: User, db: Session, *, manage: bool) -> Application:
     """按 404 口径加载应用并校验管理访问权，避免暴露应用存在性。"""
     application = db.get(Application, application_id)
-    if not application or not has_application_admin_access(
+    if not application or not AdminAccessGuard.has_application_admin_access(
         actor, application.tenant_id, db, manage=manage, application_id=application.id,
     ):
         raise HTTPException(404, "应用不存在")
@@ -231,7 +231,7 @@ def delete_application_resource(
     db.delete(row)
     db.flush()
     for role_id in holder_role_ids:
-        bump_memberships_holding_role(db, role_id)
+        AuthVersionService.bump_memberships_holding_role(db, role_id)
     audit(db, actor, request, "application_resource.delete", "application", str(application.id), {
         "application_id": str(application.id),
         "resource_id": str(row.id),
@@ -283,7 +283,7 @@ def assign_role_application_resources(
     for rid in expanded - existing_ids:
         db.add(RoleApplicationResource(role_id=role.id, resource_id=rid))
     # 资源授权即权限变化：刷新持有该角色的成员，旧业务凭证立即失效重取。
-    bump_memberships_holding_role(db, role.id)
+    AuthVersionService.bump_memberships_holding_role(db, role.id)
     audit(db, actor, request, "application_resource.assign", "application", str(application.id), {
         "application_id": str(application.id),
         "role_id": str(role.id),

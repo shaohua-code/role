@@ -26,3 +26,4 @@ export const RoleManagement = loadFeature(() => import('@/views/roles/RoleManage
 export const UserManagement = loadFeature(() => import('@/views/users/UserManagement.vue'))
 export const OrganizationWorkspace = loadFeature(() => import('@/views/organization-workspace/index.vue'))
 export const TenantAccessManagement = loadFeature(() => import('@/views/tenant-admin/TenantAccessManagement.vue'))
+export const ProfilePage = loadFeature(() => import('@/views/profile/index.vue'))

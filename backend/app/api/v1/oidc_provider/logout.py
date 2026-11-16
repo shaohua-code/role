@@ -14,7 +14,7 @@ from app.db.session import get_db_session
 from app.models.application import Application
 from app.models.identity import AuditEvent, RefreshSession, User
 from app.models.oidc import OAuthRefreshToken
-from app.services.login_throttle import client_ip_for_request
+from app.services.login_throttle import LoginThrottleService
 from .common import _append_query, _error, _hash, _parse_form, _single
 from .constants import REFRESH_COOKIE
 router = APIRouter()
@@ -101,7 +101,7 @@ async def end_session(request: Request,
         db.add(AuditEvent(
             actor_user_id=user.id, tenant_id=app.tenant_id, action="oidc.logout",
             target_type="application", target_id=str(app.id),
-            source_ip=client_ip_for_request(request, get_settings()),
+            source_ip=LoginThrottleService.client_ip_for_request(request, get_settings()),
             details={"client_id": app.client_id},
         ))
     db.commit()

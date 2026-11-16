@@ -19,7 +19,7 @@ from app.models.identity import (
     RevokedAccessToken,
 )
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRefreshToken
-from app.services.maintenance import cleanup_expired_credentials
+from app.services.maintenance import CredentialMaintenanceService
 
 
 class ExpiredCredentialCleanupTests(unittest.TestCase):
@@ -116,7 +116,7 @@ class ExpiredCredentialCleanupTests(unittest.TestCase):
     def test_only_expired_ephemeral_credentials_are_deleted(self) -> None:
         self._add_one_time_rows()
 
-        deleted = cleanup_expired_credentials(self.db, now=self.now, batch_size=20)
+        deleted = CredentialMaintenanceService.cleanup_expired_credentials(self.db, now=self.now, batch_size=20)
 
         self.assertEqual(deleted, {
             "refresh_sessions": 1,
@@ -147,8 +147,8 @@ class ExpiredCredentialCleanupTests(unittest.TestCase):
                                    expires_at=second_expired))
         self.db.commit()
 
-        first = cleanup_expired_credentials(self.db, now=self.now, batch_size=1)
-        second = cleanup_expired_credentials(self.db, now=self.now, batch_size=1)
+        first = CredentialMaintenanceService.cleanup_expired_credentials(self.db, now=self.now, batch_size=1)
+        second = CredentialMaintenanceService.cleanup_expired_credentials(self.db, now=self.now, batch_size=1)
 
         self.assertEqual(first["refresh_sessions"], 1)
         self.assertEqual(second["refresh_sessions"], 1)
@@ -168,9 +168,9 @@ class ExpiredCredentialCleanupTests(unittest.TestCase):
 
     def test_rejects_naive_timestamp_and_empty_batch(self) -> None:
         with self.assertRaises(ValueError):
-            cleanup_expired_credentials(self.db, now=datetime(2030, 1, 2), batch_size=1)
+            CredentialMaintenanceService.cleanup_expired_credentials(self.db, now=datetime(2030, 1, 2), batch_size=1)
         with self.assertRaises(ValueError):
-            cleanup_expired_credentials(self.db, now=self.now, batch_size=0)
+            CredentialMaintenanceService.cleanup_expired_credentials(self.db, now=self.now, batch_size=0)
 
 
 if __name__ == "__main__":

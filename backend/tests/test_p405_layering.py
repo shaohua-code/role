@@ -36,8 +36,8 @@ from app.schemas.access_control import (
     RolePermissionsUpdate,
 )
 from app.schemas.applications import ApplicationCreate
-from app.services.admin_authorization import has_application_admin_access
-from app.services.authorization import evaluate_access
+from app.services.admin_authorization import AdminAccessGuard
+from app.services.authorization import AuthorizationEvaluator
 from app.services.permission_kinds import (
     ROLE_SCOPE_APP,
     ROLE_SCOPE_MEMBER,
@@ -51,9 +51,8 @@ from app.services.role_provisioning import (
     L3_GRANT_NODE_CODES,
     L3_ROLE_KEY,
     L4_ROLE_KEY,
+    RoleProvisioning,
     TEMPLATE_ROLE_KEYS,
-    provision_application_platform_roles,
-    provision_tenant_admin_role,
 )
 from tests.greenfield_fixture import make_platform_admin_binding
 
@@ -100,9 +99,9 @@ class P405LayeringTests(unittest.TestCase):
         self.l2 = self._user("l2")
         self.member = self._user("member")
         # 平台角色全局化：tenant.admin 全局一份（宿主平台管理租户），跨租户生效。
-        self.l3_role = provision_tenant_admin_role(self.db, self.tenant.id)
+        self.l3_role = RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
         # 应用开通预置 (应用管理员, 应用成员) 二元组（多应用管理员已并入应用管理员）。
-        self.admin_role, self.member_role = provision_application_platform_roles(
+        self.admin_role, self.member_role = RoleProvisioning.provision_application_platform_roles(
             self.db, self.tenant.id, self.application.id,
         )
         self._bind(self.l3, self.l3_role)
@@ -352,11 +351,11 @@ class P405LayeringTests(unittest.TestCase):
             tenant_id=self.tenant.id, application_id=self.application.id,
             permission_code=self.business.code, include_data_scope=True,
         )
-        denied = evaluate_access(check, self.member, self.db)
+        denied = AuthorizationEvaluator.evaluate_access(check, self.member, self.db)
         self.assertFalse(denied["decision"]["allowed"])
         self.db.add(RoleBinding(membership_id=self.member_membership.id, role_id=self.reader.id))
         self.db.commit()
-        allowed = evaluate_access(check, self.member, self.db)
+        allowed = AuthorizationEvaluator.evaluate_access(check, self.member, self.db)
         self.assertTrue(allowed["decision"]["allowed"])
 
     def test_l3_can_appoint_app_admin(self) -> None:
@@ -385,6 +384,47 @@ class P405LayeringTests(unittest.TestCase):
                 self.request, actor=self.l2, db=self.db,
             )
         self.assertEqual(ctx.exception.status_code, 403)
+
+    def _custom_tenant_role(self, key: str, node_codes: tuple[str, ...]) -> Role:
+        """自定义租户级平台角色：挂给定管理面节点（不钉应用）。"""
+        role = Role(
+            tenant_id=self.tenant.id, application_id=None, kind="tenant",
+            key=key, name=key, scope=ROLE_SCOPE_TENANT, status="active",
+        )
+        self.db.add(role)
+        self.db.flush()
+        for code in node_codes:
+            self.db.add(RolePermission(role_id=role.id, permission_id=self.catalog[code].id))
+        self.db.flush()
+        return role
+
+    def test_custom_tenant_role_with_manage_node_can_bind_members(self) -> None:
+        # 自定义租户级管理角色持「应用角色写操作」节点：与 L3 同口径维护应用角色成员。
+        manager = self._user("mgr")
+        manager_role = self._custom_tenant_role("custom.app.manager", ("button.app_role.manage",))
+        self._bind(manager, manager_role)
+        bind_application_role(
+            self.application.id,
+            ApplicationRoleBindingCreate(email=self.member.email, role_id=self.reader.id),
+            self.request, actor=manager, db=self.db,
+        )
+        self.assertTrue(self._has_binding(self.member_membership.id, self.reader.id))
+
+    def test_custom_tenant_role_without_manage_node_cannot_bind_members(self) -> None:
+        # 范围达标但未持按钮节点（只勾菜单）：绑成员仍 403（写接口认按钮节点）。
+        viewer = self._user("viewer")
+        viewer_role = self._custom_tenant_role(
+            "custom.app.viewer", ("menu.application_workspace",),
+        )
+        self._bind(viewer, viewer_role)
+        with self.assertRaises(HTTPException) as ctx:
+            bind_application_role(
+                self.application.id,
+                ApplicationRoleBindingCreate(email=self.member.email, role_id=self.reader.id),
+                self.request, actor=viewer, db=self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("缺少应用角色成员管理权限", str(ctx.exception.detail))
 
     def test_catalog_hides_codes_actor_does_not_hold(self) -> None:
         # 目录可见性 = 操作者已挂节点并集（看得见才能配）。
@@ -541,10 +581,10 @@ class P405LayeringTests(unittest.TestCase):
 
     def test_app_admin_access_pinned_only(self) -> None:
         # 应用管理员管 N 个应用 = 绑 N 个应用：钉住的应用可管，未钉应用（创建入口）不可向上。
-        self.assertTrue(has_application_admin_access(
+        self.assertTrue(AdminAccessGuard.has_application_admin_access(
             self.l2, self.tenant.id, self.db, manage=True, application_id=self.application.id,
         ))
-        self.assertFalse(has_application_admin_access(
+        self.assertFalse(AdminAccessGuard.has_application_admin_access(
             self.l2, self.tenant.id, self.db, manage=True, application_id=None,
         ))
 

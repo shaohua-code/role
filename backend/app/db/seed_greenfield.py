@@ -19,14 +19,13 @@ from app.core.security import hash_password
 from app.db.session import get_engine
 from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import Tenant, TenantMembership, User
-from app.services.permission_kinds import all_ui_codes, seed_ui_permissions
+from app.services.permission_kinds import PermissionCatalog
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
     L4_ROLE_KEY,
     LEGACY_REVOKED_NODE_CODES,
     ROLE_SCOPE_SUPER,
-    provision_application_platform_roles,
-    provision_tenant_admin_role,
+    RoleProvisioning,
 )
 
 PLATFORM_TENANT_SLUG = "platform"
@@ -34,7 +33,7 @@ PLATFORM_TENANT_SLUG = "platform"
 
 def seed_permissions(db: Session) -> int:
     """幂等写入管理面「菜单 → 按钮」目录；业务码由应用注册接口创建（强制 requires_data_scope）。"""
-    return seed_ui_permissions(db)
+    return PermissionCatalog.seed_ui_permissions(db)
 
 
 def seed_platform_tenant(db: Session) -> Tenant:
@@ -66,7 +65,7 @@ def seed_l1_role(db: Session, platform_tenant: Tenant) -> Role:
         select(RolePermission.permission_id).where(RolePermission.role_id == role.id),
     ).all())
     for permission in db.scalars(select(Permission).where(
-        Permission.code.in_(all_ui_codes()),
+        Permission.code.in_(PermissionCatalog.all_ui_codes()),
     )).all():
         if permission.id not in existing_permission_ids:
             db.add(RolePermission(role_id=role.id, permission_id=permission.id))
@@ -134,7 +133,7 @@ def seed_demo_tenant(db: Session, *, with_demo_application: bool = False) -> Non
         db.flush()
         print("已创建演示租户 demo")
     # 平台角色全局化：tenant.admin 全局一份（宿主平台租户），演示租户不再预置副本。
-    provision_tenant_admin_role(db)
+    RoleProvisioning.provision_tenant_admin_role(db)
     if with_demo_application:
         from app.models.application import Application
 
@@ -150,7 +149,7 @@ def seed_demo_tenant(db: Session, *, with_demo_application: bool = False) -> Non
             db.add(application)
             db.flush()
             print("已创建演示应用 demo-app")
-        provision_application_platform_roles(db, tenant.id, application.id)
+        RoleProvisioning.provision_application_platform_roles(db, tenant.id, application.id)
 
 
 def run_seed(*, demo_tenant: bool = False, demo_application: bool = False) -> None:
@@ -163,7 +162,7 @@ def run_seed(*, demo_tenant: bool = False, demo_application: bool = False) -> No
         platform_tenant = seed_platform_tenant(db)
         l1_role = seed_l1_role(db, platform_tenant)
         # 阶段三：幂等确保全局唯一的 L3 租户管理员模板（宿主平台租户；全局生效）。
-        provision_tenant_admin_role(db)
+        RoleProvisioning.provision_tenant_admin_role(db)
         # 阶段四：按环境变量创建引导超管并绑定 L1；未配置则跳过。
         seed_bootstrap_admin(db, platform_tenant, l1_role)
         # 阶段五（可选）：--demo-tenant / --demo-application 追加演示租户与应用。
@@ -206,9 +205,9 @@ def seed_walkthrough_accounts(db: Session) -> None:
         db.add(application)
         db.flush()
         print("已创建演示应用 demo-app")
-    l2_role, l4_role = provision_application_platform_roles(db, demo_tenant.id, application.id)
+    l2_role, l4_role = RoleProvisioning.provision_application_platform_roles(db, demo_tenant.id, application.id)
     # 平台角色全局化：走查 L3 账号绑定全局唯一的 tenant.admin（跨租户生效）。
-    l3_role = provision_tenant_admin_role(db)
+    l3_role = RoleProvisioning.provision_tenant_admin_role(db)
 
     # 业务码登记：与应用命名空间对齐，强制行级数据范围（缺策略时 evaluate_access 拒绝）。
     business_permission = db.scalar(select(Permission).where(Permission.code == WALKTHROUGH_BUSINESS_CODE))

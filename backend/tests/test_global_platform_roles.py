@@ -23,16 +23,12 @@ from app.models.authorization import Permission, Role, RoleBinding
 from app.models.identity import Tenant, TenantMembership, User
 from app.schemas.access_control import RoleBindingCreate
 from app.schemas.auth import AdminUserCreate
-from app.services.effective_roles import (
-    authorized_role_ids_statement,
-    list_effective_roles,
-)
-from app.services.rbac_guards import list_management_capabilities
+from app.services.effective_roles import EffectiveRoleResolver
+from app.services.rbac_guards import ActorVisibility
 from app.services.role_provisioning import (
     L2_GRANT_NODE_CODES,
     L3_GRANT_NODE_CODES,
-    provision_application_admin_role,
-    provision_tenant_admin_role,
+    RoleProvisioning,
 )
 from tests.greenfield_fixture import (
     ensure_platform_tenant,
@@ -63,7 +59,7 @@ class GlobalPlatformRoleTests(unittest.TestCase):
             ))
         self.db.flush()
         # 全局唯一 tenant.admin：tenant_id 参数已废弃，一律宿主平台管理租户。
-        self.l3_role = provision_tenant_admin_role(self.db)
+        self.l3_role = RoleProvisioning.provision_tenant_admin_role(self.db)
         self.db.commit()
         self.request = Request({
             "type": "http", "method": "POST", "path": "/api/v1",
@@ -126,18 +122,18 @@ class GlobalPlatformRoleTests(unittest.TestCase):
             (membership_x, self.tenant_x), (membership_y, self.tenant_y),
         ):
             # 有效角色：两个租户上下文都命中全局 tenant.admin（不再按角色租户过滤）。
-            roles = list_effective_roles(
+            roles = EffectiveRoleResolver.list_effective_roles(
                 self.db, membership_id=membership.id, tenant_id=tenant.id,
             )
             self.assertIn(self.l3_role.id, {role.id for role in roles})
             # OIDC 授权口径：authorized_role_ids_statement 同样跨租户命中。
             authorized = set(self.db.scalars(
-                authorized_role_ids_statement(membership.id, tenant.id),
+                EffectiveRoleResolver.authorized_role_ids_statement(membership.id, tenant.id),
             ).all())
             self.assertIn(self.l3_role.id, authorized)
         # 应用上下文同样生效：平台类角色在 (tenant, application) 维度全局命中。
         application = self._application(self.tenant_x, "appx")
-        roles = list_effective_roles(
+        roles = EffectiveRoleResolver.list_effective_roles(
             self.db, membership_id=membership_x.id, tenant_id=self.tenant_x.id,
             application_id=application.id,
         )
@@ -153,7 +149,7 @@ class GlobalPlatformRoleTests(unittest.TestCase):
         也不会泄漏到角色所属应用之外。
         """
         application = self._application(self.tenant_x, "appx")
-        app_role = provision_application_admin_role(
+        app_role = RoleProvisioning.provision_application_admin_role(
             self.db, self.tenant_x.id, application.id,
         )
         target = self._user("target")
@@ -174,13 +170,13 @@ class GlobalPlatformRoleTests(unittest.TestCase):
         ))
         self.assertIsNotNone(binding_exists)
         # 应用上下文生效：租户 Y 成员在该应用上下文命中该应用角色（含自动补齐的 L4）。
-        app_roles = list_effective_roles(
+        app_roles = EffectiveRoleResolver.list_effective_roles(
             self.db, membership_id=membership_y.id, tenant_id=self.tenant_y.id,
             application_id=application.id,
         )
         self.assertIn(app_role.id, {role.id for role in app_roles})
         # 非应用上下文不出现：租户级上下文（application_id=None）不含应用角色。
-        tenant_roles = list_effective_roles(
+        tenant_roles = EffectiveRoleResolver.list_effective_roles(
             self.db, membership_id=membership_y.id, tenant_id=self.tenant_y.id,
         )
         self.assertNotIn(app_role.id, {role.id for role in tenant_roles})
@@ -239,7 +235,7 @@ class GlobalPlatformRoleTests(unittest.TestCase):
         """非超管 L3 的 capabilities.tenants 不含平台管理租户（业务租户正常收录）。"""
         operator = self._l3_operator_with_platform_membership()
         self.db.commit()
-        payload = list_management_capabilities(operator, self.db)
+        payload = ActorVisibility.list_management_capabilities(operator, self.db)
         self.assertFalse(payload["platform_admin"])
         self.assertEqual(payload["scope"], "tenant")
         tenant_ids = {entry["tenant_id"] for entry in payload["tenants"]}

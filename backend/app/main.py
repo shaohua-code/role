@@ -16,12 +16,12 @@ from app.api.v1.health import readiness_check, router as health_router
 from app.api.v1.oidc_provider import discovery_document, router as oidc_router
 from app.api.v1.model_usage import router as model_usage_router
 from app.core.config import get_settings
-from app.services.maintenance import cleanup_expired_credentials_from_database
-from app.services.public_registration import deliver_registration_emails
-from app.services.access_log_redaction import install_uvicorn_access_log_redaction
+from app.services.access_log_redaction import AccessLogRedactionInstaller
+from app.services.maintenance import CredentialMaintenanceService
+from app.services.public_registration import RegistrationFlow
 
 # 先集中初始化配置，再注册版本化路由；身份认证中间件会在认证切片中加入。
-install_uvicorn_access_log_redaction()
+AccessLogRedactionInstaller.install_uvicorn_access_log_redaction()
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def _credential_cleanup_loop() -> None:
                 await asyncio.sleep(interval)
                 continue
             counts = await asyncio.to_thread(
-                cleanup_expired_credentials_from_database,
+                CredentialMaintenanceService.cleanup_expired_credentials_from_database,
                 batch_size=settings.credential_cleanup_batch_size,
             )
             if any(counts.values()):
@@ -69,7 +69,7 @@ async def _registration_email_outbox_loop() -> None:
                 if not ready:
                     await asyncio.sleep(settings.public_registration_delivery_interval_seconds)
                     continue
-            await asyncio.to_thread(deliver_registration_emails)
+            await asyncio.to_thread(RegistrationFlow.deliver_registration_emails)
         except Exception:
             # 发件箱投递异常只记录服务端堆栈，不包含收件邮箱或验证码。
             logger.exception("ToC 注册验证码发件箱处理失败，将在下一周期重试")

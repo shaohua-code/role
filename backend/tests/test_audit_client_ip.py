@@ -14,7 +14,7 @@ from app.api.v1.oidc_provider.common import _oauth_audit
 from app.api.v1.oidc_provider.logout import end_session
 from app.core.config import Settings
 from app.models.identity import AuditEvent
-from app.services.login_throttle import client_ip_for_request
+from app.services.login_throttle import LoginThrottleService
 
 
 class AuditClientIPTests(unittest.TestCase):
@@ -94,7 +94,7 @@ class AuditClientIPTests(unittest.TestCase):
         })
 
         with self.assertRaises(HTTPException) as error:
-            client_ip_for_request(request, self.settings)
+            LoginThrottleService.client_ip_for_request(request, self.settings)
 
         self.assertEqual(error.exception.status_code, 503)
 

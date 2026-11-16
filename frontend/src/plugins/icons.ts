@@ -34,6 +34,8 @@ export {
   DownOutlined,
   UpOutlined,
   LockOutlined,
+  LogoutOutlined,
+  EditOutlined,
   CopyOutlined,
   PlusOutlined,
   EllipsisOutlined,

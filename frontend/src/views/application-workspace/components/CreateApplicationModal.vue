@@ -69,11 +69,14 @@ function parseLines(value: string): string[] {
   return value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
 }
 
+// 前端只拦截明显非法形态（无地址 / 凭据 / 片段）；scheme 放宽到 http——
+// 非 localhost 的 HTTP 是否放行由服务端 IAM_ALLOW_INSECURE_REDIRECT_URIS 开关最终判定，
+// 开关关闭时服务端 422 会给出可操作的提示文案。
 function isSafeRedirectUri(value: string): boolean {
   try {
     const url = new URL(value)
     if (url.hash || url.username || url.password) return false
-    return url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))
+    return url.protocol === 'https:' || url.protocol === 'http:'
   } catch {
     return false
   }
@@ -111,7 +114,7 @@ async function saveApplication(): Promise<void> {
     return
   }
   if ([...redirectUris, ...logoutUris].some(uri => !isSafeRedirectUri(uri))) {
-    message.warning('回调地址必须使用 HTTPS；本地开发仅允许 localhost 或 127.0.0.1 的 HTTP 地址，且不能包含凭据或片段')
+    message.warning('回调地址须为 http(s) 地址且不含凭据或片段；非 localhost 的 HTTP 需服务端配置 IAM_ALLOW_INSECURE_REDIRECT_URIS=true 放行')
     return
   }
   saving.value = true

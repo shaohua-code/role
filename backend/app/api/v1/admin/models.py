@@ -14,12 +14,7 @@ from app.models.identity import Tenant, User
 from app.models.model_catalog import ModelCatalog
 from app.schemas.models import ModelCatalogCreate, ModelCatalogStatusUpdate, ModelCatalogUpdate
 from app.services.permission_kinds import ROLE_SCOPE_SUPER
-from app.services.rbac_guards import (
-    ensure_codes,
-    ensure_roles,
-    ensure_scope,
-    list_actor_management_tenant_ids,
-)
+from app.services.rbac_guards import ActorVisibility, PermissionEnforcer
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(prefix="/models", tags=["模型目录"])
@@ -29,10 +24,10 @@ router = APIRouter(prefix="/models", tags=["模型目录"])
 def list_models(tenant_id: UUID | None = None, actor: User = Depends(current_user),
                 db: Session = Depends(get_db_session)) -> list[dict]:
     """列出模型配置摘要；凭证引用只转换为是否已配置，不向控制台回传。"""
-    ensure_codes(actor, db, "menu.models", tenant_id=tenant_id, detail="缺少管理权限：menu.models")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.models", tenant_id=tenant_id, detail="缺少管理权限：menu.models")
     statement = select(ModelCatalog).order_by(ModelCatalog.created_at.desc()).limit(500)
     # 数据边界（P1-3）：超管全域；非超管无论是否传 tenant_id 都收敛到自身管理租户。
-    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     if tenant_scope is not None:
         allowed = tenant_scope if tenant_id is None else tenant_scope & {tenant_id}
         if not allowed:
@@ -75,8 +70,8 @@ def create_model(
 ) -> dict:
     """目录只接收 Secret Manager 引用；不能把 Provider API Key 放入业务表。"""
     # 模型治理写=超管：范围闸门 + button.models.manage 节点双重收口。
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
-    ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
+    PermissionEnforcer.ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
     if not db.get(Tenant, body.tenant_id):
         raise HTTPException(404, "租户不存在")
     if body.endpoint_url and not valid_redirect_uri(body.endpoint_url):
@@ -113,8 +108,8 @@ def update_model(
     if not row:
         raise HTTPException(404, "模型不存在")
     # 模型治理写=超管：范围闸门 + button.models.manage 节点双重收口。
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
-    ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
+    PermissionEnforcer.ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
 
     # 未提交字段保持不变；显式 null 可清除可选值或限额。
     # Secret Manager 引用不会进入审计详情或 API 响应，限额变更只审计字段名。
@@ -155,8 +150,8 @@ def set_model_status(
     if not row:
         raise HTTPException(404, "模型不存在")
     # 模型治理写=超管：范围闸门 + button.models.manage 节点双重收口。
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
-    ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
+    PermissionEnforcer.ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
     if row.status != body.expected_status:
         raise HTTPException(409, "模型状态已被其他管理员修改，请刷新后重试")
     if row.status == body.status:
@@ -183,8 +178,8 @@ def delete_model(
     if not row:
         raise HTTPException(404, "模型不存在")
     # 模型治理写=超管：范围闸门 + button.models.manage 节点双重收口。
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
-    ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="模型治理写操作需要超管范围")
+    PermissionEnforcer.ensure_codes(actor, db, "button.models.manage", detail="缺少管理权限：button.models.manage")
     usage_exists = db.scalar(select(ModelUsageEvent.id).where(ModelUsageEvent.model_id == row.id).limit(1))
     reservation_exists = db.scalar(select(ModelUsageReservation.id).where(ModelUsageReservation.model_id == row.id).limit(1))
     if usage_exists or reservation_exists:

@@ -681,7 +681,10 @@ watch(statusFilter, () => {
     :empty-text="hasServerFilters() ? '没有匹配条件的角色' : '暂无角色，可创建角色后配置权限'"
   >
     <template #header-extra>
-      <a-button v-if="canCreateRoles" type="primary" @click="openCreate"><PlusOutlined class="mr-1" />新建平台角色</a-button>
+      <a-button v-if="canCreateRoles" type="primary" @click="openCreate">
+        <template #icon><PlusOutlined /></template>
+        新建平台角色
+      </a-button>
     </template>
     <AdminSearchField v-model="searchText" placeholder="搜索角色名称、标识或说明" @search="onSearch" />
     <a-select v-model:value="statusFilter" allow-clear placeholder="全部状态" :options="statusOptions" />

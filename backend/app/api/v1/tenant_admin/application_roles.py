@@ -22,30 +22,21 @@ from app.schemas.access_control import (
     RoleStatusUpdate,
     RoleUpdate,
 )
-from app.services.admin_authorization import has_application_admin_access
-from app.services.permission_impact import (
-    StaleRolePermissionPreview,
-    apply_role_permissions,
-    preview_role_permissions,
-)
-from app.services.permission_kinds import ROLE_SCOPE_TENANT, infer_permission_kind
+from app.services.admin_authorization import AdminAccessGuard
+from app.services.permission_impact import PermissionImpactService, StaleRolePermissionPreview
+from app.services.permission_kinds import ROLE_SCOPE_TENANT, PermissionCatalog
 from app.services.permission_namespace import (
     assert_application_grant_permissions,
     is_management_code,
     permission_matches_namespace,
 )
-from app.services.rbac_guards import (
-    actor_grantable_management_codes,
-    bump_membership_versions,
-    ensure_scope,
-    user_has_any_role,
-)
+from app.services.rbac_guards import ActorVisibility, AuthVersionService, PermissionEnforcer
 from app.services.role_provisioning import (
     L2_ROLE_KEY,
     L3_ROLE_KEY,
     L4_ROLE_KEY,
     TEMPLATE_ROLE_KEYS,
-    is_application_class_role,
+    RoleProvisioning,
 )
 
 
@@ -59,20 +50,26 @@ def _ensure_app_role_binding_permission(
         return
     # 任命/撤职应用管理员是租户级能力：范围闸门收口（应用级不能向上）。
     if role.key == L2_ROLE_KEY:
-        ensure_scope(
+        PermissionEnforcer.ensure_scope(
             actor, db, ROLE_SCOPE_TENANT,
             detail="任命应用管理员需要租户级及以上范围",
         )
         return
     tenant_id = application.tenant_id
-    if user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
+    if PermissionEnforcer.user_has_any_role(actor, db, (L3_ROLE_KEY,), tenant_id=tenant_id):
+        return
+    # 节点判权（§3.3 写接口认按钮节点）：L3 模板之外，持「应用角色写操作」节点的
+    # 自定义租户级管理角色同样可维护应用角色成员——租户级及以上覆盖本租户全部应用，
+    # 应用级数据边界已由入口 _authorized_application 按钉住的应用收口；任命 L2 的
+    # 范围闸门已在上面收口，不会从这里向上越权。
+    if PermissionEnforcer.user_has_management_code(actor, db, "button.app_role.manage", tenant_id=tenant_id):
         return
     # 应用管理员可维护本应用的成员/自定义应用角色（含 app.member 模板）。
-    is_app_admin = user_has_any_role(
+    is_app_admin = PermissionEnforcer.user_has_any_role(
         actor, db, (L2_ROLE_KEY,), tenant_id=tenant_id, application_id=application.id,
     )
     if is_app_admin:
-        if role.key == L4_ROLE_KEY or is_application_class_role(role):
+        if role.key == L4_ROLE_KEY or RoleProvisioning.is_application_class_role(role):
             return
         raise HTTPException(403, "缺少应用角色成员管理权限")
     raise HTTPException(403, "缺少应用角色成员管理权限")
@@ -102,7 +99,7 @@ def _ensure_application_member_binding(
 def _authorized_application(application_id: UUID, actor: User, db: Session, *, manage: bool = False) -> Application:
     """先确认授权再查角色或成员，避免 app ID 成为跨租户枚举接口。"""
     application = db.get(Application, application_id)
-    if not application or not has_application_admin_access(
+    if not application or not AdminAccessGuard.has_application_admin_access(
         actor,
         application.tenant_id,
         db,
@@ -126,7 +123,7 @@ def _authorized_role(application: Application, role_id: UUID, actor: User, db: S
     role = db.scalar(statement)
     if not role:
         raise HTTPException(404, "应用角色不存在")
-    if not has_application_admin_access(
+    if not AdminAccessGuard.has_application_admin_access(
         actor,
         application.tenant_id,
         db,
@@ -187,7 +184,7 @@ def _reject_ineligible_application_permissions(
         application.permission_namespace,
         proposed,
         current_ids,
-        actor_grantable_management_codes(actor, db),
+        ActorVisibility.actor_grantable_management_codes(actor, db),
     )
 
 
@@ -327,7 +324,7 @@ def list_application_permissions(
             Permission.surface == "business",
         ),
     ]
-    grantable = actor_grantable_management_codes(actor, db) if include_management else frozenset()
+    grantable = ActorVisibility.actor_grantable_management_codes(actor, db) if include_management else frozenset()
     if include_management:
         management_filters = [Permission.status == "active", Permission.surface == "management"]
         if grantable is not None:
@@ -362,7 +359,7 @@ def list_application_permissions(
             "scope": permission.scope,
             "description": permission.description,
             "status": permission.status,
-            "kind": infer_permission_kind(permission.code),
+            "kind": PermissionCatalog.infer_permission_kind(permission.code),
         })
     return payload
 
@@ -402,7 +399,7 @@ def preview_application_role_permissions(
     role = _authorized_role(application, role_id, actor, db, manage=True, lock=True)
     _reject_ineligible_application_permissions(application, role, body.permission_ids, actor, db)
     try:
-        return preview_role_permissions(role.id, body.permission_ids, db)
+        return PermissionImpactService.preview_role_permissions(role.id, body.permission_ids, db)
     except LookupError as error:
         raise HTTPException(404, str(error)) from error
     except ValueError as error:
@@ -421,11 +418,11 @@ def replace_application_role_permissions(
     """替换角色通用授权：本应用业务码 + 操作者可授的租户/应用管理码。"""
     application = _authorized_application(application_id, actor, db, manage=True)
     role = _authorized_role(application, role_id, actor, db, manage=True, lock=True)
-    if not is_application_class_role(role):
+    if not RoleProvisioning.is_application_class_role(role):
         raise HTTPException(422, "平台角色不能在应用工作台挂应用权限")
     _reject_ineligible_application_permissions(application, role, body.permission_ids, actor, db)
     try:
-        impact = apply_role_permissions(
+        impact = PermissionImpactService.apply_role_permissions(
             role.id,
             body.permission_ids,
             body.expected_current_permission_ids,
@@ -701,17 +698,17 @@ def bind_application_role(
         RoleBinding.membership_id == membership.id,
         RoleBinding.role_id == role.id,
     ))
-    if existing and not is_application_class_role(role):
+    if existing and not RoleProvisioning.is_application_class_role(role):
         return
     if not existing:
         db.add(RoleBinding(membership_id=membership.id, role_id=role.id))
     # 分配应用角色时自动成为该应用的平台成员。
-    if is_application_class_role(role):
+    if RoleProvisioning.is_application_class_role(role):
         _ensure_application_member_binding(db, application, membership.id)
     elif existing:
         return
     # 绑定即时生效：bump 让目标成员旧 OIDC 凭证失效重签。
-    bump_membership_versions(db, [membership.id])
+    AuthVersionService.bump_membership_versions(db, [membership.id])
     audit(db, actor, request, "application.role.bind", "user", str(membership.user_id), {
         "tenant_id": str(application.tenant_id),
         "application_id": str(application.id),
@@ -747,7 +744,7 @@ def unbind_application_role(
         return
     db.execute(delete(RoleBinding).where(RoleBinding.id == binding.id))
     # 解绑即时生效：bump 让被撤职成员旧 OIDC 凭证失效。
-    bump_membership_versions(db, [membership.id])
+    AuthVersionService.bump_membership_versions(db, [membership.id])
     audit(db, actor, request, "application.role.unbind", "user", str(user_id), {
         "tenant_id": str(application.tenant_id),
         "application_id": str(application.id),

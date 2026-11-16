@@ -41,10 +41,10 @@ class UserStatusContractTests(unittest.TestCase):
         db.scalar.return_value = row
 
         # 绿场规则：平台权限只认角色绑定；Mock 契约测试直接假定 actor 持 L1。
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True), \
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True), \
              patch("app.api.v1.admin.users.audit") as write_audit, patch(
             "app.api.v1.admin.users.commit_or_conflict"
-        ) as commit, patch("app.api.v1.admin.users.deliver_for_user"):
+        ) as commit, patch("app.services.backchannel_logout.BackchannelLogoutService.deliver_for_user"):
             # 全局锁定后还会做站内信 back-channel 投递，Mock db 无法承载其内部查询，需一并打桩。
             result = set_user_status(
                 user_id, UserStatusUpdate(expected_status="active", status="locked"), request, actor, db,
@@ -70,7 +70,7 @@ class UserStatusContractTests(unittest.TestCase):
         row = SimpleNamespace(id=user_id, status="disabled", auth_version=2)
         db, request, actor = Mock(), Mock(), SimpleNamespace(id=actor_id)
         db.scalar.return_value = row
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True), \
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True), \
              patch("app.api.v1.admin.users.audit") as write_audit, patch(
             "app.api.v1.admin.users.commit_or_conflict"
         ) as commit:
@@ -130,7 +130,7 @@ class UserLifecycleConstraintIntegrationTests(unittest.TestCase):
         db, request, actor = Mock(), Mock(), SimpleNamespace(id=uuid4())
         db.scalar.return_value = row
 
-        with patch("app.api.v1.admin.organizations.require_organization_admin_access") as require_access, patch(
+        with patch("app.services.admin_authorization.AdminAccessGuard.require_organization_admin_access") as require_access, patch(
             "app.api.v1.admin.organizations.audit"
         ) as write_audit, patch(
             "app.api.v1.admin.organizations.commit_or_conflict"
@@ -166,7 +166,7 @@ class UserLifecycleConstraintIntegrationTests(unittest.TestCase):
         row = SimpleNamespace(id=uuid4(), user_id=user_id, tenant_id=tenant_id, status="disabled")
         db, request, actor = Mock(), Mock(), SimpleNamespace(id=uuid4())
         db.scalar.return_value = row
-        with patch("app.api.v1.admin.organizations.require_organization_admin_access"), patch(
+        with patch("app.services.admin_authorization.AdminAccessGuard.require_organization_admin_access"), patch(
             "app.api.v1.admin.organizations.audit"
         ) as write_audit, patch(
             "app.api.v1.admin.organizations.commit_or_conflict"
@@ -194,7 +194,7 @@ class UserLifecycleConstraintIntegrationTests(unittest.TestCase):
     def test_membership_status_requires_tenant_manage_permission_before_row_lock(self) -> None:
         user_id, tenant_id = uuid4(), uuid4()
         db, request, actor = Mock(), Mock(), SimpleNamespace(id=uuid4())
-        with patch("app.api.v1.admin.organizations.require_organization_admin_access",
+        with patch("app.services.admin_authorization.AdminAccessGuard.require_organization_admin_access",
                    side_effect=HTTPException(403, "forbidden")):
             with self.assertRaises(HTTPException) as error:
                 set_user_membership_status(

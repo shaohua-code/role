@@ -46,8 +46,7 @@ from app.schemas.organizations import OrganizationCreate
 from app.services.role_provisioning import (
     L2_GRANT_NODE_CODES,
     L3_GRANT_NODE_CODES,
-    provision_application_platform_roles,
-    provision_tenant_admin_role,
+    RoleProvisioning,
 )
 from tests.greenfield_fixture import make_platform_admin_binding
 
@@ -88,8 +87,8 @@ class WalkthroughFixTests(unittest.TestCase):
         self.l2 = self._user("l2")
         self.member = self._user("member")
         self.outsider = self._user("outsider")
-        l3_role = provision_tenant_admin_role(self.db, self.tenant.id)
-        self.admin_role, self.member_role = provision_application_platform_roles(
+        l3_role = RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
+        self.admin_role, self.member_role = RoleProvisioning.provision_application_platform_roles(
             self.db, self.tenant.id, self.application.id,
         )
         self._bind(self.l3, l3_role)

@@ -138,7 +138,7 @@ class PasswordResetIntegrationTests(unittest.TestCase):
             "password_reset_cooldown_seconds": 60,
         })
         with patch("app.api.v1.auth.get_settings", return_value=self.settings), \
-                patch("app.api.v1.auth.send_password_reset_email") as send_email:
+                patch("app.services.email.EmailSender.send_password_reset_email") as send_email:
             from app.api.v1.auth import request_password_reset
 
             known = request_password_reset(PasswordResetRequest(email=self.user.email), self._request(), Response(), self.db)

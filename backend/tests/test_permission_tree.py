@@ -16,23 +16,20 @@ from app.models.authorization import Permission, RolePermission
 from app.models.identity import Tenant, User
 from app.models.organization import RoleDataScope
 from app.schemas.access_control import AuthorizationCheck
-from app.services.authorization import evaluate_access
+from app.services.authorization import AuthorizationEvaluator
 from app.services.permission_kinds import (
     BUTTON_CATALOG,
     MANAGEMENT_NODE_CODES,
     MENU_BUTTONS,
     MENU_CODES,
     NODE_MIN_SCOPE,
-    grant_codes_skip_missing,
-    map_role_data_scopes_to_codes,
-    seed_ui_permissions,
+    PermissionCatalog,
 )
-from app.services.rbac_guards import ensure_codes, user_has_management_code
+from app.services.rbac_guards import PermissionEnforcer
 from app.services.role_provisioning import (
     L2_GRANT_NODE_CODES,
     L3_GRANT_NODE_CODES,
-    provision_application_admin_role,
-    provision_tenant_admin_role,
+    RoleProvisioning,
 )
 from tests.greenfield_fixture import make_platform_admin_binding, make_tenant_role_binding
 
@@ -91,7 +88,7 @@ class PermissionTreeTests(unittest.TestCase):
         self.fail(f"node not found title={title} code={code}")
 
     def test_resource_tree_matches_sidebar_and_nests_buttons(self) -> None:
-        from app.services.permission_kinds import ensure_data_scope_children
+        from app.services.permission_kinds import PermissionCatalog
 
         parent = Permission(
             code="appa.doc.read",
@@ -105,7 +102,7 @@ class PermissionTreeTests(unittest.TestCase):
         )
         self.db.add(parent)
         self.db.flush()
-        ensure_data_scope_children(self.db, parent)
+        PermissionCatalog.ensure_data_scope_children(self.db, parent)
         payload = list_permission_tree(actor=self.actor, db=self.db)
         resource = payload["resource"]
         data = payload["data"]
@@ -161,7 +158,7 @@ class PermissionTreeTests(unittest.TestCase):
         tenant = Tenant(name="业务租户", slug=f"t-{uuid4().hex[:10]}")
         self.db.add(tenant)
         self.db.flush()
-        role = provision_tenant_admin_role(self.db, tenant.id)
+        role = RoleProvisioning.provision_tenant_admin_role(self.db, tenant.id)
         granted = set(self.db.scalars(
             select(Permission.code)
             .join(RolePermission, RolePermission.permission_id == Permission.id)
@@ -188,7 +185,7 @@ class PermissionTreeTests(unittest.TestCase):
         )
         self.db.add(application)
         self.db.flush()
-        role = provision_application_admin_role(self.db, tenant.id, application.id)
+        role = RoleProvisioning.provision_application_admin_role(self.db, tenant.id, application.id)
         granted = set(self.db.scalars(
             select(Permission.code)
             .join(RolePermission, RolePermission.permission_id == Permission.id)
@@ -254,11 +251,11 @@ class PermissionTreeTests(unittest.TestCase):
             permission_ids=[menu.id, button.id],
         )
         # 判权只认节点：无 role_keys 回退，自定义角色持节点即生效。
-        self.assertTrue(user_has_management_code(reader, self.db, "button.users.manage", tenant_id=tenant.id))
-        self.assertTrue(user_has_management_code(reader, self.db, "menu.users"))
-        ensure_codes(reader, self.db, "button.users.manage")
+        self.assertTrue(PermissionEnforcer.user_has_management_code(reader, self.db, "button.users.manage", tenant_id=tenant.id))
+        self.assertTrue(PermissionEnforcer.user_has_management_code(reader, self.db, "menu.users"))
+        PermissionEnforcer.ensure_codes(reader, self.db, "button.users.manage")
         with self.assertRaises(HTTPException) as ctx:
-            ensure_codes(stranger, self.db, "button.users.manage")
+            PermissionEnforcer.ensure_codes(stranger, self.db, "button.users.manage")
         self.assertEqual(ctx.exception.status_code, 403)
 
 
@@ -304,7 +301,7 @@ class DataScopeCodeTests(unittest.TestCase):
         self.engine.dispose()
 
     def _decide(self) -> dict:
-        return evaluate_access(
+        return AuthorizationEvaluator.evaluate_access(
             AuthorizationCheck(
                 tenant_id=self.tenant.id,
                 permission_code="appa.doc.read",
@@ -321,19 +318,19 @@ class DataScopeCodeTests(unittest.TestCase):
         self.assertEqual(result["decision"]["reason"], "data_scope_policy_missing")
 
     def test_granting_data_leaf_allows_self_scope(self) -> None:
-        from app.services.permission_kinds import data_scope_code, ensure_data_scope_children
+        from app.services.permission_kinds import PermissionCatalog
 
-        ensure_data_scope_children(self.db, self.permission)
+        PermissionCatalog.ensure_data_scope_children(self.db, self.permission)
         # 隔离场景调用方显式选择跳过缺失码（叶子已补建，这里仅演示显式开关语义）。
-        grant_codes_skip_missing(
-            self.db, self.role.id, (data_scope_code("appa.doc.read", "self"),), skip_missing=True,
+        PermissionCatalog.grant_codes_skip_missing(
+            self.db, self.role.id, (PermissionCatalog.data_scope_code("appa.doc.read", "self"),), skip_missing=True,
         )
         result = self._decide()
         self.assertTrue(result["decision"]["allowed"])
         self.assertEqual(result["decision"]["data_scope"]["constraints"][0]["kind"], "owner")
 
     def test_mapping_role_data_scope_then_allows(self) -> None:
-        from app.services.permission_kinds import data_scope_code
+        from app.services.permission_kinds import PermissionCatalog
 
         self.db.add(RoleDataScope(
             tenant_id=self.tenant.id,
@@ -343,10 +340,10 @@ class DataScopeCodeTests(unittest.TestCase):
             organization_ids=[],
         ))
         self.db.flush()
-        mapped = map_role_data_scopes_to_codes(self.db)
+        mapped = PermissionCatalog.map_role_data_scopes_to_codes(self.db)
         self.assertGreaterEqual(mapped, 1)
         leaf = self.db.scalar(select(Permission).where(
-            Permission.code == data_scope_code("appa.doc.read", "tenant"),
+            Permission.code == PermissionCatalog.data_scope_code("appa.doc.read", "tenant"),
         ))
         self.assertIsNotNone(leaf)
         granted = self.db.scalar(select(RolePermission.id).where(
@@ -371,8 +368,8 @@ class SeedUiIdempotentTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_seed_ui_permissions_is_idempotent(self) -> None:
-        first = seed_ui_permissions(self.db)
-        second = seed_ui_permissions(self.db)
+        first = PermissionCatalog.seed_ui_permissions(self.db)
+        second = PermissionCatalog.seed_ui_permissions(self.db)
         self.assertGreater(first, 0)
         self.assertEqual(second, 0)
         usage = self.db.scalar(select(Permission).where(Permission.code == "menu.model_usage"))
@@ -432,7 +429,7 @@ class GrantCodesStrictTests(unittest.TestCase):
         platform_tenant = seed_platform_tenant(self.db)
         role = seed_l1_role(self.db, platform_tenant)
         with self.assertRaises(RuntimeError) as ctx:
-            grant_codes_skip_missing(self.db, role.id, ("menu.not_seeded", "menu.users"))
+            PermissionCatalog.grant_codes_skip_missing(self.db, role.id, ("menu.not_seeded", "menu.users"))
         self.assertIn("menu.not_seeded", str(ctx.exception))
         self.assertNotIn("menu.users", str(ctx.exception))
 
@@ -448,7 +445,7 @@ class GrantCodesStrictTests(unittest.TestCase):
         self.db.flush()
         role = make_tenant_role_binding(self.db, tenant_id=tenant.id, actor=member)
         # 隔离场景显式跳过：缺失码被跳过并记日志，存在的码正常授权（返回新增条数）。
-        added = grant_codes_skip_missing(
+        added = PermissionCatalog.grant_codes_skip_missing(
             self.db, role.id, ("menu.not_seeded", "menu.users"), skip_missing=True,
         )
         self.assertEqual(added, 1)

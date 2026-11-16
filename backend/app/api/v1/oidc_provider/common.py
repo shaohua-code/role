@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.application import Application
 from app.models.identity import AuditEvent, RefreshSession, Tenant, TenantMembership, User
-from app.services.login_throttle import client_ip_for_request
+from app.services.login_throttle import LoginThrottleService
 
 
 def _issuer() -> str:
@@ -79,7 +79,7 @@ def _oauth_audit(db: Session, user: User, app: Application, action: str, scope: 
     """审计保存应用和 Scope 摘要，不保存 code、token、nonce 或 PKCE verifier。"""
     db.add(AuditEvent(actor_user_id=user.id, tenant_id=app.tenant_id, action=action,
                       target_type="application", target_id=str(app.id),
-                      source_ip=client_ip_for_request(request, get_settings()),
+                      source_ip=LoginThrottleService.client_ip_for_request(request, get_settings()),
                       details={"client_id": app.client_id, "scope": scope}))
 
 
@@ -101,7 +101,7 @@ def _browser_user(db: Session, raw_cookie: str | None) -> User | None:
 
 
 def _app_membership(db: Session, app: Application, user: User) -> TenantMembership | None:
-    """SSO 入场与 evaluate_access 共用有效角色：直连绑定 ∪ 活跃用户组继承角色。"""
+    """SSO 入场与 AuthorizationEvaluator.evaluate_access 共用有效角色：直连绑定 ∪ 活跃用户组继承角色。"""
     if not db.scalar(select(Tenant.id).where(Tenant.id == app.tenant_id, Tenant.status == "active")):
         return None
     membership = db.scalar(select(TenantMembership).where(
@@ -110,9 +110,9 @@ def _app_membership(db: Session, app: Application, user: User) -> TenantMembersh
     ))
     if not membership:
         return None
-    from app.services.effective_roles import list_effective_roles
+    from app.services.effective_roles import EffectiveRoleResolver
 
-    effective_roles = list_effective_roles(
+    effective_roles = EffectiveRoleResolver.list_effective_roles(
         db, membership_id=membership.id, tenant_id=app.tenant_id, application_id=app.id,
     )
     return membership if effective_roles else None

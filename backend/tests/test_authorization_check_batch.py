@@ -35,7 +35,7 @@ class AuthorizationCheckBatchEndpointTests(unittest.TestCase):
     def test_each_code_evaluated_once_and_mapped_by_code(self) -> None:
         codes = ["org.read", "app.manage"]
         decisions = iter([{"allowed": True}, {"allowed": False, "reason": "no_matching_grant"}])
-        with patch("app.api.v1.authorization.evaluate_access", side_effect=lambda _c, _u, _db: {"decision": next(decisions)}):
+        with patch("app.services.authorization.AuthorizationEvaluator.evaluate_access", side_effect=lambda _c, _u, _db: {"decision": next(decisions)}):
             result = check_access_batch(_batch(codes), user=SimpleNamespace(), db=Mock())
         self.assertEqual(set(result["results"].keys()), set(codes))
         self.assertTrue(result["results"]["org.read"]["allowed"])
@@ -44,14 +44,14 @@ class AuthorizationCheckBatchEndpointTests(unittest.TestCase):
 
     def test_password_user_allowed_result_has_no_oidc_application_id(self) -> None:
         user = SimpleNamespace(_auth_protocol="password")
-        with patch("app.api.v1.authorization.evaluate_access", return_value={"decision": {"allowed": True}}):
+        with patch("app.services.authorization.AuthorizationEvaluator.evaluate_access", return_value={"decision": {"allowed": True}}):
             result = check_access_batch(_batch(["app.read"]), user=user, db=Mock())
         self.assertNotIn("application_id", result["results"]["app.read"])
 
     def test_oidc_allowed_result_carries_verified_application_id(self) -> None:
         app_id = str(uuid4())
         user = SimpleNamespace(_auth_protocol="oidc", _oidc_application_id=app_id)
-        with patch("app.api.v1.authorization.evaluate_access", return_value={"decision": {"allowed": True}}):
+        with patch("app.services.authorization.AuthorizationEvaluator.evaluate_access", return_value={"decision": {"allowed": True}}):
             result = check_access_batch(_batch(["model.invoke"]), user=user, db=Mock())
         self.assertEqual(result["results"]["model.invoke"]["application_id"], app_id)
 

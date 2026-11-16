@@ -48,7 +48,7 @@ export const FACTS: GuideFact[] = [
   {
     icon: '🔌',
     title: '怎么用起来',
-    summary: '只有两件事：登录时跳到平台验一次身份；之后每个敏感操作问一句「这个人能不能做」，按回答放行。',
+    summary: '只有两件事：登录时由平台验一次身份（跳到平台页，或在你自己的登录页直接验）；之后每个敏感操作问一句「这个人能不能做」，按回答放行。',
   },
 ]
 
@@ -72,6 +72,17 @@ Content-Type: application/json
 const RESOURCES_SAMPLE = `GET /api/v1/authorization/my-resources?client_id={client_id}
 Authorization: Bearer <access_token>`
 
+// 应用内直登（密码授权）：服务端持密钥换取令牌的完整请求示例。
+const PASSWORD_TOKEN_SAMPLE = `# 应用内直登：仅 trusted 应用，密钥只放服务端
+POST /api/v1/oidc/token
+Authorization: Basic base64(client_id:client_secret)
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&username=user%40example.com&password=***&scope=openid%20profile%20email%20offline_access
+
+# → 200  { access_token, id_token, refresh_token, expires_in, ... }
+# → 400  { "error": "invalid_grant" }   账号密码错误 / 无该应用租户授权`
+
 export const STEPS: GuideStep[] = [
   {
     id: 'prepare',
@@ -87,7 +98,7 @@ export const STEPS: GuideStep[] = [
     ],
     techTitle: '契约细节',
     techItems: [
-      '回调地址须与白名单精确匹配：允许 HTTPS 或 localhost 的 HTTP，不允许通配。',
+      '回调地址须与白名单精确匹配：默认允许 HTTPS 或 localhost 的 HTTP；内网 HTTP 部署可由运维配置 IAM_ALLOW_INSECURE_REDIRECT_URIS=true 放行。不允许通配。',
       'client_secret 仅在创建或轮换时展示一次，须写入业务服务端密钥库，不得放浏览器。',
       '登出地址与来源域名白名单一并登记；登录主题 show_register 只控制展示，不能开通注册。',
     ],
@@ -120,21 +131,25 @@ export const STEPS: GuideStep[] = [
     index: '03',
     icon: '🔐',
     title: '接入登录',
-    plain: '用户在你的页面点「登录」，跳到平台验证，再带着凭证回来——像进景区：先在入口验票，再凭票根进园。',
+    plain: '默认跳到平台验一次身份——像进景区：先在入口验票，再凭票根进园；也可以把检票员请到你家门口，用户在你的登录页输账号密码，验证仍在平台完成。',
     actor: 'dev',
     points: [
-      '用户点登录 → 跳到平台登录页 → 验证通过后自动带凭证回到你登记的地址。',
-      '你的服务端拿凭证换令牌，并核验令牌的来源、用途和有效期。',
+      '跳转登录（默认）：点登录 → 跳到平台登录页 → 验证通过后自动带凭证回到你登记的地址。',
+      '应用内直登（可选）：用户在你的登录页输入账号密码，你的服务端向平台换取令牌，全程不离开你的界面。',
       '令牌过期前可以无声续期，用户不用反复输密码。',
+      '直登只对平台标记「可信」的应用开放，密钥只能放在服务端——这是平台与你的约定。',
     ],
-    techTitle: '契约细节（OIDC 授权码 + PKCE）',
+    techTitle: '契约细节（跳转 = 授权码 + PKCE；直登 = 密码授权）',
     techItems: [
-      '业务服务端校验签名、iss、aud、exp 与随机 state 参数；refresh 支持轮换与重放撤销。',
-      '会话租户以令牌中的 tenant_id 为准，不信任请求头或请求体里的租户标识。',
+      '跳转形态：业务服务端校验签名、iss、aud、exp 与随机 state；refresh 支持轮换与重放撤销。',
+      '直登形态：POST /api/v1/oidc/token 带 grant_type=password；客户端凭据走 Authorization: Basic 头，不得进请求体。',
+      '直登 scope 固定白名单 openid / profile / email / offline_access（必须含 openid），客户端不可自扩。',
+      '直登仅对 trusted 应用开放；失败统一 invalid_grant（账号密码错与无租户授权同文案），防账号枚举。',
+      '两种形态同一条入场判权：用户须持应用所属租户的有效角色；会话租户以令牌 tenant_id 为准，不信任请求头。',
       '访问令牌默认约 10 分钟；客户端密钥、长期令牌不得放浏览器；敏感操作仍需在线授权。',
     ],
-    sampleLabel: '',
-    sample: '',
+    sampleLabel: 'token · password grant',
+    sample: PASSWORD_TOKEN_SAMPLE,
   },
   {
     id: 'check',
@@ -180,11 +195,12 @@ export const STEPS: GuideStep[] = [
   },
 ]
 
-/** 上线前检查清单：四条「必须如此」的行为断言。 */
+/** 上线前检查清单：五条「必须如此」的行为断言。 */
 export const CHECKLIST: string[] = [
   '有数据范围的权限：check 返回「允许」，且带着数据范围',
   '没配数据范围的权限：必须失败，而不是悄悄放行',
   '拿 A 租户的令牌访问 B 租户的数据：必须被拒绝（403）',
+  '启用应用内直登：应用已标记「可信」，密钥只在服务端，失败提示不泄露账号是否存在',
   '曾用旧方式接入：删除旧 client_id 与密钥，升级 SDK 2.x 后重新验证',
 ]
 

@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -29,8 +30,9 @@ let managementUiPromise: Promise<void> | null = null
 export function installPublicUi(app: App): void {
   rootApp = app
   app.use(StyleProvider)
-  // Layout 给公开登录页居中壳使用；Avatar/Space 供已登录顶栏使用，必须在首帧前注册。
-  for (const component of [Alert, Avatar, Button, Card, ConfigProvider, Empty, Form, Input, Layout, Popover, Radio, Space, Spin, Tag]) {
+  // Layout 给公开登录页居中壳使用；Avatar/Space/Popover/Dropdown 供已登录顶栏使用（P-PRD 顶栏用户下拉），
+  // 必须在首帧前注册——Dropdown 曾只进登录后的管理组件清单，顶栏首渲染早于其注册时被 renderCache 缓存 miss。
+  for (const component of [Alert, Avatar, Button, Card, ConfigProvider, Dropdown, Empty, Form, Input, Layout, Popover, Radio, Space, Spin, Tag]) {
     app.use(component)
   }
 }

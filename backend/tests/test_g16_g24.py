@@ -33,7 +33,7 @@ from app.schemas.applications import ApplicationUpdate as AppUpdate
 from app.schemas.auth import AdminInvitationBatchCreate, AdminInvitationResend
 from app.schemas.groups import UserGroupCreate, UserGroupUpdate
 from app.schemas.organizations import OrganizationCreate, OrganizationUpdate
-from app.services.effective_roles import list_effective_roles
+from app.services.effective_roles import EffectiveRoleResolver
 
 
 class G16G24BatchTests(unittest.TestCase):
@@ -285,7 +285,7 @@ class G16G24BatchTests(unittest.TestCase):
             UserGroupRole(group_id=parent.id, role_id=ancestor_role.id, tenant_id=self.tenant.id),
         ])
         self.db.commit()
-        effective = {role.id for role in list_effective_roles(
+        effective = {role.id for role in EffectiveRoleResolver.list_effective_roles(
             db=self.db, membership_id=self.membership.id, tenant_id=self.tenant.id)}
         self.assertIn(self.role.id, effective)
         self.assertIn(ancestor_role.id, effective)
@@ -295,7 +295,7 @@ class G16G24BatchTests(unittest.TestCase):
         self.db.flush()
         self.db.add(UserGroupRole(group_id=disabled_parent.id, role_id=disabled_role.id, tenant_id=self.tenant.id))
         self.db.commit()
-        effective = {role.id for role in list_effective_roles(
+        effective = {role.id for role in EffectiveRoleResolver.list_effective_roles(
             db=self.db, membership_id=self.membership.id, tenant_id=self.tenant.id)}
         self.assertNotIn(disabled_role.id, effective)
 
@@ -376,10 +376,10 @@ class G16G24BatchTests(unittest.TestCase):
         with patch.object(backchannel_logout, "get_settings",
                           return_value=SimpleNamespaceLike(oidc_issuer="https://iam.example.test")), \
                 patch.object(backchannel_logout, "sign_jwt", side_effect=fake_sign):
-            token = backchannel_logout.build_logout_token(self.application, self.member.id, uuid4())
+            token = backchannel_logout.BackchannelLogoutService.build_logout_token(self.application, self.member.id, uuid4())
             self.assertEqual(token, "stub-token")
             # 无 sub/sid 的广播形态（用户/会话缺省）。
-            backchannel_logout.build_logout_token(self.application, None, None)
+            backchannel_logout.BackchannelLogoutService.build_logout_token(self.application, None, None)
         self.assertEqual(captured[0]["token_type"], "logout+jwt")
         first = captured[0]["claims"]
         self.assertEqual(first["iss"], "https://iam.example.test")

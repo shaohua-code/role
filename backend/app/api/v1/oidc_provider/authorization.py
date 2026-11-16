@@ -12,7 +12,7 @@ from app.db.session import get_db_session
 from app.models.application import Application, ApplicationTheme
 from app.models.identity import Tenant, TenantMembership, User
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest
-from app.services.public_registration import application_registration_details
+from app.services.public_registration import RegistrationFlow
 from app.schemas.auth import OIDCConsentDecision, OIDCConsentTicket
 from .common import _active_client, _app_membership, _append_query, _browser_user, _error, _hash, _issuer, _oauth_audit, _oauth_redirect_error, _redirect_uri, _single
 from .constants import ALLOWED_SCOPES, AUTHORIZATION_CODE_TTL, CHALLENGE_RE, CONSENT_TICKET_TTL, REFRESH_COOKIE
@@ -72,7 +72,7 @@ def login_context(client_id: str, db: Session = Depends(get_db_session)) -> dict
         "application_name": app.name,
         "client_id": app.client_id,
         "theme": theme.config if theme else {},
-        "registration": application_registration_details(db, app),
+        "registration": RegistrationFlow.application_registration_details(db, app),
     }
 
 

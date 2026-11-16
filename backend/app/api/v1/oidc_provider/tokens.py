@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.oidc_keys import decode_oidc_jwt, public_jwks, sign_jwt
@@ -201,6 +201,35 @@ async def token(request: Request, authorization: str | None = Header(default=Non
             return _error("invalid_scope", "refresh token 仅可用于已获 offline_access 的会话")
         stored.replaced_by_id = replacement.id
         _oauth_audit(db, user, app, "oidc.token.refresh", " ".join(sorted(scopes)), request)
+        db.commit()
+        return _token_response(result)
+    if form.get("grant_type") == "password":
+        # 资源所有者密码凭据（ROPC）：面向 trusted 内部应用的「应用自有登录页」场景。
+        # OAuth 2.1 已移除该 grant，此处仅作为部署方明确信任的受控扩展：只对 trusted
+        # 客户端开放，且用户必须通过与应用租户一致的有效角色入场判权（同 SSO 入场口径）。
+        if not app.trusted:
+            return _error("unauthorized_client", "该客户端未获准使用密码授权")
+        username, password = form.get("username", ""), form.get("password", "")
+        if not username or not password:
+            return _error("invalid_request", "username 或 password 缺失")
+        requested_scope = form.get("scope")
+        scopes = set(requested_scope.split()) if requested_scope else {"openid", "profile", "email", "offline_access"}
+        # 密码授权不经过授权同意页，scope 白名单硬编码为标准四项，不允许客户端自扩。
+        if not scopes <= {"openid", "profile", "email", "offline_access"} or "openid" not in scopes:
+            return _error("invalid_scope", "scope 超出密码授权允许范围")
+        # 与管理登录同口径：小写匹配 + 无用户时对比一次性假哈希抹平时序差异。
+        user = db.scalar(select(User).where(func.lower(User.email) == username.strip().casefold()))
+        try:
+            valid = verify_password(password, user.password_hash) if user else verify_password(password, dummy_password_hash())
+        except (ValueError, TypeError):
+            valid = False
+        if not user or not valid or user.status != "active":
+            return _error("invalid_grant", "账号或密码不正确")
+        membership = _app_membership(db, app, user)
+        if not membership:
+            return _error("invalid_grant", "账号没有该应用的租户授权")
+        result, _ = _token_payload(db, user, app, scopes, None, membership)
+        _oauth_audit(db, user, app, "oidc.token.password", " ".join(sorted(scopes)), request)
         db.commit()
         return _token_response(result)
     return _error("unsupported_grant_type", "仅支持 authorization_code 和 refresh_token")

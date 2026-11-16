@@ -49,7 +49,7 @@ class ModelCatalogUpdateContractTests(unittest.TestCase):
         request, actor = Mock(), Mock()
 
         # 绿场规则：平台权限只认角色绑定；Mock 契约测试直接假定 actor 持 L1。
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True), \
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True), \
              patch("app.api.v1.admin.models.audit") as write_audit, patch(
             "app.api.v1.admin.models.commit_or_conflict"
         ) as commit:

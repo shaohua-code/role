@@ -19,15 +19,9 @@ from app.models.application import Application
 from app.models.authorization import Role, RoleBinding
 from app.models.identity import Tenant, TenantMembership, User, UserInvitation
 from app.schemas.auth import AdminInvitationBatchCreate, AdminInvitationCreate, AdminInvitationResend
-from app.services.email import send_invitation_email
+from app.services.email import EmailSender
 from app.services.permission_kinds import ROLE_SCOPE_TENANT
-from app.services.rbac_guards import (
-    effective_role_scope,
-    ensure_codes,
-    ensure_roles,
-    ensure_scope,
-    list_actor_management_tenant_ids,
-)
+from app.services.rbac_guards import ActorVisibility, PermissionEnforcer
 from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(tags=["成员邀请"])
@@ -37,13 +31,13 @@ logger = logging.getLogger(__name__)
 def list_invitations(tenant_id: UUID | None = None, actor: User = Depends(current_user),
                      db: Session = Depends(get_db_session)) -> list[dict]:
     """只列出邀请状态和邮箱信息，永不回传 invitation token 或链接。"""
-    ensure_codes(actor, db, "button.invitations.manage", tenant_id=tenant_id, detail="缺少管理权限：button.invitations.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.invitations.manage", tenant_id=tenant_id, detail="缺少管理权限：button.invitations.manage")
     stmt = (select(UserInvitation, Tenant, Role)
             .join(Tenant, Tenant.id == UserInvitation.tenant_id)
             .join(Role, Role.id == UserInvitation.role_id)
             .order_by(UserInvitation.created_at.desc()).limit(500))
     # 数据边界（P1-3）：超管全域；非超管无论是否传 tenant_id 都收敛到自身管理租户。
-    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     if tenant_scope is not None:
         allowed = tenant_scope if tenant_id is None else tenant_scope & {tenant_id}
         if not allowed:
@@ -94,9 +88,9 @@ def _validate_invitation_target(db: Session, tenant_id: UUID, role_id: UUID,
         if role.key in (L1_ROLE_KEY, L3_ROLE_KEY):
             raise HTTPException(403, "不能邀请平台/租户管理员角色")
         if role.key == L2_ROLE_KEY and role.application_id:
-            ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="邀请应用管理员需要租户级及以上范围")
+            PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="邀请应用管理员需要租户级及以上范围")
         elif role.key not in TEMPLATE_ROLE_KEYS:
-            ensure_scope(actor, db, effective_role_scope(role), detail="不能邀请高于自己授权范围的角色")
+            PermissionEnforcer.ensure_scope(actor, db, ActorVisibility.effective_role_scope(role), detail="不能邀请高于自己授权范围的角色")
     return tenant, role
 
 
@@ -143,7 +137,7 @@ def _deliver_invitation(invite: UserInvitation, raw_token: str, tenant_name: str
     if not settings.invitation_email_enabled:
         return "manual_copy"
     try:
-        send_invitation_email(
+        EmailSender.send_invitation_email(
             email=invite.email,
             token=raw_token,
             tenant_name=tenant_name,
@@ -163,7 +157,7 @@ def _deliver_invitation(invite: UserInvitation, raw_token: str, tenant_name: str
 def create_invitation(body: AdminInvitationCreate, request: Request, response: Response,
                       actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """为租户成员签发 48-byte 一次性链接；数据库仅存 SHA-256 摘要，原始链接只回传一次且响应禁止缓存。"""
-    ensure_codes(actor, db, "button.invitations.manage", tenant_id=body.tenant_id, detail="缺少管理权限：button.invitations.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.invitations.manage", tenant_id=body.tenant_id, detail="缺少管理权限：button.invitations.manage")
     tenant, role = _validate_invitation_target(db, body.tenant_id, body.role_id, actor)
     email = str(body.email).casefold()
     invite, raw_token = _create_pending_invitation(db, tenant, role, email,
@@ -191,7 +185,7 @@ def _invitation_link_response(response: Response, invite: UserInvitation, raw_to
 def create_invitations_batch(body: AdminInvitationBatchCreate, request: Request, response: Response,
                              actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """G21 批量邀请：同一租户同一角色一次邀请多个邮箱；单邮箱冲突跳过不阻断其余。"""
-    ensure_codes(actor, db, "button.invitations.manage", tenant_id=body.tenant_id, detail="缺少管理权限：button.invitations.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.invitations.manage", tenant_id=body.tenant_id, detail="缺少管理权限：button.invitations.manage")
     tenant, role = _validate_invitation_target(db, body.tenant_id, body.role_id, actor)
     # 大小写归一并去重，保持首现顺序；响应包含每邮箱的原始链接，同样禁止缓存。
     seen: set[str] = set()
@@ -225,7 +219,7 @@ def resend_invitation(invitation_id: UUID, body: AdminInvitationResend, request:
     invite = db.scalar(select(UserInvitation).where(UserInvitation.id == invitation_id).with_for_update())
     if not invite:
         raise HTTPException(404, "邀请不存在")
-    ensure_codes(actor, db, "button.invitations.manage", tenant_id=invite.tenant_id, detail="缺少管理权限：button.invitations.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.invitations.manage", tenant_id=invite.tenant_id, detail="缺少管理权限：button.invitations.manage")
     if invite.accepted_at:
         raise HTTPException(409, "已接受的邀请不可重发")
     if invite.revoked_at:
@@ -252,7 +246,7 @@ def revoke_invitation(invitation_id: UUID, request: Request,
     invite = db.scalar(select(UserInvitation).where(UserInvitation.id == invitation_id).with_for_update())
     if not invite:
         raise HTTPException(404, "邀请不存在")
-    ensure_codes(actor, db, "button.invitations.manage", tenant_id=invite.tenant_id, detail="缺少管理权限：button.invitations.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.invitations.manage", tenant_id=invite.tenant_id, detail="缺少管理权限：button.invitations.manage")
     if invite.accepted_at:
         raise HTTPException(409, "已接受的邀请不可撤销")
     if invite.revoked_at is None:

@@ -29,11 +29,7 @@ from app.models import (
     User,
 )
 from app.schemas.auth import RegisterVerifyRequest
-from app.services.public_registration import (
-    _code_digest,
-    registration_email_hash,
-    registration_role_fingerprint,
-)
+from app.services.public_registration import RegistrationFlow
 
 
 class PublicRegistrationCredentialFlowTests(unittest.TestCase):
@@ -64,7 +60,7 @@ class PublicRegistrationCredentialFlowTests(unittest.TestCase):
         self.db.add(self.role)
         self.db.flush()
         self.application.registration_role_id = self.role.id
-        role_fingerprint = registration_role_fingerprint(self.db, self.role)
+        role_fingerprint = RegistrationFlow.registration_role_fingerprint(self.db, self.role)
         self.db.add(ApplicationTheme(
             application_id=self.application.id, version=1, status="published",
             config={"show_register": True,
@@ -76,11 +72,11 @@ class PublicRegistrationCredentialFlowTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         self.challenge = PublicRegistrationChallenge(
             id=self.challenge_id, application_id=self.application.id,
-            email_hash=registration_email_hash(self.settings, self.application.id, self.email),
+            email_hash=RegistrationFlow.registration_email_hash(self.settings, self.application.id, self.email),
             email=self.email, display_name="新用户", existing_user_id=None,
             registration_role_id=self.role.id,
             registration_role_fingerprint=role_fingerprint,
-            verification_code_hash=_code_digest(self.settings, self.challenge_id, "123456"),
+            verification_code_hash=RegistrationFlow._code_digest(self.settings, self.challenge_id, "123456"),
             terms_version="terms-v1", privacy_version="privacy-v1",
             terms_url="https://product.example.test/terms",
             privacy_url="https://product.example.test/privacy",

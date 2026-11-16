@@ -295,7 +295,10 @@ watch(() => [props.shellCatalogGeneration, props.shellTenants?.length] as const,
       <a-select v-model:value="statusFilter" :options="statusOptions" placeholder="状态" />
       <template #header-extra>
         <!-- 建租户是超管专属（button.tenants.manage min_scope=super）：非超管隐藏入口，与后端判权同口径 -->
-        <a-button v-if="canManageTenants" type="primary" @click="createTenant"><PlusOutlined class="mr-1" />新建租户</a-button>
+        <a-button v-if="canManageTenants" type="primary" @click="createTenant">
+          <template #icon><PlusOutlined /></template>
+          新建租户
+        </a-button>
       </template>
       <template #actions>
         <a-button :loading="loading" @click="loadTenants">刷新</a-button>

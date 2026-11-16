@@ -7,6 +7,8 @@
 
 menu.* / button.* 节点编码同时是后端判权单元：侧栏认菜单节点，页内写按钮与
 接口映射认按钮节点；每个节点带 min_scope 授权下限（只能授予不低于自身范围的角色）。
+目录函数统一收敛在 :class:`PermissionCatalog`；目录数据（MENU_CATALOG/BUTTON_CATALOG/
+各范围常量）保留在模块层，作为前后端共用的权威码表。
 """
 
 from __future__ import annotations
@@ -145,384 +147,386 @@ KIND_LABELS: dict[str, str] = {
     "api": "接口",
 }
 
-
-def infer_permission_kind(code: str) -> str:
-    """前缀兜底推断（迁移兼容专用）：menu.* / button.* / *.scope.{范围} / 其余为接口。
-
-    仅服务一种场景：存量行 permissions.kind 列为空（未回填）时由 permission_kind_of
-    兜底调用。库列 kind 是唯一事实源；业务面仍会登记 api 类业务码。
-    """
-    cleaned = code.strip()
-    if cleaned.startswith("menu."):
-        return "menu"
-    if cleaned.startswith("button."):
-        return "button"
-    parent, scope_type = split_data_scope_code(cleaned)
-    if parent and scope_type:
-        return "data"
-    return "api"
-
-
-def permission_kind_of(item: dict | Permission) -> str:
-    """种类判定单一入口：库列 permissions.kind 为准；仅当行为空（或脏值不在四类）时
-    按前缀兜底（迁移兼容，见 infer_permission_kind）。
-    """
-    if isinstance(item, dict):
-        kind = item.get("kind")
-        code = item.get("code") or ""
-    else:
-        kind = getattr(item, "kind", None)
-        code = getattr(item, "code", "") or ""
-    if kind in KIND_LABELS:
-        return kind
-    return infer_permission_kind(code)
-
-
-def split_data_scope_code(code: str) -> tuple[str | None, str | None]:
-    """把 appa.doc.read.scope.self 拆成业务码 + 范围类型。"""
-    marker = ".scope."
-    if marker not in code:
-        return None, None
-    parent, scope_type = code.rsplit(marker, 1)
-    if scope_type in DATA_SCOPE_TYPES and parent:
-        return parent, scope_type
-    return None, None
-
-
-def data_scope_code(permission_code: str, scope_type: str) -> str:
-    """业务码对应的数据权限叶子编码。"""
-    return f"{permission_code}.scope.{scope_type}"
-
-
 # 仅超管可见/可授的菜单（授权下限=super 的派生视图）。
 L1_ONLY_MENU_CODES: frozenset[str] = frozenset(
     code for code, _title, min_scope in MENU_CATALOG if min_scope == ROLE_SCOPE_SUPER
 )
 
 
-def node_allows_scope(code: str, scope: str) -> bool:
-    """节点授权下限校验：持有/授予该节点的角色范围秩不得低于 min_scope。"""
-    needed = ROLE_SCOPE_RANK.get(NODE_MIN_SCOPE.get(code, ROLE_SCOPE_APP), 0)
-    return ROLE_SCOPE_RANK.get(scope, 0) >= needed
+class PermissionCatalog:
+    """权限目录服务：种类判定、范围校验、种子写入与菜单/按钮树构建。
 
-
-def effective_role_scope_label(role_or_scope: object) -> str:
-    """范围中文标签：接受范围字符串或带 scope 的角色对象（未知值原样返回）。"""
-    scope = getattr(role_or_scope, "scope", role_or_scope)
-    return ROLE_SCOPE_LABELS.get(scope, scope)
-
-
-def all_ui_codes() -> tuple[str, ...]:
-    return MANAGEMENT_NODE_CODES
-
-
-def ensure_data_scope_children(db: Session, parent: Permission) -> int:
-    """业务码强制范围时补齐 5 个数据叶子；已有则跳过。"""
-    if parent.surface != "business" or not parent.requires_data_scope:
-        return 0
-    if permission_kind_of(parent) != "api":
-        return 0
-    created = 0
-    namespace = parent.catalog_namespace
-    for scope_type in DATA_SCOPE_TYPES:
-        code = data_scope_code(parent.code, scope_type)
-        existing = db.scalar(select(Permission).where(Permission.code == code))
-        if existing is not None:
-            continue
-        db.add(Permission(
-            code=code,
-            catalog_namespace=namespace,
-            resource_type="data",
-            scope=scope_type,
-            description=f"{parent.description or parent.code} · {DATA_SCOPE_LABELS[scope_type]}",
-            surface="business",
-            requires_data_scope=False,
-            kind="data",
-        ))
-        created += 1
-    if created:
-        db.flush()
-    return created
-
-
-def seed_ui_permissions(db: Session) -> int:
-    """幂等写入菜单/按钮节点，并回填 kind；已下线节点（权限编码页）不再创建。"""
-    created = 0
-    for code, title, _min_scope in MENU_CATALOG + BUTTON_CATALOG:
-        permission = db.scalar(select(Permission).where(Permission.code == code))
-        kind = "menu" if code.startswith("menu.") else "button"
-        if permission is not None:
-            if getattr(permission, "kind", None) != kind:
-                permission.kind = kind
-            if not permission.description:
-                permission.description = title
-            continue
-        db.add(Permission(
-            code=code,
-            catalog_namespace=derive_catalog_namespace_value(code),
-            resource_type=kind,
-            scope="read" if kind == "menu" else "manage",
-            description=title,
-            surface="management",
-            requires_data_scope=False,
-            kind=kind,
-        ))
-        created += 1
-    if created:
-        db.flush()
-    return created
-
-
-def map_role_data_scopes_to_codes(db: Session) -> int:
-    """把存量 RoleDataScope 映射成数据码授权；缺叶子则补建。"""
-    from app.models.organization import RoleDataScope
-
-    granted = 0
-    policies = db.scalars(select(RoleDataScope)).all()
-    for policy in policies:
-        parent = db.get(Permission, policy.permission_id)
-        if parent is None:
-            continue
-        ensure_data_scope_children(db, parent)
-        leaf_code = data_scope_code(parent.code, policy.scope_type)
-        leaf = db.scalar(select(Permission).where(Permission.code == leaf_code))
-        if leaf is None:
-            continue
-        exists = db.scalar(select(RolePermission.id).where(
-            RolePermission.role_id == policy.role_id,
-            RolePermission.permission_id == leaf.id,
-        ))
-        if exists:
-            continue
-        db.add(RolePermission(role_id=policy.role_id, permission_id=leaf.id))
-        granted += 1
-    if granted:
-        db.flush()
-    return granted
-
-
-def _leaf_node(permission: dict, *, extra: dict | None = None) -> dict:
-    node = {
-        "key": permission["id"],
-        "title": permission.get("description") or permission["code"],
-        "kind": permission_kind_of(permission),
-        "code": permission["code"],
-        "status": permission.get("status", "active"),
-        "assigned_role_count": int(permission.get("assigned_role_count") or 0),
-        "is_leaf": True,
-        "selectable": True,
-        "children": [],
-        "prefix": f"{permission['code']}.",
-        "parent_code": permission.get("parent_code"),
-        "parent_title": permission.get("parent_title"),
-    }
-    if extra:
-        node.update(extra)
-    return node
-
-
-def _menu_node(permission: dict, children: list[dict]) -> dict:
-    code = permission["code"]
-    return {
-        "key": permission["id"],
-        "title": permission.get("description") or code,
-        "kind": "menu",
-        "code": code,
-        "status": permission.get("status", "active"),
-        "assigned_role_count": int(permission.get("assigned_role_count") or 0),
-        "is_leaf": not children,
-        "selectable": True,
-        "children": children,
-        "prefix": f"{code}.",
-        "parent_code": permission.get("parent_code"),
-        "parent_title": permission.get("parent_title"),
-    }
-
-
-def _group_node(key: str, title: str, kind: str, children: list[dict], prefix: str = "") -> dict:
-    return {
-        "key": key,
-        "title": title,
-        "kind": kind,
-        "code": None,
-        "status": "active",
-        "assigned_role_count": 0,
-        "is_leaf": False,
-        "selectable": False,
-        "children": children,
-        "prefix": prefix,
-        "parent_code": None,
-        "parent_title": None,
-    }
-
-
-def _longest_menu_parent(code: str, menu_codes: set[str]) -> str | None:
-    parts = code.split(".")
-    for end in range(len(parts) - 1, 0, -1):
-        candidate = ".".join(parts[:end])
-        if candidate in menu_codes:
-            return candidate
-    return None
-
-
-def _build_data_tree(items: list[dict], by_code: dict[str, dict]) -> list[dict]:
-    data_by_ns: dict[str, dict[str, list[dict]]] = {}
-    for item in items:
-        parent_code, scope_type = split_data_scope_code(item["code"])
-        parent = by_code.get(parent_code or "")
-        namespace = item.get("catalog_namespace") or (parent_code.split(".", 1)[0] if parent_code else "other")
-        parent_title = (parent or {}).get("description") or parent_code or "未分组"
-        packed = f"{parent_code}|{parent_title}"
-        data_by_ns.setdefault(namespace, {}).setdefault(packed, []).append(
-            _leaf_node(item, extra={"scope_type": scope_type, "parent_code": parent_code, "parent_title": parent_title}),
-        )
-    roots: list[dict] = []
-    for namespace, parents in sorted(data_by_ns.items()):
-        parent_nodes = []
-        for packed, leaves in sorted(parents.items()):
-            parent_code, parent_title = packed.split("|", 1)
-            parent_nodes.append(_group_node(
-                f"data:{parent_code}", parent_title, "data", leaves, prefix=f"{parent_code}.scope.",
-            ))
-        roots.append(_group_node(f"data-ns:{namespace}", namespace, "data", parent_nodes, prefix=f"{namespace}."))
-    return roots
-
-
-def build_permission_trees(permissions: list[dict]) -> tuple[list[dict], list[dict]]:
-    """资源树（侧栏形菜单→按钮）+ 数据树（仅业务码数据叶子）。
-
-    管理面不再有接口节点；业务面（api/数据）结构保持不变，供应用工作台复用。
+    全部方法为静态方法（db 会话由调用方传入），保持与原模块函数一一对应的行为。
     """
-    by_code: dict[str, dict] = {}
-    for raw in permissions:
-        kind = permission_kind_of(raw)
-        item = {**raw, "kind": kind}
-        by_code[item["code"]] = item
 
-    menu_codes = {code for code, item in by_code.items() if item["kind"] == "menu"}
-    used: set[str] = set()
+    @staticmethod
+    def infer_permission_kind(code: str) -> str:
+        """前缀兜底推断（迁移兼容专用）：menu.* / button.* / *.scope.{范围} / 其余为接口。
 
-    def attach_under_menu(menu_code: str) -> list[dict]:
-        children: list[dict] = []
-        menu_item = by_code.get(menu_code)
-        menu_title = (menu_item or {}).get("description") or menu_code
-        for btn in MENU_BUTTONS.get(menu_code, ()):
-            if btn in by_code:
-                children.append(_leaf_node(by_code[btn], extra={"parent_code": menu_code, "parent_title": menu_title}))
-                used.add(btn)
-        nested_menus: list[dict] = []
-        nested_others: list[dict] = []
-        prefix = f"{menu_code}."
-        for code, item in by_code.items():
-            if code == menu_code or code in used:
-                continue
-            if not code.startswith(prefix):
-                continue
-            if item["kind"] == "data":
-                continue
-            parent = _longest_menu_parent(code, menu_codes)
-            if parent != menu_code:
-                continue
-            if item["kind"] == "menu":
-                nested_menus.append(item)
-            else:
-                nested_others.append(item)
-        for item in nested_others:
-            children.append(_leaf_node(item, extra={"parent_code": menu_code, "parent_title": menu_title}))
-            used.add(item["code"])
-        for item in sorted(nested_menus, key=lambda row: row["code"]):
-            used.add(item["code"])
-            sub_children = attach_under_menu(item["code"])
-            children.append(_menu_node({**item, "parent_code": menu_code, "parent_title": menu_title}, sub_children))
-        return children
+        仅服务一种场景：存量行 permissions.kind 列为空（未回填）时由 permission_kind_of
+        兜底调用。库列 kind 是唯一事实源；业务面仍会登记 api 类业务码。
+        """
+        cleaned = code.strip()
+        if cleaned.startswith("menu."):
+            return "menu"
+        if cleaned.startswith("button."):
+            return "button"
+        parent, scope_type = PermissionCatalog.split_data_scope_code(cleaned)
+        if parent and scope_type:
+            return "data"
+        return "api"
 
-    resource: list[dict] = []
-    overview = by_code.get("menu.overview")
-    if overview:
-        used.add("menu.overview")
-        resource.append(_menu_node(overview, attach_under_menu("menu.overview")))
+    @staticmethod
+    def permission_kind_of(item: dict | Permission) -> str:
+        """种类判定单一入口：库列 permissions.kind 为准；仅当行为空（或脏值不在四类）时
+        按前缀兜底（迁移兼容，见 infer_permission_kind）。
+        """
+        if isinstance(item, dict):
+            kind = item.get("kind")
+            code = item.get("code") or ""
+        else:
+            kind = getattr(item, "kind", None)
+            code = getattr(item, "code", "") or ""
+        if kind in KIND_LABELS:
+            return kind
+        return PermissionCatalog.infer_permission_kind(code)
 
-    for group_key, group_title, codes in MENU_GROUPS:
-        group_children: list[dict] = []
-        for code in codes:
-            item = by_code.get(code)
-            if item is None:
+    @staticmethod
+    def split_data_scope_code(code: str) -> tuple[str | None, str | None]:
+        """把 appa.doc.read.scope.self 拆成业务码 + 范围类型。"""
+        marker = ".scope."
+        if marker not in code:
+            return None, None
+        parent, scope_type = code.rsplit(marker, 1)
+        if scope_type in DATA_SCOPE_TYPES and parent:
+            return parent, scope_type
+        return None, None
+
+    @staticmethod
+    def data_scope_code(permission_code: str, scope_type: str) -> str:
+        """业务码对应的数据权限叶子编码。"""
+        return f"{permission_code}.scope.{scope_type}"
+
+    @staticmethod
+    def node_allows_scope(code: str, scope: str) -> bool:
+        """节点授权下限校验：持有/授予该节点的角色范围秩不得低于 min_scope。"""
+        needed = ROLE_SCOPE_RANK.get(NODE_MIN_SCOPE.get(code, ROLE_SCOPE_APP), 0)
+        return ROLE_SCOPE_RANK.get(scope, 0) >= needed
+
+    @staticmethod
+    def effective_role_scope_label(role_or_scope: object) -> str:
+        """范围中文标签：接受范围字符串或带 scope 的角色对象（未知值原样返回）。"""
+        scope = getattr(role_or_scope, "scope", role_or_scope)
+        return ROLE_SCOPE_LABELS.get(scope, scope)
+
+    @staticmethod
+    def all_ui_codes() -> tuple[str, ...]:
+        return MANAGEMENT_NODE_CODES
+
+    @staticmethod
+    def ensure_data_scope_children(db: Session, parent: Permission) -> int:
+        """业务码强制范围时补齐 5 个数据叶子；已有则跳过。"""
+        if parent.surface != "business" or not parent.requires_data_scope:
+            return 0
+        if PermissionCatalog.permission_kind_of(parent) != "api":
+            return 0
+        created = 0
+        namespace = parent.catalog_namespace
+        for scope_type in DATA_SCOPE_TYPES:
+            code = PermissionCatalog.data_scope_code(parent.code, scope_type)
+            existing = db.scalar(select(Permission).where(Permission.code == code))
+            if existing is not None:
                 continue
-            used.add(code)
-            group_children.append(_menu_node(
-                {**item, "parent_code": None, "parent_title": group_title},
-                attach_under_menu(code),
+            db.add(Permission(
+                code=code,
+                catalog_namespace=namespace,
+                resource_type="data",
+                scope=scope_type,
+                description=f"{parent.description or parent.code} · {DATA_SCOPE_LABELS[scope_type]}",
+                surface="business",
+                requires_data_scope=False,
+                kind="data",
             ))
-        if group_children:
-            resource.append(_group_node(f"nav:{group_key}", group_title, "menu", group_children, prefix="menu."))
+            created += 1
+        if created:
+            db.flush()
+        return created
 
-    stray_top = sorted(
-        code for code in menu_codes
-        if code not in used and _longest_menu_parent(code, menu_codes) is None
-    )
-    if stray_top:
-        other_children = []
-        for code in stray_top:
-            used.add(code)
-            other_children.append(_menu_node(by_code[code], attach_under_menu(code)))
-        resource.append(_group_node("nav:other", "其他", "menu", other_children, prefix="menu."))
+    @staticmethod
+    def seed_ui_permissions(db: Session) -> int:
+        """幂等写入菜单/按钮节点，并回填 kind；已下线节点（权限编码页）不再创建。"""
+        created = 0
+        for code, title, _min_scope in MENU_CATALOG + BUTTON_CATALOG:
+            permission = db.scalar(select(Permission).where(Permission.code == code))
+            kind = "menu" if code.startswith("menu.") else "button"
+            if permission is not None:
+                if getattr(permission, "kind", None) != kind:
+                    permission.kind = kind
+                if not permission.description:
+                    permission.description = title
+                continue
+            db.add(Permission(
+                code=code,
+                catalog_namespace=derive_catalog_namespace_value(code),
+                resource_type=kind,
+                scope="read" if kind == "menu" else "manage",
+                description=title,
+                surface="management",
+                requires_data_scope=False,
+                kind=kind,
+            ))
+            created += 1
+        if created:
+            db.flush()
+        return created
 
-    leftovers = [
-        item for code, item in sorted(by_code.items())
-        if code not in used and item["kind"] != "data"
-    ]
-    if leftovers:
-        resource.append(_group_node(
-            "nav:unmapped", "未挂载", "api",
-            [_leaf_node(item) for item in leftovers],
-        ))
+    @staticmethod
+    def map_role_data_scopes_to_codes(db: Session) -> int:
+        """把存量 RoleDataScope 映射成数据码授权；缺叶子则补建。"""
+        from app.models.organization import RoleDataScope
 
-    data_items = [item for item in by_code.values() if item["kind"] == "data"]
-    return resource, _build_data_tree(data_items, by_code)
+        granted = 0
+        policies = db.scalars(select(RoleDataScope)).all()
+        for policy in policies:
+            parent = db.get(Permission, policy.permission_id)
+            if parent is None:
+                continue
+            PermissionCatalog.ensure_data_scope_children(db, parent)
+            leaf_code = PermissionCatalog.data_scope_code(parent.code, policy.scope_type)
+            leaf = db.scalar(select(Permission).where(Permission.code == leaf_code))
+            if leaf is None:
+                continue
+            exists = db.scalar(select(RolePermission.id).where(
+                RolePermission.role_id == policy.role_id,
+                RolePermission.permission_id == leaf.id,
+            ))
+            if exists:
+                continue
+            db.add(RolePermission(role_id=policy.role_id, permission_id=leaf.id))
+            granted += 1
+        if granted:
+            db.flush()
+        return granted
 
+    # ── 菜单/按钮树构建（私有节点工厂 + 主入口）─────────────────────────────
 
-def build_permission_tree(permissions: list[dict]) -> list[dict]:
-    """兼容旧调用：只返回资源树。"""
-    resource, _data = build_permission_trees(permissions)
-    return resource
+    @staticmethod
+    def _leaf_node(permission: dict, *, extra: dict | None = None) -> dict:
+        node = {
+            "key": permission["id"],
+            "title": permission.get("description") or permission["code"],
+            "kind": PermissionCatalog.permission_kind_of(permission),
+            "code": permission["code"],
+            "status": permission.get("status", "active"),
+            "assigned_role_count": int(permission.get("assigned_role_count") or 0),
+            "is_leaf": True,
+            "selectable": True,
+            "children": [],
+            "prefix": f"{permission['code']}.",
+            "parent_code": permission.get("parent_code"),
+            "parent_title": permission.get("parent_title"),
+        }
+        if extra:
+            node.update(extra)
+        return node
 
+    @staticmethod
+    def _menu_node(permission: dict, children: list[dict]) -> dict:
+        code = permission["code"]
+        return {
+            "key": permission["id"],
+            "title": permission.get("description") or code,
+            "kind": "menu",
+            "code": code,
+            "status": permission.get("status", "active"),
+            "assigned_role_count": int(permission.get("assigned_role_count") or 0),
+            "is_leaf": not children,
+            "selectable": True,
+            "children": children,
+            "prefix": f"{code}.",
+            "parent_code": permission.get("parent_code"),
+            "parent_title": permission.get("parent_title"),
+        }
 
-def grant_codes_skip_missing(
-    db: Session,
-    role_id: UUID,
-    codes: tuple[str, ...],
-    *,
-    skip_missing: bool = False,
-) -> int:
-    """给角色补授权；契约要求的码缺失时默认抛错，不再静默吞掉。
+    @staticmethod
+    def _group_node(key: str, title: str, kind: str, children: list[dict], prefix: str = "") -> dict:
+        return {
+            "key": key,
+            "title": title,
+            "kind": kind,
+            "code": None,
+            "status": "active",
+            "assigned_role_count": 0,
+            "is_leaf": False,
+            "selectable": False,
+            "children": children,
+            "prefix": prefix,
+            "parent_code": None,
+            "parent_title": None,
+        }
 
-    严格模式（默认）：任一码在 permissions 表不存在即抛 RuntimeError，消息列出缺失码。
-    隔离场景（测试库未造全目录）调用方必须显式传 skip_missing=True：跳过的码按条数记
-    WARN 日志，返回新增授权条数。
-    """
-    if not codes:
-        return 0
-    rows = db.execute(select(Permission.id, Permission.code).where(Permission.code.in_(codes))).all()
-    found = {code: permission_id for permission_id, code in rows}
-    missing = sorted(set(codes) - set(found))
-    if missing and not skip_missing:
-        raise RuntimeError(
-            f"权限目录缺少契约必需码：{', '.join(missing)}（请先运行 seed_greenfield，体检 H6 可暴露同源缺口）"
+    @staticmethod
+    def _longest_menu_parent(code: str, menu_codes: set[str]) -> str | None:
+        parts = code.split(".")
+        for end in range(len(parts) - 1, 0, -1):
+            candidate = ".".join(parts[:end])
+            if candidate in menu_codes:
+                return candidate
+        return None
+
+    @staticmethod
+    def _build_data_tree(items: list[dict], by_code: dict[str, dict]) -> list[dict]:
+        data_by_ns: dict[str, dict[str, list[dict]]] = {}
+        for item in items:
+            parent_code, scope_type = PermissionCatalog.split_data_scope_code(item["code"])
+            parent = by_code.get(parent_code or "")
+            namespace = item.get("catalog_namespace") or (parent_code.split(".", 1)[0] if parent_code else "other")
+            parent_title = (parent or {}).get("description") or parent_code or "未分组"
+            packed = f"{parent_code}|{parent_title}"
+            data_by_ns.setdefault(namespace, {}).setdefault(packed, []).append(
+                PermissionCatalog._leaf_node(item, extra={"scope_type": scope_type, "parent_code": parent_code, "parent_title": parent_title}),
+            )
+        roots: list[dict] = []
+        for namespace, parents in sorted(data_by_ns.items()):
+            parent_nodes = []
+            for packed, leaves in sorted(parents.items()):
+                parent_code, parent_title = packed.split("|", 1)
+                parent_nodes.append(PermissionCatalog._group_node(
+                    f"data:{parent_code}", parent_title, "data", leaves, prefix=f"{parent_code}.scope.",
+                ))
+            roots.append(PermissionCatalog._group_node(f"data-ns:{namespace}", namespace, "data", parent_nodes, prefix=f"{namespace}."))
+        return roots
+
+    @staticmethod
+    def build_permission_trees(permissions: list[dict]) -> tuple[list[dict], list[dict]]:
+        """资源树（侧栏形菜单→按钮）+ 数据树（仅业务码数据叶子）。
+
+        管理面不再有接口节点；业务面（api/数据）结构保持不变，供应用工作台复用。
+        """
+        by_code: dict[str, dict] = {}
+        for raw in permissions:
+            kind = PermissionCatalog.permission_kind_of(raw)
+            item = {**raw, "kind": kind}
+            by_code[item["code"]] = item
+
+        menu_codes = {code for code, item in by_code.items() if item["kind"] == "menu"}
+        used: set[str] = set()
+
+        def attach_under_menu(menu_code: str) -> list[dict]:
+            children: list[dict] = []
+            menu_item = by_code.get(menu_code)
+            menu_title = (menu_item or {}).get("description") or menu_code
+            for btn in MENU_BUTTONS.get(menu_code, ()):
+                if btn in by_code:
+                    children.append(PermissionCatalog._leaf_node(by_code[btn], extra={"parent_code": menu_code, "parent_title": menu_title}))
+                    used.add(btn)
+            nested_menus: list[dict] = []
+            nested_others: list[dict] = []
+            prefix = f"{menu_code}."
+            for code, item in by_code.items():
+                if code == menu_code or code in used:
+                    continue
+                if not code.startswith(prefix):
+                    continue
+                if item["kind"] == "data":
+                    continue
+                parent = PermissionCatalog._longest_menu_parent(code, menu_codes)
+                if parent != menu_code:
+                    continue
+                if item["kind"] == "menu":
+                    nested_menus.append(item)
+                else:
+                    nested_others.append(item)
+            for item in nested_others:
+                children.append(PermissionCatalog._leaf_node(item, extra={"parent_code": menu_code, "parent_title": menu_title}))
+                used.add(item["code"])
+            for item in sorted(nested_menus, key=lambda row: row["code"]):
+                used.add(item["code"])
+                sub_children = attach_under_menu(item["code"])
+                children.append(PermissionCatalog._menu_node({**item, "parent_code": menu_code, "parent_title": menu_title}, sub_children))
+            return children
+
+        resource: list[dict] = []
+        overview = by_code.get("menu.overview")
+        if overview:
+            used.add("menu.overview")
+            resource.append(PermissionCatalog._menu_node(overview, attach_under_menu("menu.overview")))
+
+        for group_key, group_title, codes in MENU_GROUPS:
+            group_children: list[dict] = []
+            for code in codes:
+                item = by_code.get(code)
+                if item is None:
+                    continue
+                used.add(code)
+                group_children.append(PermissionCatalog._menu_node(
+                    {**item, "parent_code": None, "parent_title": group_title},
+                    attach_under_menu(code),
+                ))
+            if group_children:
+                resource.append(PermissionCatalog._group_node(f"nav:{group_key}", group_title, "menu", group_children, prefix="menu."))
+
+        stray_top = sorted(
+            code for code in menu_codes
+            if code not in used and PermissionCatalog._longest_menu_parent(code, menu_codes) is None
         )
-    if missing:
-        logger.warning(
-            "grant_codes_skip_missing 跳过缺失码 %d 个：%s（role_id=%s）",
-            len(missing), ", ".join(missing), role_id,
-        )
-    existing = set(db.scalars(select(RolePermission.permission_id).where(
-        RolePermission.role_id == role_id,
-    )).all())
-    added = 0
-    for code, permission_id in found.items():
-        if permission_id in existing:
-            continue
-        db.add(RolePermission(role_id=role_id, permission_id=permission_id))
-        added += 1
-    if added:
-        db.flush()
-    return added
+        if stray_top:
+            other_children = []
+            for code in stray_top:
+                used.add(code)
+                other_children.append(PermissionCatalog._menu_node(by_code[code], attach_under_menu(code)))
+            resource.append(PermissionCatalog._group_node("nav:other", "其他", "menu", other_children, prefix="menu."))
+
+        leftovers = [
+            item for code, item in sorted(by_code.items())
+            if code not in used and item["kind"] != "data"
+        ]
+        if leftovers:
+            resource.append(PermissionCatalog._group_node(
+                "nav:unmapped", "未挂载", "api",
+                [PermissionCatalog._leaf_node(item) for item in leftovers],
+            ))
+
+        data_items = [item for item in by_code.values() if item["kind"] == "data"]
+        return resource, PermissionCatalog._build_data_tree(data_items, by_code)
+
+    @staticmethod
+    def grant_codes_skip_missing(
+        db: Session,
+        role_id: UUID,
+        codes: tuple[str, ...],
+        *,
+        skip_missing: bool = False,
+    ) -> int:
+        """给角色补授权；契约要求的码缺失时默认抛错，不再静默吞掉。
+
+        严格模式（默认）：任一码在 permissions 表不存在即抛 RuntimeError，消息列出缺失码。
+        隔离场景（测试库未造全目录）调用方必须显式传 skip_missing=True：跳过的码按条数记
+        WARN 日志，返回新增授权条数。
+        """
+        if not codes:
+            return 0
+        rows = db.execute(select(Permission.id, Permission.code).where(Permission.code.in_(codes))).all()
+        found = {code: permission_id for permission_id, code in rows}
+        missing = sorted(set(codes) - set(found))
+        if missing and not skip_missing:
+            raise RuntimeError(
+                f"权限目录缺少契约必需码：{', '.join(missing)}（请先运行 seed_greenfield，体检 H6 可暴露同源缺口）"
+            )
+        if missing:
+            logger.warning(
+                "grant_codes_skip_missing 跳过缺失码 %d 个：%s（role_id=%s）",
+                len(missing), ", ".join(missing), role_id,
+            )
+        existing = set(db.scalars(select(RolePermission.permission_id).where(
+            RolePermission.role_id == role_id,
+        )).all())
+        added = 0
+        for code, permission_id in found.items():
+            if permission_id in existing:
+                continue
+            db.add(RolePermission(role_id=role_id, permission_id=permission_id))
+            added += 1
+        if added:
+            db.flush()
+        return added

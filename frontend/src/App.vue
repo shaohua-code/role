@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { LockOutlined, MenuOutlined, SettingOutlined } from '@/plugins/icons'
+import { LockOutlined, MenuOutlined, SettingOutlined, DownOutlined, IdcardOutlined, LogoutOutlined } from '@/plugins/icons'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminColorField from '@/components/AdminColorField.vue'
 import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
@@ -27,6 +27,7 @@ import {
   ModelGovernancePage,
   OrganizationWorkspace,
   OverviewPage,
+  ProfilePage,
   RoleManagement,
   TenantAccessManagement,
   TenantManagement,
@@ -142,7 +143,9 @@ const visibleNavigation = computed(() => {
   return NAV_ITEMS.filter(item => hasAnyCode(heldCodes.value, item.requiredPermissions))
 })
 // 侧栏未展示（能力不满足）的页面不可直接访问；能力满足即可达（侧栏 + 深链共用同一能力守卫）。
+// 个人信息页不占侧栏、不判管理码，登录即可达（守卫与下拉入口共用该口径）。
 function isPageReachable(key: PageKey): boolean {
+  if (key === 'profile') return true
   const item = NAV_ITEMS.find(candidate => candidate.key === key)
   return Boolean(item && hasAnyCode(heldCodes.value, item.requiredPermissions))
 }
@@ -311,9 +314,10 @@ async function initializeConsole(user: { id?: string; capabilities?: Capabilitie
       return String(role.tenant_id ?? '') === String(firstTenantId)
     })
   }
-  const firstPage = visibleNavigation.value[0]?.key || 'organization_workspace'
+  // 深链保持与平台分支同口径：刷新落在可达页（含 profile 这类非侧栏页）则原地保留，只回退不可达页。
+  const firstPage = isPageReachable(page.value) ? page.value : (visibleNavigation.value[0]?.key || 'organization_workspace')
   visitedPages.value = new Set<PageKey>([firstPage])
-  await router.replace(PAGE_PATHS[firstPage])
+  if (page.value !== firstPage) await router.replace(PAGE_PATHS[firstPage])
   // P1-6 收尾：登录页路由即首页时同路由 replace 不触发路由 watch，需与平台分支对等显式加载总览。
   void loadPage()
 }
@@ -338,8 +342,38 @@ async function onAuthenticated(
   await initializeConsole(result.user)
 }
 
-// G02 自助改密：入口在顶栏用户区；成功后走 signOut 清理本地会话（服务端已撤销全部会话）。
+// G02 自助改密：入口在顶栏用户下拉；成功后走 signOut 清理本地会话（服务端已撤销全部会话）。
 const changePasswordOpen = ref(false)
+
+// 个人信息入口：顶栏用户下拉受控开关（同外观面板口径，保证 Esc / 失焦可靠收起）。
+const userMenuOpen = ref(false)
+
+// Esc 全局收起：antd Dropdown 无原生键盘关闭路径，且焦点可能落在触发钮、面板项或页面任意处，
+// 统一在 window 捕获，避免依赖具体焦点位置（走查实测仅绑触发钮时 CDP/真实按键均有漏路径）。
+function onShellKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && userMenuOpen.value) userMenuOpen.value = false
+}
+
+// 下拉内导航：先收起面板再执行动作，避免动作后面板残留。
+function openProfile(): void {
+  userMenuOpen.value = false
+  void router.push(PAGE_PATHS.profile)
+}
+
+function openChangePassword(): void {
+  userMenuOpen.value = false
+  changePasswordOpen.value = true
+}
+
+// 个人信息页保存展示名后同步壳层缓存（顶栏芯片与下拉身份卡头实时更新）
+function onProfileUpdated(displayName: string): void {
+  if (currentUser.value) currentUser.value.display_name = displayName
+}
+
+async function signOutFromMenu(): Promise<void> {
+  userMenuOpen.value = false
+  await signOut()
+}
 
 async function signOut(): Promise<void> {
   try { await api('/auth/logout', { method: 'POST' }) } catch { /* 令牌过期时本地仍须可退出。 */ }
@@ -396,6 +430,8 @@ watch(token, (value) => { if (value) refreshTableFit() })
 onMounted(async () => {
   bindAppearanceListeners()
   bindTableFitListeners()
+  // 用户下拉 Esc 收起监听（同外观面板键盘可达口径）。
+  window.addEventListener('keydown', onShellKeydown)
   // api.ts 已清除本标签页 token 并广播其他标签页；此处只更新 Vue 状态，避免收到远端事件后再次广播。
   window.addEventListener('iam:unauthorized', () => { token.value = null; currentUser.value = null; capabilities.value = null; clearCapabilities(); consoleMode.value = 'no_access' })
   // 状态探测与认证会话恢复并行，探针慢或失败不阻塞后台登录。
@@ -421,6 +457,7 @@ onUnmounted(() => {
   disposeAppearanceListeners()
   disposeTableFit()
   disposeReadinessPolling()
+  window.removeEventListener('keydown', onShellKeydown)
 })
 </script>
 
@@ -497,25 +534,90 @@ onUnmounted(() => {
                 <span v-else>外观</span>
               </a-button>
             </a-popover>
-            <a-avatar
-              v-if="userInitial"
-              :size="30"
-              class="shrink-0 text-xs font-semibold"
-              :style="{ background: 'var(--color-brand)', color: 'var(--color-bg-elevated)' }"
-            >{{ userInitial }}</a-avatar>
-            <span class="hidden max-w-40 truncate text-sm sm:inline">{{ currentUser?.display_name || currentUser?.email || '平台管理员' }}</span>
-            <!-- G02：自助修改密码入口——移动端只留锁形图标（同 P349 isMobile 条件渲染惯例，避免 375 顶栏溢出）。 -->
-            <a-button type="link" aria-label="修改密码" @click="changePasswordOpen = true">
-              <LockOutlined v-if="isMobile" />
-              <span v-else>修改密码</span>
-            </a-button>
-            <a-button type="link" @click="signOut">退出</a-button>
+            <!-- 顶栏用户菜单：收敛原平铺用户区（头像+名字+改密+退出），提供个人信息单入口。
+                 受控 open（同外观面板口径）保证 Esc / 点外可靠收起；窄屏只留头像图标防 375 溢出（P349 惯例）。 -->
+            <a-dropdown v-model:open="userMenuOpen" trigger="click" placement="bottomRight">
+              <button
+                type="button"
+                aria-label="用户菜单"
+                class="flex max-w-44 shrink-0 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-[var(--color-brand-subtle)] focus:bg-[var(--color-brand-subtle)] focus:outline-none"
+                @keydown.esc="userMenuOpen = false"
+              >
+                <a-avatar
+                  v-if="userInitial"
+                  :size="28"
+                  class="shrink-0 text-xs font-semibold"
+                  :style="{ background: 'var(--color-brand)', color: 'var(--color-bg-elevated)' }"
+                >{{ userInitial }}</a-avatar>
+                <span class="hidden min-w-0 max-w-32 truncate text-sm sm:inline">{{ currentUser?.display_name || currentUser?.email || '平台管理员' }}</span>
+                <DownOutlined class="hidden text-[10px] text-[var(--color-text-muted)] sm:inline" />
+              </button>
+              <template #overlay>
+                <div
+                  class="w-72 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-lg)]"
+                  @keydown.esc="userMenuOpen = false"
+                >
+                  <!-- 身份卡头：头像 + 展示名 + 邮箱，超长截断 -->
+                  <div class="flex items-center gap-3 px-4 py-3">
+                    <a-avatar
+                      v-if="userInitial"
+                      :size="40"
+                      class="shrink-0 text-sm font-semibold"
+                      :style="{ background: 'var(--color-brand)', color: 'var(--color-bg-elevated)' }"
+                    >{{ userInitial }}</a-avatar>
+                    <div class="min-w-0 flex-1">
+                      <p class="m-0 truncate text-sm font-medium text-[var(--color-text-primary)]">{{ currentUser?.display_name || '平台管理员' }}</p>
+                      <p class="m-0 truncate text-xs text-[var(--color-text-muted)]">{{ currentUser?.email || '未绑定邮箱' }}</p>
+                    </div>
+                  </div>
+                  <div class="border-t border-[var(--color-border)]" />
+                  <div class="flex flex-col p-1.5">
+                    <button
+                      type="button"
+                      class="flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-subtle)]"
+                      @click="openProfile"
+                    >
+                      <IdcardOutlined class="shrink-0 text-sm text-[var(--color-text-secondary)]" />
+                      个人信息
+                    </button>
+                    <button
+                      type="button"
+                      class="flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-subtle)]"
+                      @click="openChangePassword"
+                    >
+                      <LockOutlined class="shrink-0 text-sm text-[var(--color-text-secondary)]" />
+                      修改密码
+                    </button>
+                  </div>
+                  <div class="border-t border-[var(--color-border)]" />
+                  <!-- 退出登录：悬停转危险色（语义色为全站唯一高饱和点缀口径） -->
+                  <div class="p-1.5">
+                    <button
+                      type="button"
+                      class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-error)]"
+                      @click="signOutFromMenu"
+                    >
+                      <LogoutOutlined class="shrink-0 text-sm" />
+                      退出登录
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </a-dropdown>
           </a-space>
         </a-layout-header>
 
         <a-layout-content class="mgmt-shell-content mx-auto w-full min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
           <router-view aria-hidden="true" class="hidden" />
-          <a-card v-if="consoleMode === 'no_access'" :bordered="false">
+          <!-- 个人信息页：登录即可达（不占侧栏，入口在顶栏用户菜单）；置于 no_access 分支之外，L4 也能查看本人信息。 -->
+          <div v-if="visitedPages.has('profile')" v-show="page === 'profile'">
+            <ProfilePage
+              :tenants="tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name) }))"
+              @open-change-password="openChangePassword"
+              @profile-updated="onProfileUpdated"
+            />
+          </div>
+          <a-card v-if="consoleMode === 'no_access' && page !== 'profile'" :bordered="false">
             <a-alert type="error" show-icon message="当前账号尚未获得管理权限"
               description="请联系管理员为你的角色授予管理台权限（五域管理码）；应用成员请通过业务应用入口登录。" />
           </a-card>

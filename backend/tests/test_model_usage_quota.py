@@ -59,7 +59,7 @@ class ModelUsageQuotaContractTests(unittest.TestCase):
         db.execute.return_value.all.return_value = []
 
         # 绿场规则：Mock 契约测试直接假定 actor 持 L1。
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True):
             page = list_model_usage_events(limit=500, offset=-3, actor=Mock(), db=db)
 
         self.assertEqual(page, {"items": [], "total": 451, "limit": 200, "offset": 0})
@@ -68,14 +68,14 @@ class ModelUsageQuotaContractTests(unittest.TestCase):
 
     def test_usage_filters_reject_inverted_utc_dates_before_query(self) -> None:
         db = Mock()
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True):
             with self.assertRaises(HTTPException) as raised:
                 list_model_usage_events(
                     created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), actor=Mock(), db=db,
                 )
         self.assertEqual(raised.exception.status_code, 400)
         db.scalar.assert_not_called()
-        with patch("app.services.rbac_guards.user_is_platform_admin", return_value=True):
+        with patch("app.services.effective_roles.EffectiveRoleResolver.user_is_platform_admin", return_value=True):
             with self.assertRaises(HTTPException) as summary_error:
                 model_usage_summary(
                     created_from=date(2026, 10, 16), created_to=date(2026, 10, 15), actor=Mock(), db=db,

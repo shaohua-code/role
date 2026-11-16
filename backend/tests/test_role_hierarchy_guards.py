@@ -37,9 +37,7 @@ from app.services.role_provisioning import (
     L3_GRANT_NODE_CODES,
     L3_ROLE_KEY,
     TEMPLATE_ROLE_KEYS,
-    is_custom_role,
-    provision_application_platform_roles,
-    provision_tenant_admin_role,
+    RoleProvisioning,
 )
 
 
@@ -137,8 +135,8 @@ class RoleHierarchyGuardTests(unittest.TestCase):
     def test_is_custom_role_semantics(self) -> None:
         """四个模板 key 均视为模板角色，其余 key 一律自定义；apps.admin 已删除。"""
         for key in ("platform.admin", L3_ROLE_KEY, L2_ROLE_KEY, "app.member"):
-            self.assertFalse(is_custom_role(Role(key=key)), key)
-        self.assertTrue(is_custom_role(Role(key="ops.manager")))
+            self.assertFalse(RoleProvisioning.is_custom_role(Role(key=key)), key)
+        self.assertTrue(RoleProvisioning.is_custom_role(Role(key="ops.manager")))
         self.assertNotIn("apps.admin", TEMPLATE_ROLE_KEYS)
         self.assertEqual(len(TEMPLATE_ROLE_KEYS), 4)
 
@@ -193,7 +191,7 @@ class RoleHierarchyGuardTests(unittest.TestCase):
         self.assertEqual(result["copied_permission_grant_count"], 2)
         self.db.expire_all()
         clone = self.db.get(Role, UUID(result["id"]))
-        self.assertTrue(is_custom_role(clone))
+        self.assertTrue(RoleProvisioning.is_custom_role(clone))
         self.assertEqual(self.held_codes(clone), {"menu.application_workspace", "button.users.manage"})
         self.assertEqual(self.held_codes(source), {"menu.application_workspace", "button.users.manage"})
 
@@ -267,8 +265,8 @@ class RoleHierarchyGuardTests(unittest.TestCase):
 
     def test_provisioned_template_roles_nodes_and_scopes(self) -> None:
         """预置 (应用管理员, 应用成员) 二元组：节点集与授权范围恰为模板契约，且幂等。"""
-        tenant_role = provision_tenant_admin_role(self.db, self.tenant.id)
-        admin, member = provision_application_platform_roles(self.db, self.tenant.id, self.application.id)
+        tenant_role = RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
+        admin, member = RoleProvisioning.provision_application_platform_roles(self.db, self.tenant.id, self.application.id)
         # 范围断言：租户级=tenant、应用管理员=app、应用成员=member。
         self.assertEqual(tenant_role.scope, ROLE_SCOPE_TENANT)
         self.assertEqual(admin.scope, ROLE_SCOPE_APP)
@@ -281,8 +279,8 @@ class RoleHierarchyGuardTests(unittest.TestCase):
         self.assertEqual(self.held_codes(admin), set(L2_GRANT_NODE_CODES))
         self.assertEqual(self.held_codes(member), set())
         # 幂等：重复预置不新增授权。
-        provision_tenant_admin_role(self.db, self.tenant.id)
-        provision_application_platform_roles(self.db, self.tenant.id, self.application.id)
+        RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
+        RoleProvisioning.provision_application_platform_roles(self.db, self.tenant.id, self.application.id)
         self.db.expire_all()
         self.assertEqual(len(self.held_codes(tenant_role)), len(L3_GRANT_NODE_CODES))
         self.assertEqual(len(self.held_codes(admin)), len(L2_GRANT_NODE_CODES))
@@ -290,18 +288,18 @@ class RoleHierarchyGuardTests(unittest.TestCase):
 
     def test_provision_tenant_admin_strips_legacy_nodes(self) -> None:
         """G32：存量 L3 上的遗留节点 button.permissions.manage 在再次预置时被剥离。"""
-        tenant_role = provision_tenant_admin_role(self.db, self.tenant.id)
+        tenant_role = RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
         self.db.add(RolePermission(role_id=tenant_role.id, permission_id=self.pid("button.permissions.manage")))
         self.db.flush()
         self.assertIn("button.permissions.manage", self.held_codes(tenant_role))
-        provision_tenant_admin_role(self.db, self.tenant.id)
+        RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
         self.db.expire_all()
         self.assertNotIn("button.permissions.manage", self.held_codes(tenant_role))
         self.assertEqual(self.held_codes(tenant_role), set(L3_GRANT_NODE_CODES))
 
     def test_app_admin_appointment_scoped_by_tenant(self) -> None:
         """任命链（P405）：应用级不能任命应用管理员（403），租户级可以。"""
-        admin_role, _member_role = provision_application_platform_roles(
+        admin_role, _member_role = RoleProvisioning.provision_application_platform_roles(
             self.db, self.tenant.id, self.application.id,
         )
         l2_user = User(email=f"l2-{uuid4().hex}@example.test", password_hash="x",
@@ -312,7 +310,7 @@ class RoleHierarchyGuardTests(unittest.TestCase):
                       display_name="目标", status="active")
         self.db.add_all([l2_user, l3_user, target])
         self.db.flush()
-        l3_role = provision_tenant_admin_role(self.db, self.tenant.id)
+        l3_role = RoleProvisioning.provision_tenant_admin_role(self.db, self.tenant.id)
         # L2：绑定钉住应用的 app.admin（应用级操作者）。
         self.bind_user(l2_user, admin_role)
         # L3：绑定租户管理员（租户级操作者）。

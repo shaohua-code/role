@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.api.v1.admin.common import audit, commit_or_conflict, flush_or_conflict, valid_redirect_uri
+from app.api.v1.admin.common import audit, commit_or_conflict, flush_or_conflict, valid_login_redirect_uri, valid_redirect_uri
 from app.core.security import current_user, hash_password, is_platform_admin_user
-from app.services.rbac_guards import ensure_roles
+from app.services.rbac_guards import PermissionEnforcer
 from app.db.session import get_db_session
 from app.models.application import Application, ApplicationTheme
 from app.models.authorization import Permission, Role, RolePermission
@@ -18,23 +18,19 @@ from app.models.identity import Tenant, User
 from app.models.oidc import OAuthRefreshToken
 from app.schemas.access_control import PermissionCreate
 from app.schemas.applications import ApplicationCreate, ApplicationStatusUpdate, ApplicationUpdate
-from app.services.permission_kinds import ensure_data_scope_children, infer_permission_kind
+from app.services.permission_kinds import PermissionCatalog
 from app.services.permission_namespace import (
     default_namespace_from_client_id,
     normalize_namespace,
     permission_matches_namespace,
     resolve_permission_namespace,
 )
-from app.services.admin_authorization import (
-    has_application_admin_access,
-    list_readable_application_capabilities,
-    require_application_admin_access,
-)
-from app.services.public_registration import eligible_registration_role
+from app.services.admin_authorization import AdminAccessGuard
+from app.services.public_registration import RegistrationFlow
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
     L3_ROLE_KEY,
-    provision_application_platform_roles,
+    RoleProvisioning,
 )
 
 router = APIRouter(tags=["应用管理"])
@@ -56,7 +52,7 @@ def list_applications(tenant_id: UUID | None = None,
     if status not in (None, "active", "disabled"):
         raise HTTPException(status_code=422, detail="status 仅支持 active 或 disabled")
 
-    capabilities = list_readable_application_capabilities(actor, tenant_id, db) if tenant_id else None
+    capabilities = AdminAccessGuard.list_readable_application_capabilities(actor, tenant_id, db) if tenant_id else None
     stmt = select(Application)
     if tenant_id is not None:
         stmt = stmt.where(Application.tenant_id == tenant_id)
@@ -89,7 +85,7 @@ def list_applications(tenant_id: UUID | None = None,
                  "can_rotate_secret": capabilities[a.id]["can_rotate_secret"]}
                 if capabilities is not None and a.id in capabilities
                 # 平台管理员的全局视图（无租户过滤）不走 capabilities 换算；
-                # L1 在 has_application_admin_access 恒过，这里直接标注可管理。
+                # L1 在 AdminAccessGuard.has_application_admin_access 恒过，这里直接标注可管理。
                 else {"can_manage": True, "can_rotate_secret": True})}
             for a in rows if capabilities is None or a.id in capabilities]
 
@@ -98,12 +94,12 @@ def list_applications(tenant_id: UUID | None = None,
 def create_application(body: ApplicationCreate, request: Request, response: Response,
                        actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     # P404：创建应用仅 L1 / L3；L2 即使持 app.manage 也不能新建。
-    ensure_roles(actor, db, [L3_ROLE_KEY], tenant_id=body.tenant_id, detail="缺少租户管理员角色，无法创建应用")
-    require_application_admin_access(actor, body.tenant_id, db, manage=True)
+    PermissionEnforcer.ensure_roles(actor, db, [L3_ROLE_KEY], tenant_id=body.tenant_id, detail="缺少租户管理员角色，无法创建应用")
+    AdminAccessGuard.require_application_admin_access(actor, body.tenant_id, db, manage=True)
     tenant = db.get(Tenant, body.tenant_id)
     if not tenant or tenant.status != "active": raise HTTPException(404, "活动租户不存在")
-    if any(not valid_redirect_uri(uri) for uri in [*body.redirect_uris, *body.post_logout_redirect_uris]):
-        raise HTTPException(422, "登录和退出回调地址必须使用 HTTPS；本地开发可使用 localhost")
+    if any(not valid_login_redirect_uri(uri) for uri in [*body.redirect_uris, *body.post_logout_redirect_uris]):
+        raise HTTPException(422, "回调地址必须使用 HTTPS（或 localhost 的 HTTP）；如需放行内网 HTTP，请配置 IAM_ALLOW_INSECURE_REDIRECT_URIS=true")
     # 客户端密钥只生成并回传一次；持久化仅保存 Argon2 哈希，避免明文密钥泄露。
     client_secret = secrets.token_urlsafe(48)
     permission_namespace = (
@@ -118,7 +114,7 @@ def create_application(body: ApplicationCreate, request: Request, response: Resp
                       trusted=False, client_secret_hash=hash_password(client_secret))
     db.add(row); flush_or_conflict(db)
     # P405：应用开通即预置应用管理员 / 应用成员两个平台角色模板（多应用管理员已并入应用管理员）。
-    provision_application_platform_roles(db, row.tenant_id, row.id)
+    RoleProvisioning.provision_application_platform_roles(db, row.tenant_id, row.id)
     audit(db, actor, request, "application.create", "application", str(row.id), {"client_id": row.client_id, "tenant_id": str(body.tenant_id), "trusted": False}); commit_or_conflict(db)
     # 一次性返回的客户端密钥不得进入共享缓存或代理缓存。
     response.headers["Cache-Control"] = "no-store"
@@ -137,7 +133,7 @@ def list_application_permission_catalog(
 ) -> list[dict]:
     """返回与应用 permission_namespace 对齐的权限目录条目。"""
     application = db.get(Application, application_id)
-    if not application or not has_application_admin_access(
+    if not application or not AdminAccessGuard.has_application_admin_access(
         actor, application.tenant_id, db, application_id=application.id,
     ):
         raise HTTPException(404, "应用不存在")
@@ -169,7 +165,7 @@ def list_application_permission_catalog(
             "status": permission.status,
             "surface": permission.surface,
             "requires_data_scope": permission.requires_data_scope,
-            "kind": infer_permission_kind(permission.code),
+            "kind": PermissionCatalog.infer_permission_kind(permission.code),
             "assigned_role_count": int(assigned_role_count),
         }
         for permission, assigned_role_count in rows
@@ -186,7 +182,7 @@ def create_application_permission(
 ) -> dict:
     """在应用命名空间下登记权限；catalog_namespace 由服务端锁定。"""
     application = db.get(Application, application_id)
-    if not application or not has_application_admin_access(
+    if not application or not AdminAccessGuard.has_application_admin_access(
         actor, application.tenant_id, db, manage=True, application_id=application.id,
     ):
         raise HTTPException(404, "应用不存在")
@@ -209,12 +205,12 @@ def create_application_permission(
     )
     db.add(row)
     flush_or_conflict(db)
-    ensure_data_scope_children(db, row)
+    PermissionCatalog.ensure_data_scope_children(db, row)
     audit(db, actor, request, "permission.create", "permission", str(row.id), {
         "code": row.code,
         "catalog_namespace": row.catalog_namespace,
         "application_id": str(application.id),
-        "kind": infer_permission_kind(row.code),
+        "kind": PermissionCatalog.infer_permission_kind(row.code),
     })
     commit_or_conflict(db)
     return {
@@ -224,7 +220,7 @@ def create_application_permission(
         "resource_type": row.resource_type,
         "scope": row.scope,
         "status": row.status,
-        "kind": infer_permission_kind(row.code),
+        "kind": PermissionCatalog.infer_permission_kind(row.code),
         "assigned_role_count": 0,
     }
 
@@ -236,10 +232,10 @@ def update_application(application_id: UUID, body: ApplicationUpdate, request: R
     candidate = db.get(Application, application_id)
     if not candidate:
         raise HTTPException(404, "应用不存在")
-    if not has_application_admin_access(actor, candidate.tenant_id, db, manage=True, application_id=candidate.id):
+    if not AdminAccessGuard.has_application_admin_access(actor, candidate.tenant_id, db, manage=True, application_id=candidate.id):
         raise HTTPException(404, "应用不存在")
     row = db.scalar(select(Application).where(Application.id == application_id).with_for_update())
-    if not row or not has_application_admin_access(actor, row.tenant_id, db, manage=True, application_id=row.id):
+    if not row or not AdminAccessGuard.has_application_admin_access(actor, row.tenant_id, db, manage=True, application_id=row.id):
         raise HTTPException(404, "应用不存在")
     changes = body.model_dump(exclude_unset=True)
     # G19：Back-Channel Logout 地址复用回调白名单的 URI 规则（HTTPS，开发限 localhost）；空串归一为清除。
@@ -259,7 +255,7 @@ def update_application(application_id: UUID, body: ApplicationUpdate, request: R
         tenant = db.scalar(select(Tenant).where(Tenant.id == row.tenant_id).with_for_update())
         if not tenant or tenant.kind != "consumer":
             raise HTTPException(422, "只有 ToC 消费租户可以开放公开注册")
-        if (eligible_registration_role(db, row, registration_role_id, lock=True) is None
+        if (RegistrationFlow.eligible_registration_role(db, row, registration_role_id, lock=True) is None
                 or not terms_version or not privacy_version):
             raise HTTPException(422, "开放自助注册必须选择当前应用的活动普通角色，并配置条款与隐私版本")
         published_theme = db.scalar(select(ApplicationTheme).where(
@@ -289,7 +285,7 @@ def list_application_registration_roles(application_id: UUID, actor: User = Depe
                                         db: Session = Depends(get_db_session)) -> list[dict]:
     """只列出当前应用可作为注册默认角色的活动普通角色，不提供跨应用角色选项。"""
     application = db.get(Application, application_id)
-    if not application or not has_application_admin_access(
+    if not application or not AdminAccessGuard.has_application_admin_access(
         actor, application.tenant_id, db, manage=True, application_id=application.id,
     ):
         raise HTTPException(404, "应用不存在")
@@ -302,7 +298,7 @@ def list_application_registration_roles(application_id: UUID, actor: User = Depe
     if not tenant or tenant.kind != "consumer":
         return []
     return [{"id": str(role.id), "key": role.key, "name": role.name}
-            for role in roles if eligible_registration_role(db, application, role.id) is not None]
+            for role in roles if RegistrationFlow.eligible_registration_role(db, application, role.id) is not None]
 
 
 @router.patch("/applications/{application_id}/trusted")
@@ -310,7 +306,7 @@ def set_application_trusted(application_id: UUID, trusted: bool, request: Reques
                             actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """只由持平台管理码的管理员显式设置信任；撤销信任时同时撤销可静默续期的 OAuth 刷新会话。"""
     # 信任标记属平台级策略：按码判权（L1 覆盖全部管理码），废除路由级 platform_admin 依赖
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 app.manage）")
+    PermissionEnforcer.ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 app.manage）")
     row = db.get(Application, application_id)
     if not row:
         raise HTTPException(404, "应用不存在")
@@ -335,7 +331,7 @@ def rotate_application_secret(application_id: UUID, request: Request, response: 
     candidate = db.get(Application, application_id)
     if not candidate:
         raise HTTPException(404, "应用不存在")
-    require_application_admin_access(
+    AdminAccessGuard.require_application_admin_access(
         actor, candidate.tenant_id, db, rotate_secret=True, application_id=candidate.id,
     )
     # 锁定应用行，确保并发轮换的哈希更新和审计按同一串行事务提交。
@@ -366,13 +362,13 @@ def set_application_status(
     candidate = db.get(Application, application_id)
     if not candidate:
         raise HTTPException(404, "应用不存在")
-    if not has_application_admin_access(actor, candidate.tenant_id, db, manage=True,
+    if not AdminAccessGuard.has_application_admin_access(actor, candidate.tenant_id, db, manage=True,
                                         application_id=candidate.id):
         raise HTTPException(404, "应用不存在")
     row = db.scalar(select(Application).where(Application.id == application_id).with_for_update())
     if not row:
         raise HTTPException(404, "应用不存在")
-    if not has_application_admin_access(actor, row.tenant_id, db, manage=True,
+    if not AdminAccessGuard.has_application_admin_access(actor, row.tenant_id, db, manage=True,
                                         application_id=row.id):
         raise HTTPException(404, "应用不存在")
     if row.status != body.expected_status:
@@ -410,18 +406,18 @@ def delete_application(
     candidate = db.get(Application, application_id)
     if not candidate:
         raise HTTPException(404, "应用不存在")
-    if not has_application_admin_access(actor, candidate.tenant_id, db, manage=True,
+    if not AdminAccessGuard.has_application_admin_access(actor, candidate.tenant_id, db, manage=True,
                                         application_id=candidate.id):
         raise HTTPException(404, "应用不存在")
     # P404：删除应用仅 L1 / L3；L2 可见本应用但不能删。
-    ensure_roles(
+    PermissionEnforcer.ensure_roles(
         actor, db, [L3_ROLE_KEY], tenant_id=candidate.tenant_id,
         detail="缺少租户管理员角色，无法删除应用",
     )
     row = db.scalar(select(Application).where(Application.id == application_id).with_for_update())
     if not row:
         raise HTTPException(404, "应用不存在")
-    if not has_application_admin_access(actor, row.tenant_id, db, manage=True,
+    if not AdminAccessGuard.has_application_admin_access(actor, row.tenant_id, db, manage=True,
                                         application_id=row.id):
         raise HTTPException(404, "应用不存在")
     usage_exists = db.scalar(select(ModelUsageEvent.id).where(ModelUsageEvent.application_id == row.id).limit(1))

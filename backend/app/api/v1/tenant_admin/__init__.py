@@ -15,7 +15,7 @@ router = APIRouter(
     dependencies=[Depends(current_user)],
 )
 
-# 每个 handler 都调用 admin_authorization.py / rbac_guards.py 按角色门禁（ensure_roles / 过渡期码→角色映射）校验目标租户/应用。
+# 每个 handler 都调用 admin_authorization.py / rbac_guards.py 按角色门禁（PermissionEnforcer.ensure_roles / 过渡期码→角色映射）校验目标租户/应用。
 # 绿场规则：组管理首期即挂 tenant-admin（L3 持 tenant.admin（组管理走角色门禁））。
 router.include_router(organizations_router)
 router.include_router(applications_router)

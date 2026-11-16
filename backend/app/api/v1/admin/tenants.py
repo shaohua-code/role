@@ -16,13 +16,8 @@ from app.models.oidc import OAuthRefreshToken
 from app.schemas.auth import TenantCreate, TenantKindUpdate
 from app.db.seed_greenfield import PLATFORM_TENANT_SLUG
 from app.services.permission_kinds import ROLE_SCOPE_SUPER
-from app.services.rbac_guards import (
-    ensure_codes,
-    ensure_roles,
-    ensure_scope,
-    list_actor_management_tenant_ids,
-)
-from app.services.role_provisioning import L1_ROLE_KEY, provision_tenant_admin_role
+from app.services.rbac_guards import ActorVisibility, PermissionEnforcer
+from app.services.role_provisioning import L1_ROLE_KEY, RoleProvisioning
 
 router = APIRouter(tags=["租户管理"])
 
@@ -38,14 +33,14 @@ def list_tenants(
 
     q/kind/status 为可选服务端过滤（管理台已有前端本地过滤，参数供深链与未来分页使用）。
     """
-    ensure_codes(actor, db, "menu.tenants", detail="缺少管理权限：menu.tenants")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.tenants", detail="缺少管理权限：menu.tenants")
     if kind not in (None, "organization", "consumer"):
         raise HTTPException(422, "kind 仅支持 organization 或 consumer")
     if status not in (None, "active", "disabled"):
         raise HTTPException(422, "status 仅支持 active 或 disabled")
     stmt = select(Tenant).order_by(Tenant.created_at.desc()).limit(500)
     # 数据边界：超管不限制；租户级/应用级只出自己活跃成员身份所在的租户。
-    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     if tenant_scope is not None:
         if not tenant_scope:
             return []
@@ -73,12 +68,12 @@ def list_tenants(
 def create_tenant(body: TenantCreate, request: Request, actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """创建租户；L3 tenant.admin 模板全局一份（幂等确保），slug 唯一冲突统一转 409。"""
     # 建删租户是平台级写：L1 角色闸门 + 超管范围闸门双重收口。
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="创建租户需要超管范围")
+    PermissionEnforcer.ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="创建租户需要超管范围")
     row = Tenant(name=body.name, slug=body.slug, kind=body.kind)
     db.add(row); flush_or_conflict(db)
     # 平台角色全局化：tenant.admin 全局一份，租户开通只幂等确保模板存在，不再预置副本。
-    provision_tenant_admin_role(db)
+    RoleProvisioning.provision_tenant_admin_role(db)
     audit(db, actor, request, "tenant.create", "tenant", str(row.id), {"slug": row.slug, "kind": row.kind}); commit_or_conflict(db)
     return {"id": str(row.id), "name": row.name, "slug": row.slug, "kind": row.kind, "status": row.status}
 
@@ -87,7 +82,7 @@ def create_tenant(body: TenantCreate, request: Request, actor: User = Depends(cu
 def set_tenant_kind(tenant_id: UUID, body: TenantKindUpdate, request: Request,
                     actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """切换租户注册受众前必须先关闭其所有应用的公开注册，形成明确的二次确认。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
+    PermissionEnforcer.ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
     row = db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
     if not row:
         raise HTTPException(404, "租户不存在")
@@ -116,7 +111,7 @@ def set_tenant_kind(tenant_id: UUID, body: TenantKindUpdate, request: Request,
 @router.patch("/tenants/{tenant_id}/status")
 def set_tenant_status(tenant_id: UUID, status: str, request: Request, actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """启停租户；停用时撤销旗下应用的 OAuth 刷新令牌，阻断旧会话续期。"""
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
+    PermissionEnforcer.ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
     if status not in {"active", "disabled"}: raise HTTPException(422, "状态仅支持 active 或 disabled")
     row = db.get(Tenant, tenant_id)
     if not row: raise HTTPException(404, "租户不存在")
@@ -143,8 +138,8 @@ def delete_tenant(tenant_id: UUID, request: Request, actor: User = Depends(curre
     from app.models.model_catalog import ModelUsageEvent, ModelUsageReservation
 
     # 建删租户是平台级写：L1 角色闸门 + 超管范围闸门双重收口。
-    ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
-    ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="删除租户需要超管范围")
+    PermissionEnforcer.ensure_roles(actor, db, [L1_ROLE_KEY], detail="缺少管理角色（原 platform.tenant.manage）")
+    PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_SUPER, detail="删除租户需要超管范围")
     row = db.scalar(select(Tenant).where(Tenant.id == tenant_id).with_for_update())
     if not row:
         raise HTTPException(404, "租户不存在")

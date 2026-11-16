@@ -11,7 +11,7 @@ from app.db.session import get_db_session
 from app.models.application import Application
 from app.models.authorization import Role
 from app.models.identity import AuditEvent, Tenant, TenantMembership, User
-from app.services.rbac_guards import ensure_codes, list_actor_management_tenant_ids
+from app.services.rbac_guards import ActorVisibility, PermissionEnforcer
 
 router = APIRouter(tags=["平台概览"])
 
@@ -22,8 +22,8 @@ def overview(actor: User = Depends(current_user), db: Session = Depends(get_db_s
     P2-2 数据边界：超管返回全域计数；租户级/应用级只统计自身管理租户内的
     租户 / 应用 / 用户 / 角色与近期审计，应用不再一次看到全平台规模。
     """
-    ensure_codes(actor, db, "menu.overview", detail="缺少管理权限：menu.overview")
-    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    PermissionEnforcer.ensure_codes(actor, db, "menu.overview", detail="缺少管理权限：menu.overview")
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     if tenant_scope is None:
         return {"tenants": db.scalar(select(func.count()).select_from(Tenant)) or 0,
                 "applications": db.scalar(select(func.count()).select_from(Application)) or 0,

@@ -19,11 +19,8 @@ from app.models.authorization import Permission, Role, RoleBinding, RolePermissi
 from app.models.identity import AuditEvent, Tenant, TenantMembership, User
 from app.models.organization import RoleDataScope
 from app.schemas.access_control import PermissionStatusUpdate
-from app.services.authorization import evaluate_access
-from app.services.permission_impact import (
-    apply_role_permissions,
-    preview_role_permissions,
-)
+from app.services.authorization import AuthorizationEvaluator
+from app.services.permission_impact import PermissionImpactService
 
 
 class PermissionStatusTests(unittest.TestCase):
@@ -74,7 +71,7 @@ class PermissionStatusTests(unittest.TestCase):
                                include_data_scope=False)
 
     def test_disable_denies_online_check_and_preserves_grant_for_explicit_restore(self) -> None:
-        self.assertTrue(evaluate_access(self._body(), self.user, self.db)["decision"]["allowed"])
+        self.assertTrue(AuthorizationEvaluator.evaluate_access(self._body(), self.user, self.db)["decision"]["allowed"])
 
         disabled = set_permission_status(
             self.permission.id,
@@ -84,7 +81,7 @@ class PermissionStatusTests(unittest.TestCase):
 
         self.assertEqual(disabled["status"], "disabled")
         self.assertEqual(disabled["assigned_role_count"], 1)
-        self.assertFalse(evaluate_access(self._body(), self.user, self.db)["decision"]["allowed"])
+        self.assertFalse(AuthorizationEvaluator.evaluate_access(self._body(), self.user, self.db)["decision"]["allowed"])
         self.assertIsNotNone(self.db.get(RolePermission, self.grant.id))
 
         restored = set_permission_status(
@@ -94,7 +91,7 @@ class PermissionStatusTests(unittest.TestCase):
         )
 
         self.assertTrue(restored["reactivates_existing_grants"])
-        self.assertTrue(evaluate_access(self._body(), self.user, self.db)["decision"]["allowed"])
+        self.assertTrue(AuthorizationEvaluator.evaluate_access(self._body(), self.user, self.db)["decision"]["allowed"])
         events = self.db.scalars(select(AuditEvent).where(AuditEvent.action == "permission.status.change")).all()
         self.assertEqual(len(events), 2)
         self.assertEqual({event.details["to_status"] for event in events}, {"active", "disabled"})
@@ -119,15 +116,15 @@ class PermissionStatusTests(unittest.TestCase):
         self.db.commit()
 
         with self.assertRaises(ValueError):
-            preview_role_permissions(second_role.id, [self.permission.id], self.db)
+            PermissionImpactService.preview_role_permissions(second_role.id, [self.permission.id], self.db)
         with self.assertRaises(HTTPException) as error:
             grant_permission(second_role.id, self.permission.id, self.request, None, self.actor, self.db)
         self.assertEqual(error.exception.status_code, 409)
 
-        retained = apply_role_permissions(self.role.id, [self.permission.id], [self.permission.id], self.db)
+        retained = PermissionImpactService.apply_role_permissions(self.role.id, [self.permission.id], [self.permission.id], self.db)
         self.assertFalse(retained["changed"])
         grant_id = self.grant.id
-        removed = apply_role_permissions(self.role.id, [], [self.permission.id], self.db)
+        removed = PermissionImpactService.apply_role_permissions(self.role.id, [], [self.permission.id], self.db)
         self.assertTrue(removed["changed"])
         self.assertIsNone(self.db.get(RolePermission, grant_id))
 

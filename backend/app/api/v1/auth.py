@@ -29,20 +29,11 @@ from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRe
 from app.schemas.auth import (AcceptInvitationRequest, AuthPublicCapabilities, AuthResponse,
                               ConsoleRegistrationContext, InvitationTokenRequest, LoginRequest,
                               MeResponse, PasswordChange, PasswordResetComplete, PasswordResetRequest,
-                              PublicRegistrationCapabilities, RegisterRequest, RegisterVerifyRequest,
-                              RoleBrief, UserResponse)
-from app.services.email import send_password_reset_email
-from app.services.login_throttle import (begin_login_attempt, clear_login_identifier_failures,
-                                         client_ip_for_request, record_login_failure)
-from app.services.public_registration import (
-    RegistrationPolicyChanged,
-    application_registration_details,
-    eligible_registration_role,
-    registration_email_hash,
-    registration_role_fingerprint,
-    request_registration_code,
-    verify_registration_code,
-)
+                              ProfileUpdate, PublicRegistrationCapabilities, RegisterRequest,
+                              RegisterVerifyRequest, RoleBrief, UserResponse)
+from app.services.email import EmailSender
+from app.services.login_throttle import LoginThrottleService
+from app.services.public_registration import RegistrationFlow, RegistrationPolicyChanged
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 REFRESH_COOKIE = "iam_refresh_token"
@@ -74,12 +65,12 @@ def record_event(db: Session, action: str, target_type: str, target_id: str | No
             for membership_tenant_id in membership_tenant_ids:
                 db.add(AuditEvent(actor_user_id=actor.id, tenant_id=membership_tenant_id, action=action,
                                   target_type=target_type, target_id=target_id,
-                                  source_ip=client_ip_for_request(request, get_settings()), outcome=outcome,
+                                  source_ip=LoginThrottleService.client_ip_for_request(request, get_settings()), outcome=outcome,
                                   details=details or {}))
             return
     db.add(AuditEvent(actor_user_id=actor.id if actor else None, tenant_id=tenant_id, action=action,
                       target_type=target_type, target_id=target_id,
-                      source_ip=client_ip_for_request(request, get_settings()), outcome=outcome,
+                      source_ip=LoginThrottleService.client_ip_for_request(request, get_settings()), outcome=outcome,
                       details=details or {}))
 
 
@@ -158,14 +149,14 @@ def register(body: RegisterRequest, request: Request, response: Response,
         Application.client_id == body.client_id,
         Application.status == "active",
     ).with_for_update())
-    if not application or application_registration_details(db, application, settings=settings) is None:
+    if not application or RegistrationFlow.application_registration_details(db, application, settings=settings) is None:
         raise HTTPException(403, "当前应用暂不开放自助注册")
     if (body.terms_version != application.registration_terms_version
             or body.privacy_version != application.registration_privacy_version):
         raise HTTPException(409, "注册协议已更新，请刷新页面后重试")
     email = str(body.email).casefold()
     try:
-        request_registration_code(
+        RegistrationFlow.request_registration_code(
             db,
             application=application,
             email=email,
@@ -174,7 +165,7 @@ def register(body: RegisterRequest, request: Request, response: Response,
             privacy_version=body.privacy_version,
             terms_url=body.terms_url,
             privacy_url=body.privacy_url,
-            client_ip=client_ip_for_request(request, settings),
+            client_ip=LoginThrottleService.client_ip_for_request(request, settings),
             settings=settings,
         )
     except RegistrationPolicyChanged as exc:
@@ -202,11 +193,11 @@ def verify_registration(body: RegisterVerifyRequest, request: Request, response:
     ).with_for_update())
     if not application:
         raise HTTPException(400, "验证码无效或已过期")
-    role = eligible_registration_role(db, application, application.registration_role_id, lock=True)
-    if (role is None or application_registration_details(db, application, settings=settings) is None):
+    role = RegistrationFlow.eligible_registration_role(db, application, application.registration_role_id, lock=True)
+    if (role is None or RegistrationFlow.application_registration_details(db, application, settings=settings) is None):
         raise HTTPException(400, "验证码无效或已过期")
     email = str(body.email).casefold()
-    email_hash = registration_email_hash(settings, application.id, email)
+    email_hash = RegistrationFlow.registration_email_hash(settings, application.id, email)
     now = datetime.now(timezone.utc)
     challenge = db.scalar(select(PublicRegistrationChallenge).where(
         PublicRegistrationChallenge.application_id == application.id,
@@ -216,18 +207,18 @@ def verify_registration(body: RegisterVerifyRequest, request: Request, response:
     ).with_for_update())
     if challenge is None:
         raise HTTPException(400, "验证码无效或已过期")
-    current_role_fingerprint = registration_role_fingerprint(db, role, lock_permissions=True)
+    current_role_fingerprint = RegistrationFlow.registration_role_fingerprint(db, role, lock_permissions=True)
     if (challenge.registration_role_id != role.id
             or challenge.registration_role_fingerprint != current_role_fingerprint):
         # 注册默认角色变更等同于授权策略变更；消费旧 challenge 并要求用户重新申请验证码。
         challenge.consumed_at = now
         db.commit()
         raise HTTPException(400, "验证码无效或已过期")
-    if not verify_registration_code(db, challenge, body.code, now=now, settings=settings):
+    if not RegistrationFlow.verify_registration_code(db, challenge, body.code, now=now, settings=settings):
         raise HTTPException(400, "验证码无效或已过期")
 
     # 条款可能在用户收验证码期间更新；旧版本申请不能用新策略创建成员。
-    registration_details = application_registration_details(db, application, settings=settings)
+    registration_details = RegistrationFlow.application_registration_details(db, application, settings=settings)
     if (registration_details is None
             or challenge.terms_version != application.registration_terms_version
             or challenge.privacy_version != application.registration_privacy_version
@@ -296,7 +287,7 @@ def verify_registration(body: RegisterVerifyRequest, request: Request, response:
             privacy_version=challenge.privacy_version,
             terms_url=challenge.terms_url,
             privacy_url=challenge.privacy_url,
-            source_ip=client_ip_for_request(request, settings),
+            source_ip=LoginThrottleService.client_ip_for_request(request, settings),
             accepted_at=now,
         )
         db.add(consent)
@@ -415,7 +406,7 @@ def login(body: LoginRequest, request: Request, response: Response, db: Session 
     settings = get_settings()
     ensure_signing_key()
     email = str(body.email).casefold()
-    ticket = begin_login_attempt(db, email, client_ip_for_request(request, settings), settings)
+    ticket = LoginThrottleService.begin_login_attempt(db, email, LoginThrottleService.client_ip_for_request(request, settings), settings)
     if ticket.blocked_until:
         retry_after = max(1, ceil((ticket.blocked_until - datetime.now(timezone.utc)).total_seconds()))
         db.commit()
@@ -426,11 +417,11 @@ def login(body: LoginRequest, request: Request, response: Response, db: Session 
     # 用户不存在时仍对比一次性假哈希，抹平响应耗时差异，防止以时间侧信道探测已注册邮箱。
     valid = verify_password(body.password, user.password_hash) if user else verify_password(body.password, dummy_password_hash())
     if not user or not valid or user.status != "active":
-        record_login_failure(db, ticket, settings)
+        LoginThrottleService.record_login_failure(db, ticket, settings)
         record_event(db, "auth.login", "user", str(user.id) if user else None, user, request, "denied")
         db.commit()
         raise HTTPException(401, "账号或密码错误")
-    clear_login_identifier_failures(db, ticket, settings)
+    LoginThrottleService.clear_login_identifier_failures(db, ticket, settings)
     refresh_token, refresh_expiry, session_id = new_refresh_token(db, user)
     record_event(db, "auth.login", "user", str(user.id), user, request)
     db.commit()
@@ -483,7 +474,7 @@ def public_capabilities(db: Session = Depends(get_db_session)) -> AuthPublicCapa
             Application.status == "active",
         ))
         if application:
-            details = application_registration_details(db, application, settings=settings)
+            details = RegistrationFlow.application_registration_details(db, application, settings=settings)
             if details:
                 console_registration = ConsoleRegistrationContext(
                     client_id=application.client_id,
@@ -554,7 +545,7 @@ def request_password_reset(body: PasswordResetRequest, request: Request, respons
     db.commit()
     if reset and user and raw_token:
         try:
-            send_password_reset_email(user.email or "", raw_token)
+            EmailSender.send_password_reset_email(user.email or "", raw_token)
         except Exception as exc:
             # SMTP 异常正文可能回显收件地址；日志和审计仅保留异常类型。
             record_event(db, "auth.password_reset.delivery_failed", "password_reset", None, None, request,
@@ -609,9 +600,9 @@ def complete_password_reset(body: PasswordResetComplete, request: Request, respo
                  details={"iam_refresh_sessions_revoked": True})
     db.commit()
     # G19：改密级联撤销了全部 OIDC 凭证，向业务方推送 back-channel 登出（best-effort）。
-    from app.services.backchannel_logout import deliver_for_user
+    from app.services.backchannel_logout import BackchannelLogoutService
 
-    deliver_for_user(db, user.id)
+    BackchannelLogoutService.deliver_for_user(db, user.id)
     clear_refresh_cookie(response)
     return {"message": "密码已重置，请使用新密码登录。"}
 
@@ -661,9 +652,9 @@ def change_own_password(body: PasswordChange, request: Request, response: Respon
                  details={"iam_refresh_sessions_revoked": True})
     db.commit()
     # G19：自助改密级联撤销了全部 OIDC 凭证，向业务方推送 back-channel 登出（best-effort）。
-    from app.services.backchannel_logout import deliver_for_user
+    from app.services.backchannel_logout import BackchannelLogoutService
 
-    deliver_for_user(db, row.id)
+    BackchannelLogoutService.deliver_for_user(db, row.id)
     clear_refresh_cookie(response)
     return {"message": "密码已修改，请使用新密码重新登录。"}
 
@@ -673,12 +664,12 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db_session)
     """登录后一次返回用户信息、有效角色与由角色派生的 capabilities。
 
     前端只用 capabilities / permission codes 裁 UI；roles 仅展示或调试。
-    后端安全边界是角色（ensure_roles），不要信任前端回传的码。
+    后端安全边界是角色（PermissionEnforcer.ensure_roles），不要信任前端回传的码。
     """
-    from app.services.rbac_guards import list_actor_roles, list_management_capabilities
+    from app.services.rbac_guards import ActorVisibility
 
-    capabilities = list_management_capabilities(user, db)
-    roles_raw = capabilities.get("roles") or list_actor_roles(user, db)
+    capabilities = ActorVisibility.list_management_capabilities(user, db)
+    roles_raw = capabilities.get("roles") or ActorVisibility.list_actor_roles(user, db)
     roles = [
         RoleBrief(
             key=item["key"],
@@ -700,6 +691,32 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db_session)
     )
 
 
+@router.patch("/me", response_model=UserResponse)
+def update_me(
+    body: ProfileUpdate,
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> UserResponse:
+    """登录态自助更新展示名；邮箱 / 手机号不开放自助变更（登录标识走管理员与验证通道）。
+
+    展示名 strip 后必须非空（Field 长度约束 + 空白守卫）；变更写审计（含新旧值）
+    便于追溯，但不提升 auth_version、不撤销会话——展示名不是凭证。
+    """
+    display_name = body.display_name.strip()
+    if not display_name:
+        raise HTTPException(status_code=422, detail="展示名不能为空白字符")
+    if display_name == user.display_name:
+        return user
+    old_display_name = user.display_name
+    user.display_name = display_name
+    db.add(user)
+    record_event(db, "auth.profile.update", "user", str(user.id), user, request,
+                 details={"old_display_name": old_display_name, "new_display_name": display_name})
+    db.commit()
+    return user
+
+
 @router.get("/me/capabilities")
 def me_capabilities(user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """兼容旧前端：与 /auth/me.capabilities 同构；新客户端优先用 /auth/me。
@@ -709,9 +726,9 @@ def me_capabilities(user: User = Depends(current_user), db: Session = Depends(ge
     - 另含 roles[]（有效角色摘要）；
     - L4 纯业务用户得到空能力（no_access）。
     """
-    from app.services.rbac_guards import list_management_capabilities
+    from app.services.rbac_guards import ActorVisibility
 
-    return list_management_capabilities(user, db)
+    return ActorVisibility.list_management_capabilities(user, db)
 
 
 @router.post("/logout", status_code=204)

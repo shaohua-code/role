@@ -20,17 +20,9 @@ from app.models.identity import (AuditEvent, PasswordResetToken, RefreshSession,
 from app.models.oidc import OAuthAuthorizationCode, OAuthConsentRequest, OAuthRefreshToken
 from app.models.organization import MembershipOrganization, Organization
 from app.schemas.auth import AdminPasswordReset, AdminUserCreate, UserStatusUpdate
-from app.services.backchannel_logout import deliver_backchannel_logout, deliver_for_user
-from app.services.effective_roles import ancestor_group_cte, authorized_role_ids_statement
-from app.services.rbac_guards import (
-    effective_role_scope,
-    ensure_codes,
-    ensure_scope,
-    ensure_tenant_in_actor_scope,
-    list_actor_management_tenant_ids,
-    list_actor_visible_application_ids,
-    scope_at_least,
-)
+from app.services.backchannel_logout import BackchannelLogoutService
+from app.services.effective_roles import EffectiveRoleResolver
+from app.services.rbac_guards import ActorVisibility, PermissionEnforcer
 from app.services.permission_kinds import ROLE_SCOPE_TENANT
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
@@ -38,7 +30,7 @@ from app.services.role_provisioning import (
     L3_ROLE_KEY,
     L4_ROLE_KEY,
     TEMPLATE_ROLE_KEYS,
-    is_application_class_role,
+    RoleProvisioning,
 )
 
 router = APIRouter(tags=["用户管理"])
@@ -54,7 +46,7 @@ def _assert_user_within_actor_boundary(actor: User, db: Session, user: User) -> 
     """
     if is_platform_admin_user(actor, db):
         return
-    tenant_scope = list_actor_management_tenant_ids(actor, db) or set()
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db) or set()
     memberships = db.scalars(select(TenantMembership).where(
         TenantMembership.user_id == user.id,
         TenantMembership.status == "active",
@@ -81,7 +73,7 @@ def _assert_user_within_actor_boundary(actor: User, db: Session, user: User) -> 
 def list_user_sessions(user_id: UUID, actor: User = Depends(current_user),
                       db: Session = Depends(get_db_session)) -> dict:
     """列出仍可续期的管理台与 OIDC 会话，不暴露任何 refresh token 摘要。"""
-    ensure_codes(actor, db, "menu.users", detail="缺少管理权限：menu.users")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.users", detail="缺少管理权限：menu.users")
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "用户不存在")
@@ -152,7 +144,7 @@ def revoke_user_session(
     db: Session = Depends(get_db_session),
 ) -> dict:
     """撤销一个用户会话并在同一事务写入管理审计。"""
-    ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "用户不存在")
@@ -201,14 +193,14 @@ def revoke_user_session(
     if changed and session_type == "oidc" and application_id:
         application = db.get(Application, application_id)
         if application:
-            deliver_backchannel_logout([application], user_id=user_id, session_id=session_id)
+            BackchannelLogoutService.deliver_backchannel_logout([application], user_id=user_id, session_id=session_id)
     return {"user_id": str(user_id), "session_type": session_type,
             "session_id": str(session_id), "revoked_at": revoked_at}
 
 def list_user_effective_permissions(db: Session, user_id: UUID) -> list[dict]:
     """G28 有效权限码并集 + 来源（直授角色 / 用户组继承）。
 
-    只统计活动成员身份、活动角色、活动权限；组停用不参与继承（与 list_effective_roles 同口径）。
+    只统计活动成员身份、活动角色、活动权限；组停用不参与继承（与 EffectiveRoleResolver.list_effective_roles 同口径）。
     """
     membership_rows = db.execute(
         select(TenantMembership, Tenant)
@@ -218,7 +210,7 @@ def list_user_effective_permissions(db: Session, user_id: UUID) -> list[dict]:
     ).all()
     aggregated: dict[str, dict] = {}
     for membership, tenant in membership_rows:
-        role_ids = list(db.scalars(authorized_role_ids_statement(membership.id, tenant.id)).all())
+        role_ids = list(db.scalars(EffectiveRoleResolver.authorized_role_ids_statement(membership.id, tenant.id)).all())
         if not role_ids:
             continue
         roles = list(db.scalars(
@@ -233,7 +225,7 @@ def list_user_effective_permissions(db: Session, user_id: UUID) -> list[dict]:
                 RoleBinding.role_id.in_(list(role_by_id)),
             )
         ).all())
-        ancestor_groups = ancestor_group_cte(membership.id, tenant.id)
+        ancestor_groups = EffectiveRoleResolver.ancestor_group_cte(membership.id, tenant.id)
         group_rows = db.execute(
             select(UserGroupRole.role_id, UserGroup)
             .join(UserGroup, UserGroup.id == UserGroupRole.group_id)
@@ -313,7 +305,7 @@ def get_user_profile(user_id: UUID, actor: User = Depends(current_user),
     PRD IAM-USER-006 要求的一体详情由本端点承载，前端详情抽屉单次拉取。
     G28 追加有效权限码并集与来源（直授 / 用户组）。
     """
-    ensure_codes(actor, db, "menu.users", detail="缺少管理权限：menu.users")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.users", detail="缺少管理权限：menu.users")
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "用户不存在")
@@ -376,7 +368,7 @@ def get_user_profile(user_id: UUID, actor: User = Depends(current_user),
 def list_users(q: str | None = None, actor: User = Depends(current_user),
                db: Session = Depends(get_db_session)) -> list[dict]:
     """按邮箱/名称模糊查询用户目录与租户数；非超管只出数据边界内（自己租户/应用）的用户。"""
-    ensure_codes(actor, db, "menu.users", detail="缺少管理权限：menu.users")
+    PermissionEnforcer.ensure_codes(actor, db, "menu.users", detail="缺少管理权限：menu.users")
     stmt = select(User).order_by(User.created_at.desc()).limit(500)
     if q:
         # LIKE 通配符按字面匹配，避免 %/_ 意外扩大结果集（audit.py 同口径）。
@@ -385,9 +377,9 @@ def list_users(q: str | None = None, actor: User = Depends(current_user),
                           | User.display_name.ilike(f"%{escaped}%", escape="\\"))
     # 数据边界：超管全域；租户级限自己活跃成员身份所在租户；
     # 应用级收口到「绑定应用的用户」（角色钉住可见应用的成员），不放宽到同租户全部用户。
-    tenant_scope = list_actor_management_tenant_ids(actor, db)
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     if tenant_scope is not None:
-        if scope_at_least(actor, db, ROLE_SCOPE_TENANT):
+        if PermissionEnforcer.scope_at_least(actor, db, ROLE_SCOPE_TENANT):
             if not tenant_scope:
                 return []
             stmt = stmt.where(User.id.in_(select(TenantMembership.user_id).where(
@@ -395,7 +387,7 @@ def list_users(q: str | None = None, actor: User = Depends(current_user),
                 TenantMembership.status == "active",
             )))
         else:
-            visible_apps = list_actor_visible_application_ids(actor, db) or set()
+            visible_apps = ActorVisibility.list_actor_visible_application_ids(actor, db) or set()
             if not visible_apps:
                 return []
             stmt = stmt.where(User.id.in_(
@@ -422,7 +414,7 @@ def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(c
     - 绑定应用 = 自动补该应用的 app.member 模板角色（应用必须属于所选租户）；
     - role_id 可选，挂在第一个租户下。
     """
-    ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
     # 去重保序；至少一个租户。
     tenant_ids = list(dict.fromkeys(body.tenant_ids))
     if not tenant_ids:
@@ -433,7 +425,7 @@ def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(c
         if not tenant:
             raise HTTPException(404, "租户不存在")
         # 数据边界：非超管只能在自己范围内的租户建人。
-        ensure_tenant_in_actor_scope(actor, db, tenant_id)
+        ActorVisibility.ensure_tenant_in_actor_scope(actor, db, tenant_id)
         tenants.append(tenant)
     # 平台租户隔离：非超管不得把业务成员落进平台管理租户（仅超管可为平台租户增删成员）。
     if not is_platform_admin_user(actor, db):
@@ -472,7 +464,7 @@ def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(c
             if not role_app:
                 raise HTTPException(422, "角色绑定的应用不存在或已停用")
             if not platform_actor:
-                visible_apps = list_actor_visible_application_ids(actor, db)
+                visible_apps = ActorVisibility.list_actor_visible_application_ids(actor, db)
                 if visible_apps is not None and role.application_id not in visible_apps:
                     raise HTTPException(403, "不能绑定不在你数据边界内的应用角色")
         if role.key == L1_ROLE_KEY and not platform_actor:
@@ -480,9 +472,9 @@ def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(c
         if role.key == L3_ROLE_KEY and not platform_actor:
             raise HTTPException(403, "不能任命租户管理员")
         if role.key == L2_ROLE_KEY and role.application_id and not platform_actor:
-            ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="任命应用管理员需要租户级及以上范围")
+            PermissionEnforcer.ensure_scope(actor, db, ROLE_SCOPE_TENANT, detail="任命应用管理员需要租户级及以上范围")
         elif role.key not in TEMPLATE_ROLE_KEYS:
-            ensure_scope(actor, db, effective_role_scope(role), detail="不能绑定高于自己授权范围的角色")
+            PermissionEnforcer.ensure_scope(actor, db, ActorVisibility.effective_role_scope(role), detail="不能绑定高于自己授权范围的角色")
 
     user = User(email=email, display_name=body.display_name, password_hash=hash_password(body.initial_password))
     db.add(user); flush_or_conflict(db)
@@ -510,7 +502,7 @@ def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(c
     if role:
         db.add(RoleBinding(membership_id=created_membership_ids[0], role_id=role.id))
         # 与 bind_role 同口径：初始角色为应用角色时自动补该应用的成员（L4）模板角色。
-        if is_application_class_role(role) and role.application_id:
+        if RoleProvisioning.is_application_class_role(role) and role.application_id:
             member_role = db.scalar(select(Role).where(
                 Role.tenant_id == role.tenant_id,
                 Role.application_id == role.application_id,
@@ -539,7 +531,7 @@ def create_user(body: AdminUserCreate, request: Request, actor: User = Depends(c
 def set_user_status(user_id: UUID, body: UserStatusUpdate, request: Request,
                     actor: User = Depends(current_user), db: Session = Depends(get_db_session)) -> dict:
     """全局锁/停用会使此前所有 IAM/OIDC 身份凭证失效；解锁不会恢复旧会话。"""
-    ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
     row = db.scalar(select(User).where(User.id == user_id).with_for_update())
     if not row: raise HTTPException(404, "用户不存在")
     # 目标边界：非超管不能停用/锁定越边界账号或平台角色账号（含空操作探测，一并 404）。
@@ -576,7 +568,7 @@ def set_user_status(user_id: UUID, body: UserStatusUpdate, request: Request,
     commit_or_conflict(db)
     # G19：全局凭证级联后向用户有过会话的应用推送 back-channel 登出（仅停用/锁停触发级联）。
     if body.status in {"disabled", "locked"}:
-        deliver_for_user(db, row.id)
+        BackchannelLogoutService.deliver_for_user(db, row.id)
     return {"id": str(row.id), "status": row.status, "auth_version": row.auth_version}
 
 
@@ -587,7 +579,7 @@ def reset_user_password(user_id: UUID, body: AdminPasswordReset, request: Reques
 
     兜底 SMTP 故障时忘记密码用户的管理救济；本人必须走「验证当前密码」的自助通道。
     """
-    ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
+    PermissionEnforcer.ensure_codes(actor, db, "button.users.manage", detail="缺少管理权限：button.users.manage")
     if actor.id == user_id:
         raise HTTPException(400, "不能重置当前管理员自己的密码；请使用「修改密码」")
     row = db.scalar(select(User).where(User.id == user_id).with_for_update())
@@ -622,5 +614,5 @@ def reset_user_password(user_id: UUID, body: AdminPasswordReset, request: Reques
     })
     commit_or_conflict(db)
     # G19：管理员重置同样撤销了该用户全部 OIDC 续期凭证，联动业务方登出。
-    deliver_for_user(db, row.id)
+    BackchannelLogoutService.deliver_for_user(db, row.id)
     return {"id": str(row.id), "auth_version": row.auth_version}
