@@ -1,5 +1,102 @@
 #﻿##﻿# 变更日志
 
+## 2026-11-16 撤销侧栏菜单渐隐 mask（第十二轮）：胶囊顶部被渐隐「吃」掉颜色（纯 CSS；浏览器目验未运行）
+
+用户连续反馈「选中颜色被挡住/还是挡住了，看上面」：菜单滚动容器带 U25 时代的上下缘渐隐 mask（原配滚动条做可滚暗示），菜单滚到顶部时选中胶囊上缘落进渐隐区，颜色被透明化一截，观感像被上方元素遮挡。
+
+- **修复（AppSidebar.vue）：** 撤销滚动容器的 `mask-image` 渐隐——D12 已隐藏滚动条，渐隐的「可滚暗示」意义消失，反成裁切选中态的元凶；容器回归普通 overflow 滚动，滚轮能力不变，边缘硬裁属常规滚动行为。
+- **验证：** 纯 CSS 改动；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对：菜单滚动到任意位置选中胶囊颜色完整、顶部无渐隐切边。
+
+## 2026-11-16 侧栏菜单区隐藏滚动条（第十一轮）：亮色滚动条贴胶囊突兀，改无滚动条设计（纯 CSS；浏览器目验未运行）
+
+用户截图红箭头指向选中胶囊右上角与侧栏右缘之间——菜单区滚动条（全局细滚动条亮灰 thumb）紧贴棕红选中胶囊边缘，深底上突兀、形似压住菜单。
+
+- **修复（AppSidebar.vue + style.css D12）：** 菜单滚动容器挂 `sider-menu-scroll`，`scrollbar-width: none` + webkit `display: none` 隐藏滚动条；滚轮/触控板滚动能力保留，上下缘渐隐 mask（U25）即视觉可滚暗示，与 Linear/Notion 侧栏同款。折叠态自绘图标列共用该容器，一并生效。
+- **验证：** 纯 CSS 改动；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对长目录滚动时无滚动条、渐隐提示正常。
+
+## 2026-11-16 侧栏选中指示条贴左缘（第十轮）：left -12px 抵消容器+item 内缩（纯 CSS；浏览器目验未运行）
+
+用户特写反馈选中项「左侧白色指示条被挡」：指示条 `left:0` 定位在 item 盒子上，而 item 距侧栏左缘有 12px（菜单容器 px-2 的 8px + antd item marginInline 4px/marginXXS，已查 antd-vue 4.2.6 源码确认），指示条悬在胶囊边上观感像被遮。
+
+- **修复（style.css 指示条规则）：** `left: -12px` 抵消两级内缩，指示条贴住侧栏最左缘；宽 2→3px、圆角同步，选中指示更明确。指示条最左端恰在滚动容器 padding 区内（x=0），不会被 `overflow-x-hidden` 裁掉；子菜单嵌套项同样生效（偏移相对 item 自身）。
+- **验证：** 纯 CSS 改动；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对根级与子菜单内选中项的指示条均贴侧栏左缘。
+
+## 2026-11-16 内容区通栏：滚动条贴视口右缘（第九轮，eslint/vue-tsc PASS；浏览器目验未运行）
+
+用户反馈「折叠后滚动条没有靠边」：`mgmt-shell-content` 带 `max-width: 1440px + mx-auto` 居中，视口超宽时（如 1512 屏两侧各留 36px）滚动条画在容器右缘、右侧悬一段画布；侧栏折叠后内容区变宽即暴露。
+
+- **通栏（App.vue + style.css + tokens.css）：** content 撤销居中限宽（模板去 `mx-auto`、壳层 CSS 删 `max-width`），页脚内层同步去掉 `max-w`/`mx-auto` 保持与内容对齐；`--content-max-width` token 零引用后删除。B2B 宽表通栏更宽裕，滚动条随通栏滚动容器贴住视口右缘；`--content-padding-x` 24px 收边保留。
+- **验证：** `npm run lint:main`（--max-warnings 0）PASS、`vue-tsc -b` PASS；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对：折叠/展开两态下滚动条贴视口右缘、宽屏（>1440）表格与页脚通栏对齐无异常、窄屏无横向溢出。
+
+## 2026-11-16 侧栏按钮悬停小手（第八轮）：自绘原生 button 统一 cursor:pointer（纯 CSS）
+
+用户反馈侧栏悬停无小手：折叠态自绘导航钮与折叠/展开切换钮都是原生 `button`（默认 `cursor: default`），antd `a-button` 才自带 pointer。`.mgmt-sider button { cursor: pointer; }` 一条无层规则统一覆盖侧栏内全部自绘按钮。
+
+## 2026-11-16 侧栏组标题字号回退（第七轮）：撤销 11px 降噪，与菜单项同字号（纯 CSS；浏览器目验未运行）
+
+用户截图红箭头指向展开态组标题「身份与组织」，反馈「文案不要特意放小」。第四轮为做「组是注释」的层级把组标题特意降到 11px + 字距 + muted 色，被否。
+
+- **回退（style.css D10 段 2）：** 组标题字号 11px → 13px（与叶子条目一致），删除字距/降色/hover 提色规则，颜色回归 antd 默认（非选中 72% 白、hover 白）；层级改由行高（组标题 30px vs 条目 34px）与缩进表达。
+- **验证：** 纯 CSS 改动，无 TS/Vue 影响；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对展开态组标题字号与菜单项一致。
+
+## 2026-11-16 侧栏折叠图标隐形修复（第六轮）：U25 同因——button 颜色类被无层 reset 吃掉（eslint/vue-tsc PASS；浏览器目验未运行）
+
+用户反馈折叠态「图标都看不见了」：自绘图标列的 `text-[var(--color-sider-text-strong)]` 颜色类位于 @layer utilities，输给无层表单 reset（`color: inherit`），图标继承 body 近黑文字色画在纯黑侧栏上隐形（选中项白块 + 继承黑字恰好「对」才可见）。与 U25 折叠按钮同因。
+
+- **修复（AppSidebar.vue + style.css D11）：** 按钮挂 `sider-nav-btn` 类，图标色改由无层规则固定——常态 `sider-text-strong`、hover `sider-text-active`、选中 `.sider-nav-btn-active` 白块（`sider-text-active` 底）反白（`sider-bg` 字）；模板移除失效的 text-* 工具类，几何/背景仍走 Tailwind（bg 类不受 reset 影响）。
+- **验证：** `npx eslint src/layout/AppSidebar.vue --max-warnings 0` PASS、`vue-tsc -b` PASS；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对折叠态：非选中图标次亮白可辨、hover 提亮、选中白块黑图标、tooltip 正常。
+
+## 2026-11-16 侧栏折叠态接管修复（第五轮）：自绘图标列替代 antd 半残折叠形态（eslint/vue-tsc PASS；浏览器目验未运行）
+
+用户反馈侧栏「更加丑了」，截图定位到真正的根因：**antd a-menu 的 inline-collapsed 在本壳受控 openKeys 用法下从未进入图标折叠形态**——组标题（身份与组织/应用与权限…）一直以 inline 文字形态被 72px 窄栏裁切（前两轮截图同源），第四轮加的「白块反白」恰好套在裁切文字上放大了破相。第四轮的密度/组标题降噪（展开态）保留。
+
+- **折叠态自绘接管（AppSidebar.vue）：** `collapsed` 时不再渲染 a-menu，改为自绘图标列——每页一个 40px 图标按钮 + `a-tooltip` 右侧报名、选中白块反白（`sider-text-active` 底 + `sider-bg` 图标，落在完整图标上而非裁切文字）、非选中 `sider-text-strong` + hover 中性底；组与组之间 24px 短 hairline 分节（`bg-white/10`），保留上下缘渐隐 mask 滚动容器。展开态 a-menu 结构不动。
+- **死代码清理（style.css D10）：** 删除第四轮为 antd `inline-collapsed` 写的反白规则（`.ant-menu-inline-collapsed` 三段）——折叠态已不渲染 a-menu，规则失效；D10 注释同步改写为「仅展开态生效」。
+- **验证：** `npx eslint src/layout/AppSidebar.vue --max-warnings 0` PASS、`vue-tsc -b` PASS；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对：折叠态图标列（无裁切文字、tooltip、白块选中、组间 hairline）、折叠/展开切换动画、暗色主题、键盘 Tab 焦点可达。
+
+## 2026-11-16 侧栏菜单精修（第四轮）：折叠态选中反白 + 密度收紧 + 品牌/身份/状态区重排（eslint/vue-tsc PASS；浏览器目验未运行）
+
+用户给侧栏折叠态截图反馈「菜单这一栏不好看」。问题：折叠态选中只是 10% 灰块（2px 指示条在 72px 窄栏存在感弱）、ID logo 与折叠按钮一个靠左一个靠右、分组层次在菜单行里完全消失、行距 40px 松散。本轮全在纯黑轻奢 token 体系内（零裸 hex）。
+
+- **折叠态选中反白（style.css D10）：** 72px 窄栏选中项从 10% 灰块升级为**白块 + 墨色图标**（`sider-text-active` 底 + `sider-bg` 图标色，即反白）；组内页折叠时选中高亮落在父 submenu 图标上（`submenu-selected` 一并覆盖）；窄栏上的左指示条 `::before` 隐藏。
+- **菜单密度与层级（style.css D10）：** 菜单行 40→34px、行距收紧；叶子条目 13px；组标题（submenu-title）降为 30px 高 + 11px + 0.08em 字距 + muted 色 micro label（hover 提亮），「组是注释、条目是主体」；展开态选中条目字重 500。固定侧栏与移动端抽屉（ant-drawer 作用域）同步生效。
+- **品牌区重排（AppSidebar.vue）：** 折叠态品牌 logo 与折叠按钮都垂直居中对齐中轴（原按钮 justify-end 孤悬右侧）；展开态折叠按钮并入品牌行右侧（原独占一行）。
+- **模式身份 chip 化（AppSidebar.vue）：** 「平台管理 / 租户管理」从裸灰字升级为白 10% 描边胶囊 chip。
+- **状态区收边（AppSidebar.vue）：** 底部健康状态区加顶部 hairline（border-white/10）与菜单区收边；折叠态健康点居中。
+- **验证：** `npx eslint src/layout/AppSidebar.vue --max-warnings 0` PASS、`vue-tsc -b` PASS；浏览器目验未运行（本机无 Docker CLI），待环境恢复后核对：折叠/展开两态、明暗两主题下菜单密度与选中反白、移动端抽屉菜单样式、子菜单展开缩进与动画无错位。
+
+## 2026-11-16 应用工作台视觉三轮（大胆版）：编辑部式配权路径 + 大数字统计带 + 卡头快捷动作（前端 lint/vue-tsc PASS；浏览器目验未运行）
+
+用户确认双栏已顶到页脚，但「整体还是不够美观」，明确授权「再大胆改一版」。本轮做编辑部/瑞士风整体重排，仍全程黑白灰 token，零裸 hex。
+
+- **可点击配权路径条（index.vue）：** 原 AdminPageHeader 的 tooltip 副标题升格为页头下方「01 权限编码→02 应用角色→03 配置成员」编辑部式步骤条——等宽大编号 + Tab 名 + 动作说明双行、顶部 hairline 锚定、**点击直切对应 Tab**（activeTab 由 ref 受控，第三步落在「角色」Tab）；路径条右侧 xl 档补「权限码管显隐 · 鉴权看角色并集 · 资源树管业务端」微注，原卡内信息条删除（信息上移不重复）。本页记忆点。
+- **Tab 徽章激活态（index.vue + style.css D9）：** ws-tabs 桥接——激活 Tab 字重 600、tab 间距 24px、nav 下移 20px；计数徽章激活时反白墨底（text-primary 底 + bg-elevated 字），当前 Tab 计数一眼可辨。
+- **详情卡头快捷动作（index.vue）：** a-card #extra 加「编辑资料 / 更多（轮换密钥、受信、启停、删除）」，与左树菜单完全同源（onApplicationMore 复用，ApplicationMoreHost 承接），窄屏 hidden 防溢出；monogram 加大至 48px、名称 16px。
+- **资源树统计带大数字化（MenuTab.vue）：** 原 chips 升级为「20px 等宽大数字 + 图标标签」统计带（GitHub repo stats 气质），hairline 底边锚定。
+- **左树面板化（AppTree.vue）：** 面板头「应用目录 + 总数计数」；树区 flex-1 内部滚动（面板头/搜索/新建按钮固定，长目录不撑爆面板）。
+- **空态居中：** 两张空态卡内容在拉伸卡内垂直水平居中（flex-1 包裹）。
+- **验证：** `npm run lint:main`（--max-warnings 0）PASS、`vue-tsc -b` PASS；浏览器目验未运行（本机无 Docker CLI），待环境恢复后重点核对：路径条点击切 Tab、徽章激活反白、卡头 extra 动作四项（轮换密钥/受信/启停/删除）与左树入口行为一致、暗色主题下头部带/徽章/大数字对比度。
+
+## 2026-11-16 应用工作台视觉二轮：高度链收底 + 实体卡头 + 左树两行化（前端 lint/vue-tsc PASS；浏览器目验未运行）
+
+用户复看一轮效果后反馈「还是不太美观」，截图显示详情卡下方大片死白、卡头分量不足。二轮在三处加深，仍在轻奢黑白灰 token 体系内，零裸 hex、零行为变化。
+
+- **高度链修复（index.vue + AppTree.vue）：** 双栏行加 `lg:flex-1`（section 已被壳层 CSS 拉伸为弹性列，此前行只有 min-h-[380px]，短内容时下方大片死白）；右列补 `flex flex-col`，三张卡（空态×2 + 详情）加 `lg:flex-1` 撑满列高；左树组件根节点去掉 `self-start`，跟随 `h-full`/`items-stretch` 与右卡等高收底。
+- **实体卡头（index.vue + style.css D8）：** 详情卡打 `ws-entity-card` 标记——`.ant-card-head` 做 subtle 底色带（overflow hidden 贴齐圆角，dark 主题 token 自动翻转）；monogram 从灰阶渐变升级为**实底墨块反白字母**（`bg-text-primary + text-bg-elevated`，dark 下白块墨字，主题安全且分量足）。
+- **左树两行化（AppTree.vue）：** TreeDatum 透传 `client_id` 到 title 插槽，应用行改为「monogram + 名称/停用标 + client_id 小字」两行结构；client_id 用 `opacity-60` 而非固定灰，选中深底反白时同样可读；monogram 同步升级为实底墨块。
+- **资源树卡（MenuTab.vue）：** 树卡加 `min-h-72 lg:min-h-80`，少节点时不再缩成薄带。
+- **验证：** `npm run lint:main`（--max-warnings 0）PASS、`vue-tsc -b` PASS；浏览器目验仍未运行（本机无 Docker CLI 起不了后端栈），待环境恢复后核对：双栏是否等高收底、卡头带/monogram 明暗两主题表现、左树两行在选中态的可读性。
+
+## 2026-11-16 应用工作台视觉升级：应用身份卡头 + 资源树质感（前端 lint/vue-tsc PASS；浏览器目验未运行）
+
+用户给截图要求「把应用工作台页面设计得美观一点」。在轻奢黑白灰 token 体系内做克制质感升级，零裸 hex、零行为变化。
+
+- **详情卡头（application-workspace/index.vue）：** 应用名裸行改为「应用身份卡头」——石墨渐变（bg-subtle→border-strong 灰阶，明暗主题均可读）首字母 monogram 方块 + 名称/已停用/受信标签双行 + 元信息行（client_id 换 AdminMonoValue 悬停一键复制，应用描述首次展示为截断灰字）；「权限码/接口鉴权/资源树」裸文本提示升级为 subtle 底 InfoCircle 信息条面板。
+- **资源树（tabs/MenuTab.vue）：** 树卡顶部新增「菜单/按钮/数据规则」类型构成计数 chips（图标与 ResourceIcon 同源、等宽数字、分隔线锚出卡内层次）；节点图标装入 subtle 底 tile、主标题 font-medium 13px、路径化编码 chip 化（窄屏隐藏转 title）；a-tree 加 `:selectable="false"` 去掉行点击的无意义选中底色。
+- **左树（components/AppTree.vue）：** 应用节点加首字母 mini monogram 方块，选中深底上仍保持可读。
+- **全站树桥接（style.css D7 块）：** antd tree 节点行圆角 + hover 统一 row-hover token（与表格行悬浮同语言）；selected 主色底保留不动。icons.ts 出口补 ControlOutlined / InfoCircleOutlined。
+- **验证：** `npm run lint:main`（--max-warnings 0）PASS、`vue-tsc -b` PASS；浏览器目验未运行——本机无 Docker CLI 无法起后端栈，登录墙阻断工作台直达，待环境恢复后走查明暗两主题下的卡头/树卡/左树质感。
+
 ## 2026-11-16 全仓深度梳理：死代码清理 + 迁移 0008 + 后端服务层深度类化（368/368 全绿 + 前端四项 PASS）
 
 用户要求「深度检查整个项目与数据库表设计、清掉没用的前后端代码与文件、梳理成正常项目、面向对象改造、改造完回归」。三轮执行：清理 → 数据库 → OOP 类化，每轮独立回归。

@@ -147,7 +147,8 @@ function groupMenuKey(groupKey: string): string {
     class="mgmt-sider h-screen max-h-screen shrink-0 overflow-hidden !bg-[var(--color-sider-bg)]"
   >
     <div class="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--color-sider-bg)]">
-      <div class="relative flex items-center justify-between gap-2 px-3 pt-4 pb-2">
+      <!-- R4：品牌行 + 折叠按钮——折叠态两者垂直居中（72px 窄栏里不再一个靠左一个靠右） -->
+      <div class="relative flex items-center justify-between gap-2 px-3 pt-4 pb-2" :class="props.collapsed ? 'justify-center' : ''">
         <router-link :to="brandTarget" class="flex min-w-0 items-center gap-2 no-underline">
           <!-- 侧栏恒黑，logo 方块不能用品牌色（黑上黑/暗色翻转白后白上白）：白底黑字与侧栏底反差恒定 -->
           <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-sider-text-active)] text-xs font-semibold text-[var(--color-sider-bg)]">ID</span>
@@ -156,29 +157,65 @@ function groupMenuKey(groupKey: string): string {
             <small class="block text-[11px] tracking-[0.06em] text-[var(--color-sider-text)]">Identity Control</small>
           </span>
         </router-link>
-      </div>
-      <div class="relative flex justify-end px-3 pb-1">
         <!-- U25：折叠图标提亮到 sider-text-strong（颜色类会被无层 reset 吃掉，改由 style.css 固定） -->
+        <button
+          v-if="!props.collapsed"
+          type="button"
+          class="sider-toggle-btn flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors duration-150 hover:bg-[var(--color-sider-item-hover)]"
+          :aria-expanded="!props.collapsed"
+          :aria-label="collapseLabel"
+          @click="toggleSidebar"
+        >
+          <MenuFoldOutlined />
+        </button>
+      </div>
+      <div v-if="props.collapsed" class="relative flex justify-center px-3 pb-1">
         <button
           type="button"
           class="sider-toggle-btn flex h-8 w-8 items-center justify-center rounded-lg transition-colors duration-150 hover:bg-[var(--color-sider-item-hover)]"
-          :aria-expanded="!props.collapsed"
-          :aria-label="props.collapsed ? expandLabel : collapseLabel"
+          aria-expanded="false"
+          :aria-label="expandLabel"
           @click="toggleSidebar"
         >
-          <MenuUnfoldOutlined v-if="props.collapsed" />
-          <MenuFoldOutlined v-else />
+          <MenuUnfoldOutlined />
         </button>
       </div>
-      <p v-if="!props.collapsed" class="relative shrink-0 px-5 pb-2 text-[11px] font-medium tracking-[0.06em] text-[var(--color-sider-text)]">{{ props.modeLabel }}</p>
-      <!-- U25：菜单纵向滚动时上下缘 8/12px 渐隐提示（mask 不随内容滚动，视觉恒定在可视框） -->
-      <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 [mask-image:linear-gradient(to_bottom,transparent,#000_8px,#000_calc(100%-12px),transparent)]">
+      <!-- R4：模式身份 chip 化——「平台管理 / 租户管理」从裸灰字升级为描边胶囊，身份感与分隔感兼得 -->
+      <p v-if="!props.collapsed" class="relative shrink-0 px-5 pb-3">
+        <span class="inline-flex items-center rounded-full border border-white/10 px-2.5 py-0.5 text-[11px] font-medium tracking-[0.06em] text-[var(--color-sider-text)]">{{ props.modeLabel }}</span>
+      </p>
+      <!-- R6 撤销上下缘渐隐 mask（U25）：滚动条已被 D12 隐藏，渐隐失去「可滚暗示」意义；
+           且菜单滚到顶部时选中胶囊上缘会落进渐隐区被「吃」掉颜色，观感像被上方遮挡。
+           现为普通滚动容器，滚轮仍可滚，边缘硬裁属常规滚动行为。 -->
+      <div class="sider-menu-scroll relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2">
+        <!-- R5 折叠态接管：antd inline-collapsed 在本壳受控 openKeys 下不会进入图标形态，
+             组标题以 inline 文字形态被 72px 窄栏裁切（半残呈现）。改为自绘图标列——
+             每页一个图标 + tooltip 报名，选中白块反白，组间 hairline 分节。展开态仍走 a-menu。 -->
+        <div v-if="props.collapsed" class="flex flex-col items-center gap-1 py-1">
+          <template v-for="(group, groupIndex) in navGroups" :key="group.key">
+            <span v-if="groupIndex > 0" class="my-1 h-px w-6 shrink-0 bg-white/10" aria-hidden="true" />
+            <a-tooltip v-for="item in group.items" :key="item.key" placement="right" :title="item.label">
+              <!-- U25 同因：button 上的 text-* 颜色类会被无层 reset 吃掉，图标色由 style.css D11 的
+                   sider-nav-btn 无层规则固定；这里只管几何与背景（bg 类不受 reset 影响）。 -->
+              <button
+                type="button"
+                class="sider-nav-btn flex h-10 w-10 items-center justify-center rounded-[var(--radius-md)] text-base transition-colors duration-150"
+                :class="activePage === item.key ? 'sider-nav-btn-active' : 'hover:bg-[var(--color-sider-item-hover)]'"
+                :aria-label="item.label"
+                :aria-current="activePage === item.key ? 'page' : undefined"
+                @click="navigateTo(item.key)"
+              >
+                <component :is="item.icon" />
+              </button>
+            </a-tooltip>
+          </template>
+        </div>
         <a-menu
+          v-else
           mode="inline"
           theme="dark"
-          :inline-collapsed="props.collapsed"
           :selected-keys="selectedKeys"
-          :open-keys="props.collapsed ? [] : openKeys"
+          :open-keys="openKeys"
           class="mgmt-sider-menu border-none bg-transparent"
           @click="onMenuClick"
           @openChange="onOpenChange"
@@ -206,8 +243,9 @@ function groupMenuKey(groupKey: string): string {
           </template>
         </a-menu>
       </div>
-      <div class="relative mt-auto shrink-0 px-4 py-3" role="status" aria-live="polite">
-        <div class="flex items-center gap-2">
+      <!-- R4：状态区加顶部 hairline 与菜单区收边；折叠态健康点居中对齐中轴 -->
+      <div class="relative mt-auto shrink-0 border-t border-white/10 px-4 py-3" role="status" aria-live="polite">
+        <div class="flex items-center gap-2" :class="props.collapsed ? 'justify-center' : ''">
           <span
             class="h-2 w-2 shrink-0 rounded-full"
             :class="healthOk ? 'bg-[var(--color-success)]' : 'bg-[var(--color-warning)]'"

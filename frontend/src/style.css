@@ -422,6 +422,30 @@ body {
   color: var(--color-brand-hover);
 }
 
+/* ===== D7 全站树统一质感（工作台左树 / 资源树 / 父级选择器共用）：
+   节点行圆角 + hover 用 row-hover token 替代 antd 默认淡灰，与表格行悬浮同语言；
+   selected 保留 antd 主色底（品牌石墨深底）保证选中强反馈，不动。 ===== */
+.ant-layout .ant-tree .ant-tree-node-content-wrapper {
+  border-radius: var(--radius-md);
+  transition: background-color 0.15s ease;
+}
+.ant-layout .ant-tree .ant-tree-node-content-wrapper:hover {
+  background: var(--color-row-hover);
+}
+
+/* ===== D8 工作台实体卡头（ws-entity-card）：应用详情卡的头部带做 subtle 底色，
+   与实底 monogram 组成「应用身份区」；overflow 裁掉头部带直角贴齐卡片圆角。
+   仅作用于显式标记的卡片，不影响全站表格型 mgmt-data-card。 ===== */
+.ws-entity-card { overflow: hidden; }
+.mgmt-shell-content .ws-entity-card > .ant-card-head { background: var(--color-bg-subtle); }
+
+/* ===== D9 工作台 Tab 排版（ws-tabs）：激活 Tab 字重加重、行高呼吸感加大，
+   徽章激活态由模板受控反白，配合页头可点击配权路径形成「导航→Tab」联动。 ===== */
+.ws-tabs > .ant-tabs-nav { margin-bottom: var(--space-5); }
+.ws-tabs .ant-tabs-tab { padding: 4px 2px 12px; font-size: 14px; }
+.ws-tabs .ant-tabs-tab + .ant-tabs-tab { margin-left: 24px; }
+.ws-tabs .ant-tabs-tab-active .ant-tabs-tab-btn { font-weight: 600; }
+
 /* 全局细滚动条：slate 色系，深色主题切换为暗色滑轨。 */
 * { scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -447,6 +471,55 @@ html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-title:h
 html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-arrow {
   color: rgba(255, 255, 255, 0.45);
 }
+
+/* ===== D10 侧栏菜单精修（U25/U1 后续）：密度与层级（仅展开态生效；
+   折叠态已由 AppSidebar 自绘图标列接管，不再渲染 a-menu）。 =====
+   覆盖固定侧栏（.mgmt-sider）与移动端抽屉（teleport 到 body）。 */
+/* 1) 菜单密度：行高 40→34，行距收紧——B2B「密而不挤」的扫读节奏 */
+.mgmt-sider .ant-menu-dark.ant-menu-inline .ant-menu-item,
+.ant-drawer .mgmt-sider-menu.ant-menu-inline .ant-menu-item {
+  height: 34px;
+  line-height: 34px;
+  margin-block: 2px;
+}
+/* 2) 层级：叶子条目 13px；组标题与条目同字号（R6 用户反馈：文案不要特意放小，
+   撤销 11px 降噪）——层级只靠行高与缩进表达 */
+.mgmt-sider .ant-menu-dark .ant-menu-item .ant-menu-title-content,
+.ant-drawer .mgmt-sider-menu .ant-menu-item .ant-menu-title-content {
+  font-size: 13px;
+}
+.mgmt-sider .ant-menu-dark .ant-menu-submenu-title,
+.ant-drawer .mgmt-sider-menu .ant-menu-submenu-title {
+  height: 30px;
+  line-height: 30px;
+  margin-block: 6px;
+}
+.mgmt-sider .ant-menu-dark .ant-menu-submenu-title .ant-menu-title-content,
+.ant-drawer .mgmt-sider-menu .ant-menu-submenu-title .ant-menu-title-content {
+  font-size: 13px;
+}
+/* 3) 展开态选中字重：选中条目从「变色」升级为「变色 + 加重」 */
+.mgmt-sider .ant-menu-dark .ant-menu-item-selected {
+  font-weight: 500;
+}
+
+/* ===== D11 侧栏折叠图标列按钮颜色（U25 同因）：button 的 text-* 颜色类位于 @layer utilities，
+   输给无层表单 reset（color: inherit），图标继承 body 近黑文字色画在纯黑侧栏上直接隐形。
+   图标色改由本无层规则固定：常态次亮白、hover 纯白、选中白块反白（与 sider-toggle-btn 同口径）。 ===== */
+.mgmt-sider .sider-nav-btn { color: var(--color-sider-text-strong); }
+.mgmt-sider .sider-nav-btn:hover { color: var(--color-sider-text-active); }
+.mgmt-sider .sider-nav-btn.sider-nav-btn-active {
+  background: var(--color-sider-text-active);
+  color: var(--color-sider-bg);
+}
+/* 侧栏内自绘原生按钮统一小手：原生 button 默认 cursor:default（antd a-button 自带 pointer，
+   折叠导航钮 / 切换钮等原生 button 没有），悬停应出现小手。 */
+.mgmt-sider button { cursor: pointer; }
+
+/* ===== D12 侧栏菜单区隐藏滚动条：亮灰滚动条紧贴选中胶囊右缘，深底上非常突兀（形似压住菜单）。
+   改为无滚动条设计——滚轮/触控板仍可滚，上下缘渐隐 mask 即可滚暗示（Linear/Notion 同款）。 ===== */
+.mgmt-sider .sider-menu-scroll { scrollbar-width: none; }
+.mgmt-sider .sider-menu-scroll::-webkit-scrollbar { display: none; }
 
 /* ===== U7 空表格不渲染横向滚动条：antd 空态仍按列宽 colgroup 撑出横向溢出，
    死滚动条横穿空态区；空表列宽并无可滚内容，直接隐藏。 ===== */
@@ -478,7 +551,9 @@ html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-arrow {
   box-shadow: var(--shadow-sm);
 }
 .mgmt-shell-content {
-  max-width: var(--content-max-width);
+  /* R6 滚动条贴边：撤销 max-width 居中——居中会在视口超宽时把滚动条留在容器右缘、
+     右侧悬一段画布（用户侧栏折叠后内容变宽即暴露）。内容通栏 + padding 收边，
+     B2B 表格通栏更宽裕；滚动条随通栏容器贴住视口右缘。 */
   padding-left: var(--content-padding-x);
   padding-right: var(--content-padding-x);
   padding-top: var(--space-6);
@@ -599,11 +674,13 @@ html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-arrow {
 .mgmt-sider .ant-menu-dark .ant-menu-item-selected::before {
   content: "";
   position: absolute;
-  left: 0;
+  /* R6 贴左缘：抵消菜单容器 px-2（8px）+ antd item marginInline 4px（marginXXS），
+     指示条不再悬在胶囊边上（观感像被挡），直接贴住侧栏最左；2→3px 更明确。 */
+  left: -12px;
   top: 8px;
   bottom: 8px;
-  width: 2px;
-  border-radius: 0 2px 2px 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
   background: var(--color-sider-accent);
 }
 .app-footer {

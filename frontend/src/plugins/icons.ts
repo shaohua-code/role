@@ -39,6 +39,10 @@ export {
   CopyOutlined,
   PlusOutlined,
   EllipsisOutlined,
+  // 调节滑块：资源权限树「按钮」类型计数 chip 的语义图标（与 ResourceIcon 内按钮图标同源）。
+  ControlOutlined,
+  // 圆圈 i：工作台权限规则提示条的降噪信息图标（区别于感叹号的警示语义）。
+  InfoCircleOutlined,
   // 圆圈感叹号：页头副标题 / 工具条提示的降噪入口图标，悬停经 a-tooltip 展示完整说明。
   ExclamationCircleOutlined,
   SettingOutlined,

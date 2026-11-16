@@ -8,6 +8,7 @@ import { message, Modal } from 'ant-design-vue'
 import { api } from '@/api'
 import AdminSearchField from '@/components/AdminSearchField.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
+import { AppstoreOutlined, ControlOutlined, FilterOutlined } from '@/plugins/icons'
 import ResourceIcon from '../components/ResourceIcon.vue'
 import { matchResource, buildResourcePathCodes } from '../components/resourceSearch'
 
@@ -90,6 +91,26 @@ const hasMenuNodes = computed(() => resources.value.some(item => item.resource_t
 
 // 树节点展示的路径化编码：根→当前逐级拼接，上级/上上级编码始终可见。
 const resourcePathCodes = computed(() => buildResourcePathCodes(resources.value))
+
+// 资源类型构成计数：树卡顶部「构成一览」chips 的数据源，让树规模与结构一眼可读。
+const typeCounts = computed(() => {
+  let menu = 0
+  let button = 0
+  let dataRule = 0
+  for (const record of resources.value) {
+    if (record.resource_type === 'menu') menu += 1
+    else if (record.resource_type === 'button') button += 1
+    else dataRule += 1
+  }
+  return { menu, button, dataRule }
+})
+
+// 构成 chips 渲染清单：图标与 ResourceIcon 节点语义保持同源（菜单=应用格 / 按钮=滑块 / 数据=漏斗）。
+const typeStatItems = computed(() => [
+  { label: '菜单', icon: AppstoreOutlined, count: typeCounts.value.menu },
+  { label: '按钮', icon: ControlOutlined, count: typeCounts.value.button },
+  { label: '数据规则', icon: FilterOutlined, count: typeCounts.value.dataRule },
+])
 
 function applicationPath(path: string): string {
   // 资源树只挂 /admin，鉴权已按应用管理员访问权过滤，租户台同样走这条。
@@ -381,20 +402,42 @@ watch([() => props.active, () => props.application?.id], ([active]) => {
     </div>
 
     <a-spin :spinning="loading" class="min-h-32">
-      <div v-if="resourceTree.length" class="min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+      <!-- R2：min-height 让少节点时树卡仍有体面高度，不缩成一条薄带 -->
+      <div v-if="resourceTree.length" class="min-h-72 min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 lg:min-h-80">
+        <!-- R3 构成统计带：大号等宽数字 + 图标标签（GitHub repo stats 气质），
+             hairline 底边锚定卡内层次；数字是本页的「数据主角」 -->
+        <div class="mb-4 flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-[var(--color-border)] pb-4">
+          <div v-for="stat in typeStatItems" :key="stat.label" class="flex items-baseline gap-2">
+            <span class="font-mono text-xl font-semibold leading-none text-[var(--color-text-primary)] tabular-nums">{{ stat.count }}</span>
+            <span class="inline-flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
+              <component :is="stat.icon" class="text-[11px] text-[var(--color-text-muted)]" aria-hidden="true" />
+              {{ stat.label }}
+            </span>
+          </div>
+        </div>
+        <!-- selectable=false：行点击不承载选择语义（动作全在 hover 显形区），去掉无意义选中底色 -->
         <a-tree
           v-model:expanded-keys="expandedKeys"
           :tree-data="resourceTree"
+          :selectable="false"
           block-node
         >
           <template #title="{ record }">
-            <div class="group/node flex min-w-0 flex-1 items-center gap-2"
+            <div class="group/node flex min-w-0 flex-1 items-center gap-2.5"
               :title="[record.description, record.path].filter(Boolean).join(' · ')">
-              <ResourceIcon :type="record.resource_type" :icon="record.icon"
-                class="shrink-0 text-[15px] text-[var(--color-text-secondary)]" />
-              <span class="truncate">{{ record.name }}</span>
-              <span class="max-w-[100px] shrink truncate font-mono text-xs text-[var(--color-text-muted)]"
-                :title="resourcePathCodes.get(record.id)">{{ resourcePathCodes.get(record.id) }}</span>
+              <!-- 节点图标装 tile：subtle 底小方块让每行有稳定视觉锚点，类型差异仍由图标语义承载 -->
+              <span
+                class="flex h-6 w-6 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[13px] text-[var(--color-text-secondary)]"
+                aria-hidden="true"
+              >
+                <ResourceIcon :type="record.resource_type" :icon="record.icon" />
+              </span>
+              <span class="truncate text-[13px] font-medium text-[var(--color-text-primary)]">{{ record.name }}</span>
+              <!-- 路径化编码：subtle 底 chip 化，窄屏隐藏为悬停 title，避免挤压主标题 -->
+              <span
+                class="hidden max-w-[160px] shrink truncate rounded-[var(--radius-sm)] bg-[var(--color-bg-subtle)] px-1.5 py-0.5 font-mono text-[11px] leading-4 text-[var(--color-text-muted)] md:inline"
+                :title="resourcePathCodes.get(record.id)"
+              >{{ resourcePathCodes.get(record.id) }}</span>
               <a-tag v-if="record.resource_type === 'button'" class="mr-0 shrink-0" color="default">按钮</a-tag>
               <a-tag v-else-if="record.resource_type === 'data_rule'" class="mr-0 shrink-0" color="default">数据</a-tag>
               <a-tag v-if="record.status === 'disabled'" class="mr-0 shrink-0" color="default">已停用</a-tag>

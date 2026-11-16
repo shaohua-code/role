@@ -34,6 +34,8 @@ interface TreeDatum {
   canCreate?: boolean
   tenantId?: string
   appId?: string
+  // 应用行第二行展示的 Client ID（两行化：名称 + client_id，提升左树信息密度）
+  clientId?: string
   trusted?: boolean
   children?: TreeDatum[]
 }
@@ -110,6 +112,7 @@ const treeData = computed<TreeDatum[]>(() => {
       status: item.status,
       appId: item.id,
       tenantId: item.tenant_id,
+      clientId: item.client_id,
       trusted: item.trusted === true,
       canCreate: group.canCreate === true,
     })
@@ -147,10 +150,17 @@ function onMore(appId: string | undefined, action: AppMoreAction): void {
 </script>
 
 <template>
-  <aside class="flex min-w-0 flex-col gap-3 self-start rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+  <aside class="flex min-w-0 flex-col gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+    <!-- R2：去掉 self-start，跟随外层 h-full / items-stretch 撑满列高，与右侧详情卡等高收底 -->
+    <!-- R3 面板头：「应用目录」+ 总数计数，让左树从裸搜索框升级为有标题的工作面板 -->
+    <div class="flex min-w-0 items-center justify-between gap-2">
+      <span class="text-xs font-semibold tracking-wide text-[var(--color-text-secondary)]">应用目录</span>
+      <span class="shrink-0 rounded-full bg-[var(--color-bg-subtle)] px-1.5 font-mono text-[10px] leading-4 text-[var(--color-text-muted)] tabular-nums">{{ applications.length }}</span>
+    </div>
     <AdminSearchField v-model="searchText" placeholder="搜索应用名称或 Client ID" :submit-on-clear="false" />
     <a-button v-if="canCreateAny" type="primary" class="w-full" @click="onCreateFromHeader">新建应用</a-button>
-    <a-spin :spinning="loading" class="min-h-24">
+    <!-- 树区吃掉面板剩余高度并内部滚动：面板头/搜索/按钮固定，长目录不撑爆面板 -->
+    <a-spin :spinning="loading" class="min-h-24 flex-1 overflow-y-auto lg:min-h-0">
       <a-tree
         v-if="treeData.length"
         v-model:expanded-keys="expandedKeys"
@@ -160,7 +170,7 @@ function onMore(appId: string | undefined, action: AppMoreAction): void {
         @select="onSelect"
       >
         <!-- 插槽变量改名 nodeCanCreate：避免与上层脚本 canCreate 遮蔽告警（vue/no-template-shadow） -->
-        <template #title="{ isGroup, title, status, count, canCreate: nodeCanCreate, tenantId, appId, trusted }">
+        <template #title="{ isGroup, title, status, count, canCreate: nodeCanCreate, tenantId, appId, clientId, trusted }">
           <span v-if="isGroup" class="flex w-full min-w-0 items-center justify-between gap-2">
             <span class="inline-flex min-w-0 items-center gap-1.5">
               <span class="truncate text-xs font-medium tracking-wide text-[var(--color-text-secondary)]">{{ title }}</span>
@@ -183,9 +193,20 @@ function onMore(appId: string | undefined, action: AppMoreAction): void {
             </a-dropdown>
           </span>
           <span v-else class="flex w-full min-w-0 items-center justify-between gap-1">
-            <span class="inline-flex min-w-0 items-center gap-2">
-              <span class="truncate">{{ title }}</span>
-              <a-tag v-if="status === 'disabled'" class="mr-0 shrink-0" color="default">停用</a-tag>
+            <span class="flex min-w-0 items-center gap-2.5">
+              <!-- 应用 mini monogram：实底墨块首字母，左树条目的身份锚点（选中深底/常态浅底均清晰） -->
+              <span
+                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-text-primary)] text-[11px] font-semibold leading-none text-[var(--color-bg-elevated)]"
+                aria-hidden="true"
+              >{{ (title || '?').trim().charAt(0).toUpperCase() }}</span>
+              <!-- 两行化：名称 + client_id；opacity 代替固定色，选中反白底上同样可读 -->
+              <span class="flex min-w-0 flex-col gap-0.5">
+                <span class="inline-flex min-w-0 items-center gap-1.5">
+                  <span class="truncate">{{ title }}</span>
+                  <a-tag v-if="status === 'disabled'" class="mr-0 shrink-0" color="default">停用</a-tag>
+                </span>
+                <span v-if="clientId" class="truncate font-mono text-[10px] leading-3 opacity-60">{{ clientId }}</span>
+              </span>
             </span>
             <a-dropdown :trigger="['click']">
               <a-button

@@ -607,7 +607,8 @@ onUnmounted(() => {
           </a-space>
         </a-layout-header>
 
-        <a-layout-content class="mgmt-shell-content mx-auto w-full min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <!-- R6 滚动条贴边：content 通栏不再 max-width 居中（居中会让滚动条右侧悬一段画布） -->
+        <a-layout-content class="mgmt-shell-content w-full min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
           <router-view aria-hidden="true" class="hidden" />
           <!-- 个人信息页：登录即可达（不占侧栏，入口在顶栏用户菜单）；置于 no_access 分支之外，L4 也能查看本人信息。 -->
           <div v-if="visitedPages.has('profile')" v-show="page === 'profile'">
@@ -733,7 +734,7 @@ onUnmounted(() => {
         <!-- 滚动条修复：页脚从滚动流内移出，作为壳层固定底行——此前它把 main 内容顶出折叠线，
              让桌面端工作台恒现一条内部滚动条（形似页面滚动条）。内容区 flex-1 自动为其让位。 -->
         <footer class="app-footer shrink-0 border-t">
-          <div class="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col justify-between gap-2 px-[var(--content-padding-x)] py-2.5 text-xs sm:flex-row">
+          <div class="flex w-full flex-col justify-between gap-2 px-[var(--content-padding-x)] py-2.5 text-xs sm:flex-row">
             <span class="min-w-0 shrink-0">统一身份与权限管理平台</span>
             <!-- U23：模拟器页脚免责特判移除——页面顶部「只读预演」alert 已有同义说明，页脚回归统一口径 -->
             <span class="min-w-0 break-words sm:text-right">管理变更由服务端鉴权并写入审计</span>

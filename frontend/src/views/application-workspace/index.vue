@@ -9,6 +9,8 @@ import { getCachedCapabilities, TENANT_ADMIN_API_PREFIX } from '@/api/capabiliti
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 import AdminPathGuide from '@/components/AdminPathGuide.vue'
+import AdminMonoValue from '@/components/AdminMonoValue.vue'
+import { DownOutlined, InfoCircleOutlined } from '@/plugins/icons'
 import AppTree, { type AppMoreAction, type AppTreeApplication } from './components/AppTree.vue'
 import CreateApplicationModal from './components/CreateApplicationModal.vue'
 import ApplicationMoreHost from './components/ApplicationMoreHost.vue'
@@ -51,6 +53,14 @@ const MAIN_PATH_STEPS = [
   '在「权限编码」Tab 登记本应用业务码（应用管理员可直接新建）',
   '在「角色」Tab 新建应用角色，打开「应用权限」挂编码 / 资源树 / 数据权限',
   '在角色行「配置成员」把租户成员绑到应用角色（会同时成为该应用的平台成员）',
+] as const
+
+// R3 配权路径短版：页头下方编辑部式步骤条的数据源；点击直切对应 Tab
+// （第三步「配置成员」是角色行内动作，同样落在「角色」Tab）。
+const PATH_STEPS = [
+  { step: '01', tab: '权限编码', action: '登记业务码', target: 'permissions' },
+  { step: '02', tab: '应用角色', action: '配置应用权限', target: 'roles' },
+  { step: '03', tab: '配置成员', action: '绑定租户成员', target: 'roles' },
 ] as const
 
 const router = useRouter()
@@ -135,6 +145,9 @@ let hydratedCatalogGeneration = -1
 const tabStats = ref<{ roles: number | null, permissions: number | null, resources: number | null }>({
   roles: null, permissions: null, resources: null,
 })
+
+// R3：Tab 激活键受控——页头配权路径条要能直切 Tab，徽章激活态也需要读取当前键
+const activeTab = ref<'roles' | 'permissions' | 'menus'>('roles')
 
 function onTabStats(key: 'roles' | 'permissions' | 'resources', count: number): void {
   tabStats.value[key] = count
@@ -265,14 +278,39 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
 
 <template>
   <section class="flex w-full min-w-0 flex-col lg:min-h-[380px]">
+    <!-- R3：副标题三步长文案已升格为下方可点击路径条，页头不再藏 tooltip -->
     <AdminPageHeader
       class="shrink-0"
       eyebrow="APPLICATION WORKSPACE"
       title="应用工作台"
-      subtitle="配权三步：①「权限编码」登记业务码 → ②「角色」配置应用权限 → ③角色行「配置成员」绑定租户成员"
     />
+    <!-- R3 编辑部式配权路径：大编号 + Tab 名 + 动作说明，顶部 hairline 锚定；
+         步骤可点击直切对应 Tab，功能与视觉合一（本页的记忆点） -->
+    <div class="mb-4 flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-2 border-t border-[var(--color-border)] pt-3 md:mb-5">
+      <template v-for="(step, index) in PATH_STEPS" :key="`${step.step}-${step.tab}`">
+        <button
+          type="button"
+          class="group flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] px-2 py-1.5 transition-colors hover:bg-[var(--color-bg-subtle)] focus:bg-[var(--color-bg-subtle)] focus:outline-none"
+          @click="activeTab = step.target"
+        >
+          <span class="font-mono text-base font-semibold leading-none text-[var(--color-text-muted)] transition-colors tabular-nums group-hover:text-[var(--color-text-secondary)]">{{ step.step }}</span>
+          <span class="flex flex-col items-start gap-0.5 leading-tight">
+            <span class="text-xs font-semibold text-[var(--color-text-primary)]">{{ step.tab }}</span>
+            <span class="text-[11px] text-[var(--color-text-muted)]">{{ step.action }}</span>
+          </span>
+        </button>
+        <span v-if="index < PATH_STEPS.length - 1" class="px-1 text-xs text-[var(--color-text-muted)]" aria-hidden="true">→</span>
+      </template>
+      <!-- 路径条右侧补权限口径微注，替代原卡内信息条的部分职责 -->
+      <span class="ml-auto hidden items-center gap-1.5 pl-4 text-[11px] text-[var(--color-text-muted)] xl:inline-flex">
+        <InfoCircleOutlined aria-hidden="true" />
+        权限码管显隐 · 鉴权看角色并集 · 资源树管业务端
+      </span>
+    </div>
     <!-- Wave 4/收口：窄屏上下堆叠（树在上），lg 及以上保持左右布局（UI 检查 P348 修复）。 -->
-    <!-- P358：桌面档左右两栏各自内滚、高度撑满视口底部，消除整页滚动。 -->
+    <!-- P358：桌面档左右两栏各自内滚、高度撑满视口底部，消除整页滚动。
+         R2 高度链：section 已被壳层拉伸为弹性列，行在此 lg:flex-1 吃掉剩余高度，
+         两栏才能以 h-full 真正撑到视口底，消除短内容下的页面死白。 -->
     <div class="flex w-full min-w-0 flex-col items-stretch gap-4 lg:min-h-0 lg:flex-1 lg:flex-row">
       <!-- 窄屏限高：树过长时内部滚动；桌面档两栏等高内滚。 -->
       <AppTree
@@ -286,44 +324,89 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
         @create="openCreate"
         @more="onApplicationMore"
       />
-      <div class="min-w-0 flex-1 lg:h-full lg:min-h-0 lg:overflow-y-auto">
-        <!-- 无任何应用：给出三步主路径 + 创建出口（Wave 4 空态强化）。 -->
-        <a-card v-if="!selectedApplication && !loading && !applications.length" class="mgmt-data-card" :bordered="false">
-          <AdminEmpty emoji="🧩" description="还没有可管理的应用">
-            <div class="flex flex-col items-center gap-4">
-              <AdminPathGuide :steps="MAIN_PATH_STEPS" title="创建应用后，按以下三步完成日常配权" />
-              <a-button v-if="canCreateApplication" type="primary" @click="openCreate()">新建应用</a-button>
-              <p v-else class="m-0 text-sm text-[var(--color-text-muted)]">请联系租户管理员创建应用，并任命你为应用管理员。</p>
-            </div>
-          </AdminEmpty>
+      <div class="flex min-w-0 flex-1 flex-col lg:h-full lg:min-h-0 lg:overflow-y-auto">
+        <!-- 无任何应用：给出三步主路径 + 创建出口（Wave 4 空态强化）；R3 拉伸卡内垂直居中 -->
+        <a-card v-if="!selectedApplication && !loading && !applications.length" class="mgmt-data-card lg:flex-1" :bordered="false">
+          <div class="flex flex-1 items-center justify-center py-10">
+            <AdminEmpty emoji="🧩" description="还没有可管理的应用">
+              <div class="flex flex-col items-center gap-4">
+                <AdminPathGuide :steps="MAIN_PATH_STEPS" title="创建应用后，按以下三步完成日常配权" />
+                <a-button v-if="canCreateApplication" type="primary" @click="openCreate()">新建应用</a-button>
+                <p v-else class="m-0 text-sm text-[var(--color-text-muted)]">请联系租户管理员创建应用，并任命你为应用管理员。</p>
+              </div>
+            </AdminEmpty>
+          </div>
         </a-card>
-        <a-card v-else-if="!selectedApplication" class="mgmt-data-card" :bordered="false">
-          <AdminEmpty emoji="👈" description="请先选择左侧应用">
-            <AdminPathGuide :steps="MAIN_PATH_STEPS" title="选中应用后" />
-          </AdminEmpty>
+        <a-card v-else-if="!selectedApplication" class="mgmt-data-card lg:flex-1" :bordered="false">
+          <div class="flex flex-1 items-center justify-center py-10">
+            <AdminEmpty emoji="👈" description="请先选择左侧应用">
+              <AdminPathGuide :steps="MAIN_PATH_STEPS" title="选中应用后" />
+            </AdminEmpty>
+          </div>
         </a-card>
-        <a-card v-else class="mgmt-data-card" :bordered="false">
+        <!-- ws-entity-card：实体卡头标记（style.css D8）——subtle 头部带 + monogram 组成应用身份区 -->
+        <a-card v-else class="mgmt-data-card ws-entity-card lg:flex-1" :bordered="false">
           <template #title>
-            <span class="inline-flex min-w-0 items-center gap-2">
-              <span class="truncate">{{ selectedApplication.name }}</span>
-              <a-tag v-if="selectedApplication.status === 'disabled'" color="default">已停用</a-tag>
-              <!-- U29：详情头与组织台结构统一——名称 + 灰标；client_id 用等宽灰标呈现，替代纯长描述 -->
-              <a-tag color="default" class="max-w-[180px] truncate font-mono">{{ selectedApplication.client_id }}</a-tag>
-            </span>
+            <!-- 应用身份卡头：石墨 monogram + 名称/状态 + 元信息行（client_id 可复制、描述截断），
+                 让详情卡有「实体感」而非一行裸文字（轻奢极简：层次靠排版与灰阶，不加彩色装饰）。 -->
+            <div class="flex min-w-0 items-center gap-3 py-1">
+              <!-- monogram：实底墨色方块 + 反白首字母；dark 主题自动翻为白底墨字，主题安全且分量足 -->
+              <span
+                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-text-primary)] text-lg font-semibold text-[var(--color-bg-elevated)]"
+                aria-hidden="true"
+              >{{ (selectedApplication.name || '?').trim().charAt(0).toUpperCase() }}</span>
+              <span class="flex min-w-0 flex-col gap-0.5">
+                <span class="inline-flex min-w-0 items-center gap-2">
+                  <span class="truncate text-base font-semibold text-[var(--color-text-primary)]">{{ selectedApplication.name }}</span>
+                  <a-tag v-if="selectedApplication.status === 'disabled'" class="mr-0 shrink-0" color="default">已停用</a-tag>
+                  <!-- 受信应用标识：此前仅存在于左树菜单，详情头补齐同一事实 -->
+                  <a-tag v-if="selectedApplication.trusted" class="mr-0 shrink-0" color="default">受信</a-tag>
+                </span>
+                <span class="inline-flex min-w-0 items-center gap-2">
+                  <!-- U29 沿用：client_id 等宽灰标，悬停一键复制 -->
+                  <AdminMonoValue :value="selectedApplication.client_id" max-width="180px" />
+                  <template v-if="selectedApplication.description">
+                    <span class="shrink-0 text-[var(--color-text-muted)]">·</span>
+                    <span class="hidden min-w-0 truncate text-xs text-[var(--color-text-muted)] md:inline" :title="selectedApplication.description ?? ''">{{ selectedApplication.description }}</span>
+                  </template>
+                </span>
+              </span>
+            </div>
+          </template>
+          <!-- R3 卡头快捷动作：编辑资料 / 更多，动作不再只藏在左树省略号里；
+               口径与左树菜单完全同源（onApplicationMore），窄屏隐藏防 375 溢出（P349 惯例） -->
+          <template #extra>
+            <div class="hidden shrink-0 items-center gap-1 sm:flex">
+              <a-button size="small" @click="onApplicationMore({ id: selectedApplication.id, action: 'edit' })">编辑资料</a-button>
+              <a-dropdown :trigger="['click']">
+                <a-button size="small">
+                  更多
+                  <DownOutlined class="text-[10px]" />
+                </a-button>
+                <template #overlay>
+                  <a-menu>
+                    <a-menu-item key="rotateSecret" @click="onApplicationMore({ id: selectedApplication.id, action: 'rotateSecret' })">轮换密钥</a-menu-item>
+                    <a-menu-item key="trust" @click="onApplicationMore({ id: selectedApplication.id, action: 'trust' })">{{ selectedApplication.trusted ? '撤销信任' : '设为受信' }}</a-menu-item>
+                    <a-menu-item key="status" @click="onApplicationMore({ id: selectedApplication.id, action: 'status' })">{{ selectedApplication.status === 'active' ? '停用应用' : '启用应用' }}</a-menu-item>
+                    <a-menu-item key="delete" danger @click="onApplicationMore({ id: selectedApplication.id, action: 'delete' })">删除应用</a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
+            </div>
           </template>
           <!-- D4 重设计：概览计数并入 Tab 标签（小型徽标），消除「统计条胶囊与 Tab 重名」的双层混淆 -->
-          <!-- 提示降噪 P399：两层权限规则全文只保留这一处弱化小字，Tab 内不再重复横幅 -->
-          <!-- U19 文案去歧义：「管管理台」连读易误读为错字，改「控制管理台」 -->
-          <p class="mb-3 text-xs text-[var(--color-text-muted)]">
-            权限码控制管理台菜单/按钮显隐 · 接口鉴权看角色（多角色并集） · 资源树只管业务端菜单/按钮
-          </p>
-        <a-tabs>
+          <!-- R3：Tab 激活键受控（配权路径条直切）；徽章激活态反白墨底，当前 Tab 的计数一眼可辨 -->
+          <a-tabs v-model:active-key="activeTab" class="ws-tabs">
             <a-tab-pane key="roles">
               <template #tab>
                 <span class="inline-flex items-center gap-1.5">
                   角色
                   <span v-if="tabStats.roles != null"
-                    class="inline-flex min-w-5 justify-center bg-[var(--color-bg-subtle)] px-1.5 rounded-full font-mono text-[11px] leading-4 text-[var(--color-text-secondary)] tabular-nums">{{ tabStats.roles }}</span>
+                    class="inline-flex min-w-5 justify-center rounded-full px-1.5 font-mono text-[11px] leading-4 tabular-nums"
+                    :class="activeTab === 'roles'
+                      ? 'bg-[var(--color-text-primary)] text-[var(--color-bg-elevated)]'
+                      : 'bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)]'"
+                  >{{ tabStats.roles }}</span>
                 </span>
               </template>
               <RolesTab
@@ -339,7 +422,11 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
                 <span class="inline-flex items-center gap-1.5">
                   权限编码
                   <span v-if="tabStats.permissions != null"
-                    class="inline-flex min-w-5 justify-center bg-[var(--color-bg-subtle)] px-1.5 rounded-full font-mono text-[11px] leading-4 text-[var(--color-text-secondary)] tabular-nums">{{ tabStats.permissions }}</span>
+                    class="inline-flex min-w-5 justify-center rounded-full px-1.5 font-mono text-[11px] leading-4 tabular-nums"
+                    :class="activeTab === 'permissions'
+                      ? 'bg-[var(--color-text-primary)] text-[var(--color-bg-elevated)]'
+                      : 'bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)]'"
+                  >{{ tabStats.permissions }}</span>
                 </span>
               </template>
               <PermissionsTab
@@ -356,7 +443,11 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
                 <span class="inline-flex items-center gap-1.5">
                   资源权限
                   <span v-if="tabStats.resources != null"
-                    class="inline-flex min-w-5 justify-center bg-[var(--color-bg-subtle)] px-1.5 rounded-full font-mono text-[11px] leading-4 text-[var(--color-text-secondary)] tabular-nums">{{ tabStats.resources }}</span>
+                    class="inline-flex min-w-5 justify-center rounded-full px-1.5 font-mono text-[11px] leading-4 tabular-nums"
+                    :class="activeTab === 'menus'
+                      ? 'bg-[var(--color-text-primary)] text-[var(--color-bg-elevated)]'
+                      : 'bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)]'"
+                  >{{ tabStats.resources }}</span>
                 </span>
               </template>
               <MenuTab
