@@ -1,0 +1,9 @@
+# 无域名纯 IP 访问覆盖文件：叠加在 compose.production.yaml 之上使用，IAM_DOMAIN 填公网 IP。
+# 用法：
+#   docker compose -f compose.production.yaml -f compose.production.ip-access.yaml --env-file .env.production.local <命令>
+# OIDC_ISSUER / CONSOLE_PUBLIC_URL 由主文件解析为 https://<IP>，满足后端 HTTPS 强制校验；
+# Caddyfile 挂载替换为 deploy/Caddyfile.ip（tls internal 自签证书）。
+services:
+  caddy:
+    volumes:
+      - ./deploy/Caddyfile.ip:/etc/caddy/Caddyfile:ro

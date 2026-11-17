@@ -14,6 +14,7 @@ from app.models.identity import Tenant, TenantMembership, User
 from app.models.model_catalog import ModelCatalog
 from app.models.organization import MembershipOrganization, Organization, RoleDataScope
 from app.services.effective_roles import EffectiveRoleResolver
+from app.services.model_distribution import ModelDistribution
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -90,16 +91,37 @@ class AuthorizationEvaluator:
         record("application", True, "application_valid" if application_id else "tenant_wide_request")
 
         if body.permission_code == "model.invoke":
+            # 产品需求 §6.4：模型判权唯一依据是三级下发关系（业务码/资源树不参与）。
+            # 目录行统一归属平台租户后，旧「目录行 tenant_id == 请求租户」口径作废，
+            # 改按「活动模型 + 活动租户下发 + 活动应用下发 + 主体对目标应用的有效角色」判定。
             try:
                 model_id = UUID(body.resource_id or "")
             except ValueError:
                 record("model", False, "model_resource_id_required")
                 return finish(False, "model_resource_id_required")
             model = db.get(ModelCatalog, model_id)
-            if not model or model.tenant_id != tenant_id or model.status != "active":
-                record("model", False, "model_inactive_or_not_in_tenant")
-                return finish(False, "model_inactive_or_not_in_tenant")
-            record("model", True, "model_active")
+            if not model or model.status != "active":
+                record("model", False, "model_inactive_or_missing")
+                return finish(False, "model_inactive_or_missing")
+            if not application_id:
+                # 应用下发是三级交集的必要层级；无应用上下文不构成调用主体。
+                record("model", False, "model_application_context_required")
+                return finish(False, "model_application_context_required")
+            if not ModelDistribution.tenant_grant_is_active(db, model_id, tenant_id):
+                record("model", False, "model_tenant_grant_inactive")
+                return finish(False, "model_tenant_grant_inactive")
+            if not ModelDistribution.application_grant_is_active(db, model_id, application_id):
+                record("model", False, "model_application_grant_inactive")
+                return finish(False, "model_application_grant_inactive")
+            # 主体对目标应用的有效访问关系：OIDC 入场已验证；管理模拟在此按同一口径复验。
+            if not EffectiveRoleResolver.list_effective_roles(
+                    db, membership_id=membership.id, tenant_id=tenant_id,
+                    application_id=application_id):
+                record("model", False, "no_effective_role_in_target_application")
+                return finish(False, "no_effective_role_in_target_application")
+            record("model", True, "model_distribution_active")
+            # 下发关系即授权唯一依据：model.invoke 不再走角色授权与数据范围路径。
+            return finish(True, "model_distribution_grant")
 
         # 直接角色与活动用户组角色均按同一租户成员身份计算；组已停用时保留配置但不授予权限。
         # 角色集合复用全站唯一的有效角色实现（evaluate_access / OIDC 入场 / rbac_guards 共用）。

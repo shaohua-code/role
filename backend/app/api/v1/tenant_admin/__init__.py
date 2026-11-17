@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from app.api.v1.admin.groups import router as user_groups_router
 from app.api.v1.admin.organizations import router as organizations_router
 from app.api.v1.admin.applications import router as applications_router
+from app.api.v1.tenant_admin.application_models import router as application_models_router
 from app.api.v1.tenant_admin.application_roles import router as application_roles_router
 from app.core.security import current_user
 
@@ -19,6 +20,7 @@ router = APIRouter(
 # 绿场规则：组管理首期即挂 tenant-admin（L3 持 tenant.admin（组管理走角色门禁））。
 router.include_router(organizations_router)
 router.include_router(applications_router)
+router.include_router(application_models_router)
 router.include_router(application_roles_router)
 router.include_router(user_groups_router)
 

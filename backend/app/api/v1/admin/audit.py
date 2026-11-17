@@ -1,5 +1,6 @@
 """管理员审计查询路由；旧列表接口保留，新搜索接口负责服务端分页。"""
 
+import re
 from datetime import datetime
 from uuid import UUID
 
@@ -9,15 +10,17 @@ from sqlalchemy.orm import Session
 
 from app.core.security import current_user
 from app.db.session import get_db_session
-from app.models.identity import AuditEvent, User
+from app.models.identity import AuditEvent, TenantMembership, User
 from app.schemas.audit import AuditEventResponse, AuditSearchResponse
 from app.services.rbac_guards import (
     ActorVisibility,
     PermissionEnforcer,
 )
-from app.services.role_provisioning import CONSOLE_ADMIN_ROLE_KEYS, L1_ROLE_KEY, L3_ROLE_KEY
 
 router = APIRouter(tags=["审计日志"])
+
+# 操作者候选搜索的 UUID 兜底：完整小写/大写连字符 UUID 才按 ID 精确匹配。
+UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
 def _query_audit_events(
@@ -101,10 +104,21 @@ def _query_audit_events(
         .limit(limit)
     )
     events = db.scalars(statement).all()
+    # 操作者展示信息批量读取（单查防 N+1）；事件量 ≤ limit，in_ 集合有界。
+    actor_ids = {event.actor_user_id for event in events if event.actor_user_id}
+    actor_rows: dict[UUID, User] = {}
+    if actor_ids:
+        actor_rows = {
+            user.id: user
+            for user in db.scalars(select(User).where(User.id.in_(actor_ids))).all()
+        }
     items = [
         AuditEventResponse(
             id=str(event.id),
             actor_user_id=str(event.actor_user_id) if event.actor_user_id else None,
+            actor_display_name=actor.display_name
+            if (actor := actor_rows.get(event.actor_user_id)) is not None else None,
+            actor_email=actor.email if (actor := actor_rows.get(event.actor_user_id)) is not None else None,
             tenant_id=str(event.tenant_id) if event.tenant_id else None,
             action=event.action,
             target_type=event.target_type,
@@ -154,6 +168,44 @@ def list_audit(
         tenant_scope=tenant_scope,
         application_ids=application_ids,
     ).items
+
+
+@router.get("/audit/actor-options")
+def list_audit_actor_options(
+    q: str = Query(min_length=1, max_length=120),
+    actor: User = Depends(current_user),
+    db: Session = Depends(get_db_session),
+) -> list[dict]:
+    """审计筛选用的操作者候选（最小字段）；与审计页同码判权、同数据边界收敛。
+
+    q 按展示名/邮箱模糊匹配；输入形似 UUID 时退化为按 ID 精确查找，
+    让「从详情复制操作者 ID → 粘贴筛选」的排查路径继续可用。
+    """
+    PermissionEnforcer.ensure_codes(actor, db, "menu.audit", detail="缺少管理权限：menu.audit")
+    keyword = q.strip()
+    if not keyword:
+        return []
+    uuid_like = UUID_PATTERN.fullmatch(keyword)
+    statement = select(User).order_by(User.created_at.desc()).limit(20)
+    if uuid_like:
+        statement = statement.where(User.id == UUID(uuid_like.group(0)))
+    else:
+        escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        statement = statement.where(
+            User.email.ilike(f"%{escaped}%", escape="\\")
+            | User.display_name.ilike(f"%{escaped}%", escape="\\"))
+    # 数据边界：超管全域；非超管只出自身活跃成员租户内的用户（与审计事件范围同口径）。
+    tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
+    if tenant_scope is not None:
+        if not tenant_scope:
+            return []
+        statement = statement.where(User.id.in_(select(TenantMembership.user_id).where(
+            TenantMembership.tenant_id.in_(tenant_scope),
+            TenantMembership.status == "active",
+        )))
+    return [{
+        "id": str(user.id), "display_name": user.display_name, "email": user.email,
+    } for user in db.scalars(statement).all()]
 
 
 @router.get("/audit/search", response_model=AuditSearchResponse)

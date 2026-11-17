@@ -14,7 +14,6 @@ menu.* / button.* 节点编码同时是后端判权单元：侧栏认菜单节�
 from __future__ import annotations
 
 import logging
-from typing import Iterable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -101,6 +100,8 @@ BUTTON_CATALOG: tuple[tuple[str, str, str], ...] = (
     # 任命应用管理员是租户级能力（应用级不能向上）。
     ("button.app_role.assign", "任命应用管理员", ROLE_SCOPE_TENANT),
     ("button.models.manage", "模型写操作", ROLE_SCOPE_SUPER),
+    # 模型三级分发：租户管理员在应用工作台把本租户收到的模型下发 / 回收给应用。
+    ("button.models.distribute", "模型分发", ROLE_SCOPE_TENANT),
     ("button.themes.manage", "登录主题写操作", ROLE_SCOPE_APP),
     ("button.authz.simulate", "执行鉴权模拟", ROLE_SCOPE_APP),
 )
@@ -113,6 +114,7 @@ MENU_BUTTONS: dict[str, tuple[str, ...]] = {
     "menu.application_workspace": (
         "button.apps.manage", "button.apps.secret",
         "button.app_role.manage", "button.app_role.assign",
+        "button.models.distribute",
     ),
     "menu.roles": ("button.roles.manage",),
     "menu.groups": ("button.groups.manage",),

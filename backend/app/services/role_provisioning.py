@@ -24,7 +24,6 @@ from app.models.identity import Tenant
 from app.services.permission_kinds import (
     ROLE_SCOPE_APP,
     ROLE_SCOPE_MEMBER,
-    ROLE_SCOPE_SUPER,
     ROLE_SCOPE_TENANT,
     TEMPLATE_ROLE_SCOPES,
 )
@@ -54,7 +53,8 @@ AUTHORITY_MANAGE_CODES: frozenset[str] = frozenset({
 
 # ── 模板持有的菜单/按钮节点（管理面只有这两类）────────────────────────────
 
-# 租户管理员：全部菜单（平台治理写按钮仅超管）；写按钮不含租户管理/模型写。
+# 租户管理员：全部菜单（平台治理写按钮仅超管）；写按钮不含租户管理/平台模型写
+# （模型三级分发的 button.models.distribute 已含——租户管理员在应用工作台下发/回收模型）。
 L3_GRANT_NODE_CODES: tuple[str, ...] = (
     "menu.overview",
     "menu.organization_workspace",
@@ -77,6 +77,7 @@ L3_GRANT_NODE_CODES: tuple[str, ...] = (
     "button.apps.secret",
     "button.app_role.manage",
     "button.app_role.assign",
+    "button.models.distribute",
     "button.roles.manage",
     "button.themes.manage",
     "button.authz.simulate",

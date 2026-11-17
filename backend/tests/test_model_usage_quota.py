@@ -17,13 +17,13 @@ from app.api.v1.admin.model_usage import (
     model_usage_summary,
     resolve_model_usage_review,
 )
-from app.api.v1.model_usage import reserve_usage, settle_usage
+from app.api.v1.model_usage import report_usage, reserve_usage, settle_usage
 from app.core.config import get_settings
 from app.db.session import get_engine
 from app.models.application import Application
 from app.models.identity import AuditEvent, Tenant, TenantMembership, User
 from app.models.model_catalog import ModelCatalog, ModelUsageEvent, ModelUsageReservation
-from app.schemas.models import ModelUsageReservationRequest, ModelUsageReviewRequest, ModelUsageSettlementRequest
+from app.schemas.models import ModelUsageReport, ModelUsageReservationRequest, ModelUsageReviewRequest, ModelUsageSettlementRequest
 
 
 class ModelUsageQuotaContractTests(unittest.TestCase):
@@ -102,8 +102,12 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
         self.application = Application(
             id=self.application_id, tenant_id=self.tenant_id, client_id=f"quota-{uuid4().hex}",
             name="Quota Test App", status="active")
+        # 三级分发口径：平台目录行归属平台租户；预留 / 记账需租户与应用下发均 active。
+        from tests.greenfield_fixture import ensure_platform_tenant
+
+        self.platform_tenant = ensure_platform_tenant(self.db)
         self.model = ModelCatalog(
-            id=self.model_id, tenant_id=self.tenant_id, key="quota-test-model", provider="test",
+            id=self.model_id, tenant_id=self.platform_tenant.id, key="quota-test-model", provider="test",
             model_name="test-model", display_name="Quota Test Model", capabilities=["chat"],
             rpm_limit=1, tpm_limit=10_000, status="active")
         # 显式按外键依赖分层 flush，避免测试夹具依赖 ORM 未配置的对象排序。
@@ -116,6 +120,14 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
         self.db.add_all([self.membership, self.application])
         self.db.flush()
         self.db.add(self.model)
+        self.db.flush()
+        from app.models.model_catalog import ModelApplicationGrant, ModelTenantGrant
+
+        self.db.add_all([
+            ModelTenantGrant(model_id=self.model_id, tenant_id=self.tenant_id, status="active"),
+            ModelApplicationGrant(model_id=self.model_id, tenant_id=self.tenant_id,
+                                  application_id=self.application_id, status="active"),
+        ])
         self.db.flush()
         self.enabled_settings = SimpleNamespace(
             model_usage_api_key=self.gateway_key, model_quota_enforcement_enabled=True)
@@ -352,6 +364,38 @@ class ModelUsageQuotaIntegrationTests(unittest.TestCase):
         self.assertEqual(self.db.query(ModelUsageEvent).count(), 0)
         self.assertEqual(self.db.query(AuditEvent).filter(
             AuditEvent.action == "model_usage.review.release").count(), 1)
+
+    def test_retries_stay_idempotent_after_grants_revoked(self) -> None:
+        """闭环断点回归：模型下发被回收后，同 request_id 的重试必须幂等返回原判定，
+        不能因三级校验变化变成 422（否则网关重试陷入死循环、历史调用丢账）。"""
+        from app.models.model_catalog import ModelApplicationGrant, ModelTenantGrant
+
+        with patch("app.api.v1.model_usage.get_settings", return_value=self.enabled_settings):
+            first = reserve_usage(self.request("idem-after-revoke-001"), self.gateway_key, self.db)
+            self.assertTrue(first["allowed"])
+        # 回收应用下发（租户级同样生效）。
+        self.db.query(ModelApplicationGrant).filter(
+            ModelApplicationGrant.model_id == self.model_id).update({"status": "revoked"})
+        self.db.query(ModelTenantGrant).filter(
+            ModelTenantGrant.model_id == self.model_id).update({"status": "revoked"})
+        self.db.flush()
+        with patch("app.api.v1.model_usage.get_settings", return_value=self.enabled_settings):
+            retry = reserve_usage(self.request("idem-after-revoke-001"), self.gateway_key, self.db)
+        self.assertTrue(retry["duplicate"])
+
+        # report：预留路径的首次上报在回收后仍可记账（预留即前置授权凭证）。
+        report_body = ModelUsageReport(
+            request_id="idem-after-revoke-001", tenant_id=self.tenant_id, model_id=self.model_id,
+            application_id=self.application_id, user_id=self.user_id,
+            input_tokens=5, output_tokens=10, outcome="succeeded", latency_ms=12)
+        with patch("app.api.v1.model_usage.get_settings", return_value=self.enabled_settings):
+            recorded = report_usage(report_body, self.gateway_key, self.db)
+        self.assertTrue(recorded["recorded"])
+        # 完全相同的重试返回幂等确认，不再触发三级校验。
+        with patch("app.api.v1.model_usage.get_settings", return_value=self.enabled_settings):
+            duplicate = report_usage(report_body, self.gateway_key, self.db)
+        self.assertFalse(duplicate["recorded"])
+        self.assertTrue(duplicate["duplicate"])
 
 
 if __name__ == "__main__":

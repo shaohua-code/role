@@ -1,5 +1,157 @@
 #﻿##﻿# 变更日志
 
+## 2026-11-17 更新腾讯云无域名部署指引（仅文档；部署与预检未运行）
+
+- 扩充 `docs/部署与运维.md` §4.1：加入腾讯云地域选择、CVM/Lighthouse 固定 IP 差异、安全组/防火墙规则、服务器准备、环境变量与 RSA key、Compose 静态检查、首装迁移边界、健康检查、自签根 CA 分发及 IP/issuer 迁移步骤。
+- 更正大陆 IP-only 备案说明：腾讯云官方文档指出内地 IP-only 网站提供非经营性互联网信息服务也涉及 ICP 备案，但备案系统不支持直接 IP 备案；另有“仅公网 IP 测试可暂不备案”的说明。文档据此要求正式开放前先咨询当地通信管理局，不将测试口径视为生产豁免；推荐无域名公网部署先评估中国香港地域。
+- 更新生产输入清单，允许纯 IP 部署口径并提示必须叠加覆盖 Compose 文件。仅修改文档；未运行 Compose 校验、镜像构建、容器启动、迁移或目标环境验收。
+
+## 2026-11-17 项目缺陷审查修复：3 项 P1 访问控制/判权契约 + 2 项 P2 平台归属与导航（隔离 385/385）
+
+按 `docs/项目缺陷深度审查报告-2026-11-17.md` 与 `docs/项目缺陷审查与修复任务.md` 逐项修复；配额 enforcement 保持默认关闭，未开启任何拦截。
+
+- **P1 租户管理员跨租户应用守卫（已修）：** `admin_authorization.py` 新增 `AdminAccessGuard.has_active_tenant_membership()`，`has_application_admin_access()` 在超管放行后统一前置目标租户活动成员关系闸门——`scope_at_least` 取跨所有成员关系的最高范围秩，不再能让租户 A 管理员凭范围秩读写租户 B 应用（应用/资源/角色/模型工作台全部按 ID 单项端点经此守卫收口）。超管代管、同租户 L3/L2 行为不变。
+- **P1 my-models 跨应用读取（已修）：** `authorization.py` `list_my_models()` 清单范围绑定服务端验签的 OIDC 应用身份（`_oidc_application_id`），`client_id` 仅作一致性校验（不一致 403）；管理会话（无已验证 OIDC 上下文）fail-closed 403。同租户持应用 A token 查应用 B 不再返回 B 的任何模型字段。
+- **P1 model.invoke 判权契约（已修）：** `services/authorization.py` `evaluate_access()` 的 `model.invoke` 分支改为按产品需求 §6.4 三级下发关系判定——活动模型 + 活动租户下发 + 活动应用下发 + 主体对目标应用的有效角色，命中即放行（下发关系即授权唯一依据，不再走角色授权/数据范围路径；无应用上下文、未下发、回收、停用、token 应用不匹配分别拒绝）；`permission_impact.py` 影响分析同口径（按三级下发判断 model.invoke 是否可能生效，不再按 `ModelCatalog.tenant_id == role.tenant_id`）；网关预留链路（`model_usage.py` 已按三级校验）与前置检查语义对齐，文档同步。
+- **P2 平台租户归属不变式（已修）：** `admin/models.py` `_get_platform_model()` 及状态/删除行锁路径统一校验目录行 `tenant_id` 等于 platform 租户（非平台行 404，与不存在不可区分）；`model_distribution.py` 领域服务入口（grant_to_tenant / grant_to_application）二次校验，三级可见性查询补平台归属过滤，防存量异常行经 API 修改或传播。
+- **P2 权限导航过期（已修）：** `AGENTS.md` 规则 6、`ai/`（README/权限模型/术语表/目录地图/项目是什么/前后端链路/前端规范/红线/新增权限码/新增后端接口/新增管理台页面/角色与访问控制导航/模型用量导航）与 `seed_greenfield.py` 阶段一注释统一改为菜单/按钮节点码现行口径，旧五域 27 码标注已废弃仅存历史；CHANGELOG 历史记录保留原文。
+- **契约文档同步：** `docs/应用对接.md` §9（token 应用身份绑定 + 管理会话不可调用 + 调用前检查口径）、`docs/产品需求.md` §6.4（判权/归属不变式 + 消费契约）、`backend/README.md`（my-models 与 reservations 条目）。
+- **测试：** `test_model_distribution.py` 新增 5 组用例（my-models 跨应用/外租户/管理会话拒绝、非平台目录行按 ID 操作 404 与可见性排除、model.invoke 三级判权正反向、影响分析同口径），my-models 用例改为 OIDC 上下文；`test_admin_authorization.py` 补成员关系闸门 mock 与跨租户拒绝用例；`test_entity_deletion.py` 模型夹具改归平台租户（对齐新不变式）。
+- **验证：** 后端隔离全量 385/385 OK（49 skipped 为既有 PG 专项；`tests.test_g16_g24` 主题上传 2 例在本机沙箱内因写 `D:\app\data` 受限报错，沙箱外运行 OK，非本次改动引入）；Python SDK `py_compile` 通过。前端无改动（vue-tsc/build 未运行）；TypeScript SDK 无改动（编译未运行）；浏览器目验与目标环境验收未运行。
+
+## 2026-11-17 无用代码清理：后端 7 处死导入 + 前端死样式/空操作/导出收窄（后端 106 测试、vue-tsc/build 通过）
+
+AST 扫描本次改动文件 + 人工核对上下文，只删确认无引用的代码；`from __future__ import annotations` 为项目既有惯例（9 处）保留。
+
+- **后端：** `admin/audit.py` 删 `CONSOLE_ADMIN_ROLE_KEYS/L1_ROLE_KEY/L3_ROLE_KEY` 死导入（判权已改走 EffectiveRoleResolver）；`model_usage.py` 删 `UUID`/`and_`；`permission_kinds.py` 删 `Iterable`；`role_provisioning.py` 删 `ROLE_SCOPE_SUPER` 再导出（唯一消费者 `seed_greenfield.py` 改为直连 permission_kinds）；测试删 `RolePermission`/`Organization`/`ModelDistribution` 死导入。修复过程发现 `ROLE_SCOPE_SUPER` 曾被 seed_greenfield 间接再导出引用——初删导致导入链断裂（8 模块收集错误），改直连后恢复。
+- **前端：** `ModelGovernancePage.vue` 删 3 条死样式（`.table-toolbar`/`.table-hint`/`.page-heading`，模板早已改用 AdminTableToolbar 组件）及媒体查询引用；`ModelsTab.vue` 删 `@table-change="() => undefined"` 空操作监听；`auditLabels.ts` 的 `AUDIT_OUTCOME_LABELS` 与 `modelCapabilities.ts` 的 `MODEL_CAPABILITY_LABELS` 收窄为模块私有（无外部消费者）。
+- **验证：** 后端相关 8 个测试模块 106/106 OK（13 skipped 为 PG 专项）；`vue-tsc -b` 无错误；Vite build EXIT=0（首次构建因系统内存压力 OOM 一次，重试通过）。浏览器目验未运行。
+
+## 2026-11-17 当前工作区项目缺陷深度审查（静态检查；验证未运行）
+
+- 新增 `docs/项目缺陷深度审查报告-2026-11-17.md`：重新确认 3 项 P1 权限/授权契约缺陷，补充模型目录按 ID 操作缺少平台租户归属校验，以及五域权限导航过期；每项含位置、证据、影响、修复目标与验收条件。
+- 检查覆盖需求、关键后端守卫/API、OIDC 上下文、模型三级分发/用量契约、相关测试与 AI 导航。仅静态检查；后端测试、前端构建、浏览器、生产预检和目标环境验收均未运行。
+- 未修改源码、数据库或现有用户改动。
+
+## 2026-11-17 输出项目缺陷审查修复任务文档（只读静态检查；验证未运行）
+
+- 新增 `docs/项目缺陷审查与修复任务.md`，整理租户级应用越权、模型清单跨应用读取、模型判权沿用旧租户归属、权限模型导航过期等发现，并给出证据、影响、修复目标和验收条件，供后续模型接手。
+- 本轮只读检查并新增文档；源码、数据库未修改，测试、构建及目标环境验收未运行。
+
+## 2026-11-17 新增无域名纯 IP 生产部署支持（自签证书；静态校验，未运行预检）
+
+用户以腾讯云大陆服务器、无域名、坚持 IP 直访方式上线。后端配置校验强制 OIDC issuer / Console URL 为 HTTPS（`backend/app/core/config.py`），纯 IP 无法取得公开可信证书，故按密钥轮换 override 既有模式提供 Caddy 内置 CA 自签路径，不改动域名标准链路。
+
+- **新增 `deploy/Caddyfile.ip`：** 与生产 Caddyfile 等价 + 站点级 `tls internal`（含 IP SAN 自签）；trusted-proxies drop-in 语义保持。
+- **新增 `compose.production.ip-access.yaml`：** 仅替换 Caddyfile 挂载（同 target 覆盖）；`IAM_DOMAIN` 填公网 IP 时 `OIDC_ISSUER`/`CONSOLE_PUBLIC_URL` 随主文件解析为 `https://<IP>`，通过后端 HTTPS 校验。
+- **`.env.production.example`** 增加 IP 部署提示注释；**`docs/部署与运维.md`** 新增 4.1 节（命令、根 CA 导出导入、IP=issuer 与弹性 IP 约束、备案/安全组、回迁域名口径）。
+- **验证：** 本机无 Docker CLI / Python，`compose config --quiet` 与 `caddy validate` **未运行**；YAML 为静态复核。上线前须在目标机执行 4.1 节预检命令。浏览器目验未运行。
+
+## 2026-11-17 模型治理页目录视图人性化重设计：工具条筛选 + 超管行点击直达下发（纯前端；vue-tsc/build 通过）
+
+应用 frontend-design / trae-design / web-app-development（uicraft）对模型治理页「模型目录」视图做操作人性化改造；沿用审计页已验证模式与既有 P350 设计语言，最小一致改动，不引入新视觉体系。
+
+- **工具条筛选（目录视图）：** 新增关键字搜索（AdminSearchField，命中模型标识/展示名/模型名/提供方任一）+ 状态下拉（启用/停用，可清空）；纯前端本地过滤即时生效（目录数据量小），不影响用量视图既有筛选。
+- **超管行点击直达：** 目录表整行点击打开「下发租户」管理弹窗（`custom-row` 仅在持 `button.models.manage` 时挂载，租户/应用级只读视角不加行点击避免误导）；行内「N 个租户」链接与 4 个操作按钮加 `@click.stop` 阻断冒泡防重复弹窗；行 cursor:pointer（hover 高亮沿用 antd 行悬停默认）。
+- **空态区分：** 有筛选条件无命中时提示「没有符合筛选条件的模型，可调整关键字或状态」，与「暂无模型目录项」/「租户尚未收到平台下发的模型」分开，避免误判目录为空。
+- **验证：** `vue-tsc -b` EXIT=0；Vite build EXIT=0。浏览器目验未运行。
+
+## 2026-11-17 模型模块闭环深度检查：修复网关重试幂等断点 + SDK 补 my-models（PG 隔离 380/380）
+
+对「平台目录 → 下发 → 消费 → 记账 → 核对 → 统计」全链路做闭环审查，发现并修复一个真断点。
+
+- **真断点（已修）：** `reserve`/`report` 的三级下发校验先于幂等比对执行——模型被回收/停用后，网关对同 request_id 的重试会 422 而非返回原判定（重试死循环风险、历史调用丢账）。修法：幂等比对前置（重试返回 duplicate/原判定，不受后续回收影响）；`report` 对「已有 active 预留」的首次上报视预留为前置授权凭证，免重复三级校验（回收窗口内延迟上报不丢账）；全新无凭据请求仍强制三级校验。重试响应的 `enforced` 保持原口径（目录限速 × 服务端开关）。
+- **审计一致性：** `model.distribute.tenant` 审计详情补 `model_key`（与 distribute.application 同构）。
+- **SDK 消费闭环：** Python `IamAuthorizationClient.list_my_models()` 与 TypeScript `listMyModels()` 新增（GET /authorization/my-models，fail-closed 契约校验：非数组/缺 key|id|display_name 抛 502；超时/网络 503；Python SDK 编译检查通过；TS 编译未运行——host 无 node_modules）。my-resources 仍未入 SDK（既有现状，不在本轮范围）。
+- **回归：** 新增 `test_retries_stay_idempotent_after_grants_revoked`（回收后 reserve 重试 duplicate、预留路径 report 可记账、同载荷重试幂等）；修正 `test_audit_query` 夹具补建空 users 表（审计 join 操作者后的夹具适配）与 `test_model_usage_quota` 缺失 latency_ms/settings patch 笔误。**PG 随机隔离全量套件 380/380 通过**（378 基线 + 2 新增）。
+- **闭环检查结论（其余环节均已有闭环，无断点）：** 目录删除受用量 RESTRICT 且 grants 级联；回收软失效 + 级联应用下发、重发复活；停用模型全链路立即不可见且下发操作被拒；settle/核对不重复校验（调用已发生记账优先）；租户/应用删除 CASCADE 收口；my-models 按应用 + 租户成员判界。已知边界（非断点）：超管视角不展示应用级下发明细（属应用工作台域）；停用模型在工作台 Tab 不出现故无需回收入口。
+
+## 2026-11-17 审计页布局修正：消除外层滚动条 + 筛选开关并入工具条（纯前端；vue-tsc/build 通过）
+
+用户截图反馈两点：①页面出现外层滚动条（应只有表格内滚动）；②筛选收起时「筛选条件」按钮整行空占位。
+
+- **修①：** 本页 chrome 比标准列表页多「类别 Tab 行 + 底部备注」，表格 `y` 偏移 430 → 520、保底下限 360 → 280（`max(280px, 100vh - 520px)`）；全局 fitTableBodies（App.vue MutationObserver）继续动态兜底。
+- **修②：** 删除独立筛选按钮行——「筛选」开关并入表格工具条右侧 `#actions`（与「符合条件 X 条」同一行，模型治理页同款模式），筛选展开面板仍在 Tab 下方；省出一整行高度，也顺带减少 ① 的 chrome 高度。
+- **验证：** `vue-tsc -b` 与 Vite build EXIT=0。浏览器目验未运行（待用户刷新确认外层滚动条消失）。
+
+## 2026-11-17 审计页人性化重设计：筛选选择器化 + 行点击详情（后端 29/29、vue-tsc/build 通过）
+
+应用 aesthetics-and-emotion-principles（aesthetic-usability：专业工具场景摩擦优先于装饰）与 frontend-design（意图性收敛为既有 P350 经典美学）对审计页做操作人性化改造；trae-design 画布流不适用于仓库源码改造，仅取设计原则，未引入新视觉体系。
+
+- **后端：** 新增 `GET /admin/audit/actor-options?q=`（操作者候选：`menu.audit` 同码判权、复用租户数据边界、只回 id/display_name/email 最小字段；q 模糊匹配名字/邮箱，完整 UUID 按 ID 精确兜底——保留「详情复制 ID → 粘贴筛选」排查路径；LIKE 通配符字面转义同 audit.py 既有口径）。不直接复用 `/admin/users`（其需 `menu.users`，审计角色会 403 或越权泄露用户目录）。
+- **前端（AuditLogPage.vue）：** ①「操作」筛选改分组下拉（按 Tab 给登录认证/管理操作子集，中文+编码可搜索）；②「对象类型」改中文下拉（value 仍为编码）；③「操作者」改远程搜索选择器（250ms 防抖、名字/邮箱/UUID 粘贴兜底），filters 三字段改 undefined 语义修复 antd Select 空串占位问题；④**整行点击打开详情**（cursor-pointer，详情列按钮保留）。行 hover 高亮沿用 bridge rowHoverBg。
+- **测试：** 新增 actor-options 契约用例（边界/UUID 兜底/403）；修复初版把 re.Match 传 UUID 的笔误。后端相关 29/29 OK；`vue-tsc -b` 与 Vite build EXIT=0。浏览器目验未运行。
+
+## 2026-11-17 审计操作者列显示用户名（后端 join + 前端双行；测试 21/21、vue-tsc/build 通过）
+
+- **后端：** `AuditEventResponse` 新增可选 `actor_display_name` / `actor_email`；`_query_audit_events` 在分页结果上批量读取操作者用户（单查防 N+1），操作者不存在时为 None 由前端兜底「未知用户」。
+- **前端（AuditLogPage.vue）：** 表格「操作者」列改为用户名为主、邮箱副行（悬停 title 保留完整 UUID；无操作者显示「系统 / 未记录」）；详情弹窗新增「操作者」行并保留 mono「操作者 ID」（排查/复制用）。
+- **验证：** 后端相关测试 21/21 OK（含 audit search 边界）；`vue-tsc -b` 与 Vite build EXIT=0。浏览器目验未运行。
+
+## 2026-11-17 审计日志页中文化：表格中文、详情中文+原始编码双显（纯前端；vue-tsc/build 通过）
+
+- **新增（utils/auditLabels.ts）：** 审计 action（86 条，覆盖后端全部 audit()/record_event() 调用点：auth.*/oidc.*/租户/应用/应用角色/资源树/角色/权限/用户/邀请/成员/组织/用户组/模型三级分发/用量核对/主题）、target_type（12 类）、outcome（含 password_reset 的 accepted）中文映射；未知编码原样回显（审计安全数据不丢标识）。
+- **修改（AuditLogPage.vue）：** 表格「操作」「对象类型」列中文显示（悬停 title 保留原始编码）；「结果」列复用映射；详情弹窗「操作 / 结果 / 对象类型」改为中文 + mono 原始编码双显，目标行拆为「对象类型 + 对象 ID」。筛选区仍按原始编码精确过滤（语义不变）。
+- **验证：** `vue-tsc -b` EXIT=0；Vite build EXIT=0。浏览器目验未运行。
+
+## 2026-11-17 修复模型目录操作列固定裁切（纯样式；vue-tsc/build 通过）
+
+用户截图反馈「固定列不生效」：操作列 `fixed: 'right'` 本身生效，但列宽 190px 装不下 4 个链接（下发租户/编辑/停用/删除 ≈ 需 215px），内容溢出被裁切呈「删」字半截。操作列 190 → 232px。`vue-tsc -b` 与 Vite build EXIT=0；浏览器目验未运行。
+
+## 2026-11-17 模型能力升级为标准开关集（深度思考/思考过程/工具调用等）+ DeepSeek 能力回填
+
+用户要求「是否开启深度思考、是否有思考过程、调用工具等全部可以配置」。能力标签从自由文本升级为前后端同源的标准集勾选。
+
+- **后端（schemas/models.py）：** 新增 `MODEL_CAPABILITIES` 标准集（chat / reasoning 深度思考 / thinking_output 思考过程输出 / tool_calls 工具调用 / json_output / vision / embedding）；Create/Update 均经 validator 规范化（大小写/空白/去重保序）并强制白名单，未知标签 422 中文文案；Update 显式提交 null 沿用既有「不能设置为 null」契约。
+- **前端：** 新增 `utils/modelCapabilities.ts`（标准集常量 + 中文标签 + 渲染格式化，与后端同源）；模型治理页表单「能力」改标准集勾选组（`:checked`+`@change` 桥接数组）；模型治理页与应用工作台模型 Tab 的能力列统一中文渲染（formatCapabilities）。
+- **数据回填（走 update_model，审计同事务）：** deepseek-chat / v4-flash / v4-pro = `chat, tool_calls, json_output`；deepseek-reasoner = `chat, reasoning, thinking_output, tool_calls, json_output`（DeepSeek 官方功能表口径；V4 系列思考能力官方未标注故不标）。
+- **验证：** 相关后端测试 28/28 OK（含新增白名单契约用例；修正一处共享库历史审计干扰——model.update 审计断言改取最新一条）；`vue-tsc -b` EXIT=0；Vite build EXIT=0。浏览器目验未运行。
+
+## 2026-11-17 配置 DeepSeek 全系平台模型并三级下发（数据配置；无代码改动）
+
+用户要求「全部加上」：补齐 DeepSeek 在售模型目录并全部下发给 deerflow 租户 + DeerFlow 应用。
+
+- **新增 3 条平台模型（幂等脚本走真实 handler，审计同事务）：** `deepseek-reasoner`（V3.2 思考，chat+reasoning，2/3 元——api-docs 中文页与 chat 同价行）；`deepseek-v4-flash`（0.14/0.28）、`deepseek-v4-pro`（0.435/0.87）——DeepSeek 国际官网美元标价。凭证统一外部引用 `vault://deepseek/api-key`，endpoint https://api.deepseek.com。
+- **币种口径提醒：** 目录无币种字段——chat/reasoner 按人民币元、V4 系列按国际站美元记录；若该 key 实际为人民币计费（含峰谷价，V4 Pro 高峰 9/27 元），可在模型治理页自行改价。
+- **验证：** 库中 4 条模型价格齐全；租户/应用下发各 4 条 active；近 10 分钟 model.* 审计事件落库；临时脚本已删除。my-models 在线调用与浏览器目验未运行。
+
+## 2026-11-17 deepseek-chat 目录单价补维护（数据配置；无代码改动）
+
+- **价格（DeepSeek 官方标准价，缓存未命中口径，人民币/百万 tokens）：** 输入 2 元、输出 3 元；走 `update_model` handler 更新（审计 `model.update` 只记 updated_fields）。目录无币种字段，按供应商人民币标价记录；缓存命中价（0.2 元）与错峰优惠不在目录建模范围，估算偏保守。
+- **验证：** 库中 `input_cost_per_million=2.000000 / output_cost_per_million=3.000000`；此后新用量事件开始按此单价估算费用（存量 0 条账目不受影响）。临时脚本已删除。
+
+## 2026-11-17 配置首个平台模型 DeepSeek Chat 并完成三级下发（数据配置；无代码改动）
+
+用户在模型三级分发落地后要求配置一个 DeepSeek 模型。经平台目录 → deerflow 租户 → DeerFlow 应用全链路下发。
+
+- **数据配置（走真实 handler 调用链，授权与审计同事务）：** 平台模型 `deepseek-chat`（provider=deepseek，display_name=DeepSeek Chat (V3)，endpoint=https://api.deepseek.com，capabilities=[chat]，价格与 RPM/TPM 未维护——费用按「未知」口径展示）；下发给 deerflow 租户与 DeerFlow 应用（client_id=deerflow）均 active。
+- **凭证边界：** 明文 key 不入库——目录凭证字段仅存外部引用 `vault://deepseek/api-key`；真实 key 由部署方写入根目录 `.env` 的 `DEEPSEEK_API_KEY`（不入库文件）。key 曾出现在对话明文中，建议在 DeepSeek 控制台轮换后再长期使用。
+- **验证：** 审计 3 条落库（model.create / model.distribute.tenant / model.distribute.application）；grants 两级 status=active；浏览器端与 my-models 在线调用未运行（无用户 token 会话）。临时配置脚本已删除。
+
+## 2026-11-16 模型三级分发实现落地：平台目录→租户→应用（迁移 0009 已授权应用；隔离套件 377/377）
+
+按 2026-11-16 PRD 定稿实施「不同应用看到的模型不一致」。应用可见 = 平台目录 ∩ 租户下发 ∩ 应用下发；下发关系即授权唯一依据；凭证业务自持（IAM 只存外部引用不回读）。
+
+- **迁移 `0009_model_distribution`（已获用户授权应用）：** 新建 `model_tenant_grants` / `model_application_grants`（软失效语义 status=active/revoked，CASCADE/SET NULL 外键）；目录沿用 `model_catalog` 行归属 platform 租户，不改表不搬存量（应用前核验 0 行）。迁移前受保护备份 `backups/iam-postgres-20261116T091107Z-48ca66ff.dump`（SHA-256 同名 .sha256）；`docker compose --profile migrate run --rm migrate` 应用成功，dev 库 head=0009，`/ready` 200。`manage.py seed-greenfield` 幂等补 `button.models.distribute` 节点（新增 1 条管理面码）并自动补授 L3 模板。
+- **后端：** `services/model_distribution.py`（ModelDistribution 三级分发服务：下发/回收软失效、级联、三级交集解析）；`permission_kinds.py` 新增 `button.models.distribute`（min_scope=tenant，挂应用工作台）并入 L3 模板节点集；`admin/models.py` 改造为平台目录（列表三视角 + tenant-grants GET/POST/DELETE 下发管理）；新增 `tenant_admin/application_models.py`（工作台模型 Tab 清单/下发/回收）；`authorization.py` 新增 `GET /my-models?client_id=`（三级交集，非成员空列表防枚举）；`model_usage.py` 预留/上报校验改为「模型 active + 租户下发 active + 应用下发 active」。审计新增 `model.distribute/revoke.tenant|application` 四事件（同事务）。
+- **前端：** `ModelGovernancePage.vue` 改平台目录视角（租户列→「已下发租户」计数 + 下发租户管理弹窗：多选下发/逐行回收/软失效说明；租户与应用级视角只读）；应用工作台新增 `tabs/ModelsTab.vue`（收到清单 + 按码下发/回收，L2 只读），index.vue 注册第四个 Tab 与计数徽标。
+- **修改（docs/应用对接.md §9 my-models、产品需求 §6.4）** 在上一轮 PRD 定稿时已写入，本轮实现与契约一致。
+- **修改（backend/frontend README）：** 模型相关 API 摘要与页面能力段同步三级分发口径。
+- **验证：** SQLite 隔离测试 `test_model_distribution`（9 用例）+ `test_walkthrough_fixes` + `test_model_catalog_updates` 共 27/27 通过（api 容器）；PG 随机隔离全量套件 **377/377 通过**（368 基线 + 9 新增，整链迁移含 0009）；全模块导入冒烟 NONE；`vue-tsc -b` 通过；Vite 生产构建 3863 modules EXIT=0。**浏览器目验未运行**（建议路径：admin 登录 → 模型治理建模型 → 下发租户 → 租户管理员在工作台「模型」Tab 下发应用 → 业务端 my-models 拉清单）。 DeerFlow 侧对接（my-models 拉取 + key 动态映射）按契约备忘未实施。
+
+## 2026-11-16 模型三级分发 PRD 定稿：平台→租户→应用下发与 my-models 契约（纯文档；无代码改动，验证未运行）
+
+用户提出「不同应用看到的模型不一致：超管看全部平台模型并下发租户、租户下发应用、应用只见下发结果」，要求结合 DeerFlow 用法与成熟产品对标后规划。已联网对标阿里云百炼（空间模型授权+限流，仅超管可配）、火山方舟（项目×API Key 绑定模型）、Azure OpenAI（订阅配额池×deployment）、LiteLLM（目录→Access Group→Team→Virtual Key 白名单）、Dify（工作区 BYOK/credits）五种模式后定稿。
+
+- **凭证语义（用户拍板）：** 目录授权在平台、凭证业务自持——IAM 管目录/授权/账本，凭证只存外部引用不回读，真实供应商凭证由业务应用自持（对标 Dify BYOK 简化模式）；未来建网关可演进平台代管，下发关系与账本复用。
+- **分发模型：** 应用可见 = 平台目录 ∩ 租户下发 ∩ 应用下发（唯一口径）；规划 `ModelTenantGrant` / `ModelApplicationGrant` 下发关系（实现待排期）；回收=软失效；新增权限节点 `button.models.distribute`（min_scope=tenant，L2 只读）；租户/应用级限流覆盖为规划项，P0 沿用目录级 RPM/TPM。
+- **页面落点：** 模型治理页（超管）改为平台目录+下发到租户；应用工作台应用节点新增「模型」Tab（租户收到清单只读 + L3 下发/回收）。
+- **DeerFlow 对接（仅契约设计，本阶段不联调）：** 复用其既有 iam_authorization / iam_model_usage 钩子，`GET /api/v1/authorization/my-models?client_id=` 替代静态 config.yaml 过滤，本地模型名 ↔ IAM 目录 `key` 动态映射；factory 与前端主链路不动。
+- **修改（docs/产品需求.md）：** §2.1 范围、§3.2 节点下限示例、§4.1 工作台 Tab、§6.4 重写为「模型目录与分发」、§7 页面状态、§8 数据模型树、§11 新增验收标准 15。
+- **修改（docs/应用对接.md）：** 新增 §9「模型清单与调用（my-models）」，原 §9/§10 顺延为 §10/§11。
+- **修改（ai/04-模块导航/模型用量/导航.md）：** 注意事项补充三级分发规划态说明（码未落地，本模块结构不变）。
+- **验证：** 纯文档规划，无代码改动，运行时验证未运行（不适用）；后续实现涉及新表迁移 → 走受保护备份 + 明确授权流程。
+
 ## 2026-11-16 AGENTS.md 增加 ai/ 导航同步维护规则（纯文档；无代码改动，验证未运行）
 
 用户询问「新增功能或变动会不会更新 ai/ 导航对应内容」：仅靠 `ai/README.md` 内部维护规则无法保证 AI 每次都看到并执行，需写入每次对话强制注入的工作区规则。

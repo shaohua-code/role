@@ -14,6 +14,7 @@ from app.models.identity import TenantMembership, User
 from app.schemas.access_control import AuthorizationCheck, AuthorizationCheckBatch
 from app.services.authorization import AuthorizationEvaluator
 from app.services.effective_roles import EffectiveRoleResolver
+from app.services.model_distribution import ModelDistribution
 
 router = APIRouter(prefix="/authorization", tags=["授权判定"])
 
@@ -48,6 +49,51 @@ def check_access_batch(body: AuthorizationCheckBatch, user: User = Depends(curre
         )
         results[code] = _public_decision(AuthorizationEvaluator.evaluate_access(check, user, db)["decision"], user)
     return {"results": results}
+
+
+@router.get("/my-models")
+def list_my_models(client_id: str, user: User = Depends(current_user), db: Session = Depends(get_db_session)) -> list[dict]:
+    """业务应用按登录身份拉取本应用可见模型（产品需求 §6.4 三级可见性唯一口径）。
+
+    返回 = 平台目录 active ∩ 租户下发 active ∩ 应用下发 active。下发关系即授权：
+    清单未返回的模型不得调用；用量上报的 model_id 必须来自本清单。
+    要求调用者是应用所属租户的活跃成员；凭证与端点永不回读（业务自持调用凭证）。
+    P1 收口：目标应用以服务端验签的 OIDC 上下文（_oidc_application_id）为准，
+    不信任客户端传入的 client_id——同租户持应用 A token 查应用 B 一律拒绝；
+    管理会话无已定义的应用可见性边界，fail-closed 拒绝（另行定义前不开放）。
+    """
+    if getattr(user, "_auth_protocol", None) != "oidc" or not getattr(user, "_oidc_application_id", None):
+        # 本端点只服务业务应用 OIDC 会话；管理台用模型治理 / 应用工作台页查模型。
+        raise HTTPException(403, "模型清单仅向业务应用 OIDC 会话开放")
+    application = db.get(Application, user._oidc_application_id)
+    if not application or application.status != "active":
+        raise HTTPException(404, "应用不存在")
+    if client_id != application.client_id:
+        # client_id 只作一致性校验：与已验证应用不符即拒绝，杜绝跨应用读取清单。
+        raise HTTPException(403, "client_id 与登录应用不一致")
+    membership_exists = db.scalar(select(TenantMembership.id).where(
+        TenantMembership.user_id == user.id,
+        TenantMembership.tenant_id == application.tenant_id,
+        TenantMembership.status == "active",
+    ).limit(1))
+    if not membership_exists:
+        # 非本租户活跃成员不暴露任何目录信息（与跨租户不可区分，防枚举）。
+        return []
+    models = ModelDistribution.list_models_for_application(db, application)
+    return [{
+        "id": str(model.id),
+        "key": model.key,
+        "provider": model.provider,
+        "model_name": model.model_name,
+        "display_name": model.display_name,
+        "capabilities": model.capabilities,
+        "rpm_limit": model.rpm_limit,
+        "tpm_limit": model.tpm_limit,
+        "input_cost_per_million": float(model.input_cost_per_million)
+        if model.input_cost_per_million is not None else None,
+        "output_cost_per_million": float(model.output_cost_per_million)
+        if model.output_cost_per_million is not None else None,
+    } for model in models]
 
 
 @router.get("/my-resources")

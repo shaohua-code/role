@@ -11,13 +11,15 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.admin.audit import list_audit, search_audit
 from app.db.base import Base
-from app.models.identity import AuditEvent
+from app.models.identity import AuditEvent, User
 
 
 class AuditQueryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite://")
         AuditEvent.__table__.create(self.engine)
+        # 审计查询会批量关联操作者用户（展示名/邮箱）；夹具保持空 users 表（关联为空 → 显示名 None）。
+        User.__table__.create(self.engine)
         self.db = Session(self.engine)
         self.actor_id = UUID("00000000-0000-0000-0000-000000000001")
         self.other_actor_id = UUID("00000000-0000-0000-0000-000000000002")
@@ -96,7 +98,7 @@ class AuditQueryTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.db.close()
-        Base.metadata.drop_all(self.engine, tables=[AuditEvent.__table__])
+        Base.metadata.drop_all(self.engine, tables=[AuditEvent.__table__, User.__table__])
         self.engine.dispose()
 
     def query(self, **overrides):

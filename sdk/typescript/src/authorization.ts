@@ -16,6 +16,20 @@ export interface AuthorizationDecision {
   data_scope?: { mode: 'any_of'; constraints: DataScopeConstraint[] }
 }
 
+/** 本应用可见模型（三级交集）；清单未返回的模型不得调用。 */
+export interface VisibleModel {
+  id: string
+  key: string
+  displayName: string
+  provider: string
+  modelName: string
+  capabilities: string[]
+  rpmLimit?: number | null
+  tpmLimit?: number | null
+  inputCostPerMillion?: number | null
+  outputCostPerMillion?: number | null
+}
+
 export interface AuthorizationRequest {
   /** tenant_id must come from a locally verified identity token/session. */
   tenantId: string
@@ -82,6 +96,7 @@ export class AuthorizationServiceError extends Error {
 export class IamAuthorizationClient {
   private readonly endpoint: string
   private readonly batchEndpoint: string
+  private readonly modelsEndpoint: string
   private readonly applicationId?: string
   private readonly timeoutMilliseconds: number
 
@@ -93,8 +108,63 @@ export class IamAuthorizationClient {
     const base = apiBaseUrl.replace(/\/+$/, '')
     this.endpoint = `${base}/api/v1/authorization/check`
     this.batchEndpoint = `${base}/api/v1/authorization/check-batch`
+    this.modelsEndpoint = `${base}/api/v1/authorization/my-models`
     this.applicationId = applicationId
     this.timeoutMilliseconds = timeoutMilliseconds
+  }
+
+  /** 返回本应用可见模型（三级交集）；fail closed——失败抛错，绝不伪装成空清单放行。 */
+  async listMyModels(accessToken: string, clientId: string): Promise<VisibleModel[]> {
+    if (!accessToken) throw new Error('An end-user OIDC access token is required')
+    if (!clientId || !clientId.trim()) throw new Error('A clientId is required to resolve the application context')
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMilliseconds)
+    let payload: unknown
+    try {
+      const response = await fetch(`${this.modelsEndpoint}?client_id=${encodeURIComponent(clientId.trim())}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: controller.signal,
+      })
+      if (!response.ok) throw new AuthorizationServiceError(response.status, 'IAM rejected the my-models request')
+      try {
+        payload = await response.json()
+      } catch {
+        if (controller.signal.aborted) {
+          throw new AuthorizationServiceError(503, 'IAM authorization service timed out')
+        }
+        throw new AuthorizationServiceError(502, 'IAM returned invalid JSON')
+      }
+    } catch (error) {
+      if (error instanceof AuthorizationServiceError) throw error
+      if (controller.signal.aborted) {
+        throw new AuthorizationServiceError(503, 'IAM authorization service timed out')
+      }
+      throw new AuthorizationServiceError(503, 'IAM authorization service is unavailable')
+    } finally {
+      clearTimeout(timeout)
+    }
+    if (!Array.isArray(payload)) {
+      throw new AuthorizationServiceError(502, 'IAM returned an invalid my-models payload')
+    }
+    return payload.map((item): VisibleModel => {
+      const row = item as Record<string, unknown>
+      if (typeof row.id !== 'string' || typeof row.key !== 'string' || typeof row.display_name !== 'string') {
+        throw new AuthorizationServiceError(502, 'IAM returned an invalid my-models entry')
+      }
+      return {
+        id: row.id,
+        key: row.key,
+        displayName: row.display_name,
+        provider: typeof row.provider === 'string' ? row.provider : '',
+        modelName: typeof row.model_name === 'string' ? row.model_name : '',
+        capabilities: Array.isArray(row.capabilities) ? row.capabilities.map(String) : [],
+        rpmLimit: typeof row.rpm_limit === 'number' ? row.rpm_limit : null,
+        tpmLimit: typeof row.tpm_limit === 'number' ? row.tpm_limit : null,
+        inputCostPerMillion: typeof row.input_cost_per_million === 'number' ? row.input_cost_per_million : null,
+        outputCostPerMillion: typeof row.output_cost_per_million === 'number' ? row.output_cost_per_million : null,
+      }
+    })
   }
 
   async check(accessToken: string, request: AuthorizationRequest): Promise<AuthorizationDecision> {

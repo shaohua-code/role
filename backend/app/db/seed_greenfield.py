@@ -19,12 +19,11 @@ from app.core.security import hash_password
 from app.db.session import get_engine
 from app.models.authorization import Permission, Role, RolePermission
 from app.models.identity import Tenant, TenantMembership, User
-from app.services.permission_kinds import PermissionCatalog
+from app.services.permission_kinds import ROLE_SCOPE_SUPER, PermissionCatalog
 from app.services.role_provisioning import (
     L1_ROLE_KEY,
     L4_ROLE_KEY,
     LEGACY_REVOKED_NODE_CODES,
-    ROLE_SCOPE_SUPER,
     RoleProvisioning,
 )
 
@@ -155,7 +154,8 @@ def seed_demo_tenant(db: Session, *, with_demo_application: bool = False) -> Non
 def run_seed(*, demo_tenant: bool = False, demo_application: bool = False) -> None:
     """绿场种子主流程；全部步骤幂等，可在任意时刻重跑。"""
     with Session(get_engine()) as db:
-        # 阶段一：幂等写入 27 个五域接口码 + 四类树（菜单/按钮/接口/数据）管理面目录（业务码不在此种子）。
+        # 阶段一：幂等写入菜单/按钮节点管理面目录（menu.* / button.*，见 services/permission_kinds.py；
+        # 业务码不在此种子）。旧五域 27 接口码目录已下线，仅存于历史记录。
         created = seed_permissions(db)
         print(f"权限目录：新增 {created} 条管理面码")
         # 阶段二：创建专用平台租户，并预置 L1 超管角色（授予全部管理面码）。

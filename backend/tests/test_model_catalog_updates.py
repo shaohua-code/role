@@ -29,6 +29,24 @@ class ModelCatalogUpdateContractTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ModelCatalogUpdate(key="replacement-model")
 
+    def test_capabilities_must_use_standard_vocabulary(self) -> None:
+        """能力标签强制标准集：大小写/空白规范化、去重保序、未知标签拒绝。"""
+        from app.schemas.models import MODEL_CAPABILITIES, ModelCatalogCreate
+
+        normalized = ModelCatalogCreate(
+            key="cap-test", provider="p", model_name="m", display_name="d",
+            capabilities=[" Chat ", "TOOL_CALLS", "chat"],
+        )
+        self.assertEqual(normalized.capabilities, ["chat", "tool_calls"])
+        with self.assertRaises(ValidationError) as unknown:
+            ModelCatalogUpdate(capabilities=["telepathy"])
+        self.assertIn("能力标签必须是标准集", str(unknown.exception))
+        # 显式提交 capabilities=null 沿用既有契约被拒（防误清空）；不提交该字段即保持不变。
+        with self.assertRaises(ValidationError):
+            ModelCatalogUpdate(capabilities=None)
+        self.assertEqual(ModelCatalogUpdate(rpm_limit=1).capabilities, None)
+        self.assertIn("thinking_output", MODEL_CAPABILITIES)
+
     def test_patch_requires_at_least_one_field(self) -> None:
         with self.assertRaises(ValidationError):
             ModelCatalogUpdate()
@@ -130,7 +148,9 @@ class ModelCatalogUpdateIntegrationTests(unittest.TestCase):
         )
 
         self.db.refresh(self.model)
-        audit_event = self.db.scalar(select(AuditEvent).where(AuditEvent.action == "model.update"))
+        # 审计取最新一条：共享开发库可能已有历史 model.update 审计（如目录维护操作），不能假设首条即本测试写入。
+        audit_event = self.db.scalar(select(AuditEvent).where(
+            AuditEvent.action == "model.update").order_by(AuditEvent.created_at.desc()).limit(1))
         self.assertEqual(self.model.provider, "updated-provider")
         self.assertEqual(self.model.display_name, "Updated Model")
         self.assertIsNone(self.model.input_cost_per_million)

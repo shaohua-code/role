@@ -86,7 +86,8 @@ class ApplicationAdminAccessTests(unittest.TestCase):
     @patch("app.services.rbac_guards.PermissionEnforcer.user_has_management_code", return_value=False)
     @patch("app.services.rbac_guards.PermissionEnforcer.scope_at_least", return_value=True)
     @patch("app.services.admin_authorization.is_platform_admin_user", return_value=False)
-    def test_tenant_scope_manages_all_apps_in_tenant(self, _is_platform_admin, _scope, code) -> None:
+    @patch("app.services.admin_authorization.AdminAccessGuard.has_active_tenant_membership", return_value=True)
+    def test_tenant_scope_manages_all_apps_in_tenant(self, _membership, _is_platform_admin, _scope, code) -> None:
         # 租户级读写全部放行；密钥轮换仍需持 button.apps.secret 节点。
         self.assertTrue(AdminAccessGuard.has_application_admin_access(
             self.actor, self.tenant_id, self.db, manage=True, application_id=self.application_id,
@@ -97,10 +98,30 @@ class ApplicationAdminAccessTests(unittest.TestCase):
         ))
         self.assertEqual(code.call_args.args[2], APPLICATION_SECRET_ROTATE)
 
+    @patch("app.services.rbac_guards.PermissionEnforcer.user_has_management_code", return_value=False)
+    @patch("app.services.rbac_guards.PermissionEnforcer.scope_at_least", return_value=True)
+    @patch("app.services.admin_authorization.is_platform_admin_user", return_value=False)
+    @patch("app.services.admin_authorization.AdminAccessGuard.has_active_tenant_membership", return_value=False)
+    def test_cross_tenant_scope_denied_without_target_membership(
+            self, _membership, _is_platform_admin, _scope, code) -> None:
+        # P1 收口：范围秩跨所有成员关系取最高，租户 A 管理员对无成员关系的租户 B
+        # 必须一律拒绝（含读、写与创建入口），不能凭范围秩放行。
+        self.assertFalse(AdminAccessGuard.has_application_admin_access(
+            self.actor, self.tenant_id, self.db, manage=True, application_id=self.application_id,
+        ))
+        self.assertFalse(AdminAccessGuard.has_application_admin_access(
+            self.actor, self.tenant_id, self.db, application_id=self.application_id,
+        ))
+        self.assertFalse(AdminAccessGuard.has_application_admin_access(
+            self.actor, self.tenant_id, self.db, manage=True,
+        ))
+        code.assert_not_called()
+
     @patch("app.services.rbac_guards.PermissionEnforcer.user_has_management_code", return_value=True)
     @patch("app.services.rbac_guards.PermissionEnforcer.scope_at_least", return_value=False)
     @patch("app.services.admin_authorization.is_platform_admin_user", return_value=False)
-    def test_app_scope_requires_nodes(self, _is_platform_admin, _scope, code) -> None:
+    @patch("app.services.admin_authorization.AdminAccessGuard.has_active_tenant_membership", return_value=True)
+    def test_app_scope_requires_nodes(self, _membership, _is_platform_admin, _scope, code) -> None:
         # 应用级：读/写/轮换分别认对应按钮/菜单节点。
         self.assertTrue(AdminAccessGuard.has_application_admin_access(
             self.actor, self.tenant_id, self.db, application_id=self.application_id,
@@ -114,7 +135,8 @@ class ApplicationAdminAccessTests(unittest.TestCase):
     @patch("app.services.rbac_guards.PermissionEnforcer.user_has_management_code", return_value=True)
     @patch("app.services.rbac_guards.PermissionEnforcer.scope_at_least", return_value=False)
     @patch("app.services.admin_authorization.is_platform_admin_user", return_value=False)
-    def test_app_scope_cannot_create(self, _is_platform_admin, _scope, code) -> None:
+    @patch("app.services.admin_authorization.AdminAccessGuard.has_active_tenant_membership", return_value=True)
+    def test_app_scope_cannot_create(self, _membership, _is_platform_admin, _scope, code) -> None:
         # 未钉应用 = 租户级生命周期（创建入口）；应用级不能向上。
         code.assert_not_called()
         self.assertFalse(AdminAccessGuard.has_application_admin_access(self.actor, self.tenant_id, self.db, manage=True))

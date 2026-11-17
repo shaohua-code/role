@@ -13,7 +13,7 @@ from app.models.application import Application
 from app.models.authorization import Permission, Role, RoleBinding, RolePermission
 from app.models.groups import UserGroup, UserGroupMembership, UserGroupRole
 from app.models.identity import Tenant, TenantMembership, User
-from app.models.model_catalog import ModelCatalog
+from app.models.model_catalog import ModelApplicationGrant, ModelCatalog, ModelTenantGrant
 from app.models.organization import RoleDataScope
 
 
@@ -152,11 +152,27 @@ class PermissionImpactService:
             if application.status != "active" and permission_code not in APPLICATION_ADMIN_PERMISSION_CODES:
                 return False
         if permission_code == "model.invoke":
-            active_model_exists = db.scalar(select(ModelCatalog.id).where(
-                ModelCatalog.tenant_id == role.tenant_id,
-                ModelCatalog.status == "active",
-            ).limit(1))
-            if not active_model_exists:
+            # 模型判权唯一口径（产品需求 §6.4）：三级下发关系即授权，与 evaluate_access
+            # 同源。不再按目录行 tenant_id == role.tenant_id 判定（目录行统一归属平台租户）。
+            # 估算口径：存在活动平台模型 + 角色租户活动下发；应用级角色再要求
+            # 其钉住的应用存在活动应用下发。
+            statement = (
+                select(ModelCatalog.id)
+                .join(ModelTenantGrant, ModelTenantGrant.model_id == ModelCatalog.id)
+                .where(
+                    ModelCatalog.status == "active",
+                    ModelTenantGrant.tenant_id == role.tenant_id,
+                    ModelTenantGrant.status == "active",
+                )
+            )
+            if role.application_id is not None:
+                statement = statement.join(
+                    ModelApplicationGrant, ModelApplicationGrant.model_id == ModelCatalog.id,
+                ).where(
+                    ModelApplicationGrant.application_id == role.application_id,
+                    ModelApplicationGrant.status == "active",
+                )
+            if db.scalar(statement.limit(1)) is None:
                 return False
         return True
 
@@ -273,7 +289,7 @@ class PermissionImpactService:
             "analysis_note": (
                 "成员按活动租户成员去重，包含直接绑定及活动用户组继承。逐权限估算会扣除适用范围内其它活动角色的通用授权；"
                 "资源实例授权不视为覆盖所有资源，且未逐个模拟业务资源和数据范围策略，因此人数表示潜在覆盖，不是完整净差异。"
-                "停用角色、停用权限、停用应用中的普通权限及当前没有活动模型的 model.invoke 不计入在线影响。"
+                "停用角色、停用权限、停用应用中的普通权限及当前没有三级下发关系的 model.invoke 不计入在线影响。"
             ),
         }
 

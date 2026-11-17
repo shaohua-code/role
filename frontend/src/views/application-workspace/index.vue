@@ -17,6 +17,7 @@ import ApplicationMoreHost from './components/ApplicationMoreHost.vue'
 import RolesTab from './tabs/RolesTab.vue'
 import PermissionsTab from './tabs/PermissionsTab.vue'
 import MenuTab from './tabs/MenuTab.vue'
+import ModelsTab from './tabs/ModelsTab.vue'
 
 interface TenantOption {
   id: string
@@ -142,14 +143,14 @@ let requestSequence = 0
 let hydratedCatalogGeneration = -1
 
 // ===== P397/D4 应用概览计数：各 Tab 加载后上报，以小徽标并入 Tab 标签（不再单设统计条与 Tab 重名） =====
-const tabStats = ref<{ roles: number | null, permissions: number | null, resources: number | null }>({
-  roles: null, permissions: null, resources: null,
+const tabStats = ref<{ roles: number | null, permissions: number | null, resources: number | null, models: number | null }>({
+  roles: null, permissions: null, resources: null, models: null,
 })
 
 // R3：Tab 激活键受控——页头配权路径条要能直切 Tab，徽章激活态也需要读取当前键
-const activeTab = ref<'roles' | 'permissions' | 'menus'>('roles')
+const activeTab = ref<'roles' | 'permissions' | 'menus' | 'models'>('roles')
 
-function onTabStats(key: 'roles' | 'permissions' | 'resources', count: number): void {
+function onTabStats(key: 'roles' | 'permissions' | 'resources' | 'models', count: number): void {
   tabStats.value[key] = count
 }
 
@@ -255,7 +256,7 @@ function onSelect(application: AppTreeApplication): void {
 
 // 切换应用后清空概览计数，等各 Tab 重新上报
 watch(selectedId, () => {
-  tabStats.value = { roles: null, permissions: null, resources: null }
+  tabStats.value = { roles: null, permissions: null, resources: null, models: null }
 })
 
 // 停留本页时路由 query 深链变化（如再次从租户详情跳转）→ 跟随预选
@@ -456,6 +457,26 @@ watch(() => [props.shellCatalogGeneration, props.shellApplications?.length] as c
                 :api-prefix="apiPrefix"
                 @changed="emit('changed')"
                 @stats="count => onTabStats('resources', count)"
+              />
+            </a-tab-pane>
+            <!-- 模型三级分发第三级：租户收到的平台模型 → 下发给本应用（L3 可写，L2 只读） -->
+            <a-tab-pane key="models">
+              <template #tab>
+                <span class="inline-flex items-center gap-1.5">
+                  模型
+                  <span v-if="tabStats.models != null"
+                    class="inline-flex min-w-5 justify-center rounded-full px-1.5 font-mono text-[11px] leading-4 tabular-nums"
+                    :class="activeTab === 'models'
+                      ? 'bg-[var(--color-text-primary)] text-[var(--color-bg-elevated)]'
+                      : 'bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)]'"
+                  >{{ tabStats.models }}</span>
+                </span>
+              </template>
+              <ModelsTab
+                :active="active"
+                :application="selectedApplication"
+                @changed="emit('changed')"
+                @stats="count => onTabStats('models', count)"
               />
             </a-tab-pane>
           </a-tabs>

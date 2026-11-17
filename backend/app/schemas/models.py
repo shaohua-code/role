@@ -3,13 +3,38 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# 模型能力标准标签（前后端共用口径；网关与业务端按此解释模型特性）。
+# chat=对话；reasoning=支持深度思考（思考模式）；thinking_output=返回可见思考过程；
+# tool_calls=工具调用（Function Calling / Agent）；json_output=JSON 结构化输出；
+# vision=视觉理解（图片输入）；embedding=向量嵌入。
+MODEL_CAPABILITIES: tuple[str, ...] = (
+    "chat",
+    "reasoning",
+    "thinking_output",
+    "tool_calls",
+    "json_output",
+    "vision",
+    "embedding",
+)
+
+
+def _normalize_capabilities(value: list[str] | None) -> list[str] | None:
+    """能力标签统一小写去空白、去重保序，并强制标准集；防止自由文本导致下游无法解释。"""
+    if value is None:
+        return None
+    normalized = [item.strip().lower() for item in value if item and item.strip()]
+    unknown = sorted(set(normalized) - set(MODEL_CAPABILITIES))
+    if unknown:
+        raise ValueError(
+            f"能力标签必须是标准集：{'、'.join(MODEL_CAPABILITIES)}；未知标签：{'、'.join(unknown)}")
+    return list(dict.fromkeys(normalized))
 
 
 class ModelCatalogCreate(BaseModel):
-    """登记模型条目：credential_ref 只存外部密钥管理器引用，不接收密钥明文。"""
+    """登记平台模型条目：目录行统一归属平台租户；credential_ref 只存外部密钥管理器引用。"""
 
-    tenant_id: UUID
     key: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     provider: str = Field(min_length=1, max_length=100)
     model_name: str = Field(min_length=1, max_length=160)
@@ -21,6 +46,12 @@ class ModelCatalogCreate(BaseModel):
     tpm_limit: int | None = Field(default=None, ge=1)
     input_cost_per_million: float | None = Field(default=None, ge=0)
     output_cost_per_million: float | None = Field(default=None, ge=0)
+
+    @field_validator("capabilities")
+    @classmethod
+    def validate_capabilities(cls, value: list[str]) -> list[str]:
+        """创建时能力标签必须落在标准集内（大小写/空白规范化后校验）。"""
+        return _normalize_capabilities(value) or []
 
 
 class ModelCatalogUpdate(BaseModel):
@@ -39,6 +70,12 @@ class ModelCatalogUpdate(BaseModel):
     input_cost_per_million: float | None = Field(default=None, ge=0)
     output_cost_per_million: float | None = Field(default=None, ge=0)
 
+    @field_validator("capabilities")
+    @classmethod
+    def validate_capabilities(cls, value: list[str] | None) -> list[str] | None:
+        """未提交（None）保持不变；显式提交时同样强制标准集。"""
+        return _normalize_capabilities(value)
+
     @model_validator(mode="after")
     def require_patch_fields(self):
         if not self.model_fields_set:
@@ -56,6 +93,18 @@ class ModelCatalogStatusUpdate(BaseModel):
 
     expected_status: Literal["active", "disabled"]
     status: Literal["active", "disabled"]
+
+
+class ModelTenantGrantCreate(BaseModel):
+    """平台模型下发给租户；一次一个租户，幂等可重放。"""
+
+    tenant_id: UUID
+
+
+class ModelApplicationGrantCreate(BaseModel):
+    """租户把已收到的平台模型下发给本应用；一次一个模型，幂等可重放。"""
+
+    model_id: UUID
 
 
 class ModelUsageReport(BaseModel):

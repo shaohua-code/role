@@ -87,6 +87,20 @@ class AdminAccessGuard:
             raise HTTPException(status_code=403, detail=f"缺少当前租户组织{action}权限")
 
     @staticmethod
+    def has_active_tenant_membership(actor: User, tenant_id: UUID, db: Session) -> bool:
+        """操作者是否在目标租户持有活动成员关系（跨租户访问的成员关系闸门）。
+
+        `scope_at_least` 取操作者跨所有成员关系的最高角色范围，不能证明其属于
+        本次请求的目标租户（产品需求 §3.2：租户级数据边界以操作者的活动租户
+        成员关系为准）；按 ID 访问的单项端点必须先过这道闸门。
+        """
+        return db.scalar(select(TenantMembership.id).where(
+            TenantMembership.user_id == actor.id,
+            TenantMembership.tenant_id == tenant_id,
+            TenantMembership.status == "active",
+        ).limit(1)) is not None
+
+    @staticmethod
     def has_application_admin_access(
         actor: User,
         tenant_id: UUID,
@@ -102,12 +116,18 @@ class AdminAccessGuard:
         判权按菜单/按钮节点：读 menu.application_workspace、写 button.apps.manage、
         密钥轮换 button.apps.secret；任命应用管理员的范围闸门在调用方收口。
         P404：应用级不能借「租户内任一应用管理员」走创建/删除。rotate_secret / manage 保留签名。
+        P1 收口：非超管必须持有目标租户的活动成员关系，租户 A 的管理员
+        不能凭跨成员关系的最高范围秩操作租户 B 的应用。
         """
         from app.services.rbac_guards import PermissionEnforcer
         from app.services.permission_kinds import ROLE_SCOPE_TENANT
 
         if is_platform_admin_user(actor, db):
             return True
+        # 目标租户成员关系闸门：应用级分支按 tenant_id 过滤成员身份本就安全，
+        # 这里统一前置拦截，堵住租户级范围分支「有范围秩即放行」的跨租户缺口。
+        if not AdminAccessGuard.has_active_tenant_membership(actor, tenant_id, db):
+            return False
         # 范围闸门：租户级及以上（超管/租户管理员）管本租户全部应用；
         # 密钥轮换仍需持 button.apps.secret 节点，不能被普通管理权隐式继承。
         if PermissionEnforcer.scope_at_least(actor, db, ROLE_SCOPE_TENANT):

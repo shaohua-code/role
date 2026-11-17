@@ -6,10 +6,10 @@
 import hmac
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from app.models.application import Application
 from app.models.identity import Tenant, TenantMembership, User
 from app.models.model_catalog import ModelCatalog, ModelUsageEvent, ModelUsageReservation
 from app.schemas.models import ModelUsageReport, ModelUsageReservationRequest, ModelUsageSettlementRequest
+from app.services.model_distribution import ModelDistribution
 
 router = APIRouter(prefix="/internal/model-usage", tags=["模型网关内部接口"])
 
@@ -43,12 +44,15 @@ def _require_gateway_key(gateway_key: str | None) -> None:
 
 
 def _validate_reservation_subject(body: ModelUsageReservationRequest, db: Session) -> ModelCatalog:
-    """从数据库确认网关传来的主体关系，避免把任意用户 ID 计入其它租户。"""
+    """从数据库确认网关传来的主体关系，避免把任意用户 ID 计入其它租户。
+
+    模型三级分发后目录行归属平台租户：调用合法性改为「模型 active + 租户下发 active
+    + 应用下发 active」（与 my-models 清单同一口径），不再按目录行 tenant_id 匹配。
+    """
     tenant_active = db.scalar(select(func.count()).select_from(Tenant).where(
         Tenant.id == body.tenant_id, Tenant.status == "active"))
     model = db.scalar(select(ModelCatalog).where(
-        ModelCatalog.id == body.model_id, ModelCatalog.tenant_id == body.tenant_id,
-        ModelCatalog.status == "active"))
+        ModelCatalog.id == body.model_id, ModelCatalog.status == "active"))
     application_active = db.scalar(select(func.count()).select_from(Application).where(
         Application.id == body.application_id, Application.tenant_id == body.tenant_id,
         Application.status == "active"))
@@ -56,7 +60,12 @@ def _validate_reservation_subject(body: ModelUsageReservationRequest, db: Sessio
         User, User.id == TenantMembership.user_id).where(
             TenantMembership.user_id == body.user_id, TenantMembership.tenant_id == body.tenant_id,
             TenantMembership.status == "active", User.status == "active"))
-    if not all((tenant_active, model, application_active, membership_active)):
+    tenant_grant_active = model is not None and ModelDistribution.tenant_grant_is_active(
+        db, body.model_id, body.tenant_id)
+    application_grant_active = application_active and ModelDistribution.application_grant_is_active(
+        db, body.model_id, body.application_id)
+    if not all((tenant_active, model, application_active, membership_active,
+                tenant_grant_active, application_grant_active)):
         raise HTTPException(status_code=422, detail="预留关联的租户、模型、应用或活动用户关系无效")
     return model
 
@@ -69,6 +78,12 @@ def _reservation_matches(row: ModelUsageReservation, body: ModelUsageReservation
             and row.reserved_output_tokens == body.reserved_output_tokens)
 
 
+def _report_matches_reservation(row: ModelUsageReservation, body: ModelUsageReport) -> bool:
+    """上报请求与既有预留的调用主体（五元组）一致性。"""
+    return (row.tenant_id == body.tenant_id and row.model_id == body.model_id
+            and row.application_id == body.application_id and row.user_id == body.user_id)
+
+
 @router.post("/reservations")
 def reserve_usage(
     body: ModelUsageReservationRequest,
@@ -77,23 +92,13 @@ def reserve_usage(
 ) -> dict:
     """调用 Provider 前原子预留限额；租户和模型行锁串行化同一模型的配额判定。
 
-    网关必须先用用户 access token 调用 /authorization/check 并确认 model.invoke，
-    再申请配额。限额未配置或功能开关关闭时返回不强制的明确结果，不会拒绝调用。
+    网关必须先用用户 access token 调用 /authorization/check 并确认 model.invoke
+    （按三级下发关系判定），再申请配额。限额未配置或功能开关关闭时返回不强制的
+    明确结果，不会拒绝调用。
     """
     _require_gateway_key(gateway_key)
-    model = _validate_reservation_subject(body, db)
-    settings = get_settings()
-
-    enforced = settings.model_quota_enforcement_enabled and (
-        model.rpm_limit is not None or model.tpm_limit is not None)
-    # 即使未开启限额拦截，也先持久化预留，避免 Provider 已执行但业务系统崩溃后没有账目可核。
-    if enforced:
-        model = db.scalar(select(ModelCatalog).where(ModelCatalog.id == body.model_id).with_for_update())
-        if not model or model.status != "active":
-            db.rollback()
-            raise HTTPException(status_code=422, detail="模型不可用")
-
-    # 同一模型行锁内处理相同 request_id 的重试；不同载荷绝不复用预留。
+    # 幂等优先：同 request_id 的重试必须返回原判定，即使模型此后被回收/停用——
+    # 三级下发校验只对全新请求生效，否则网关重试会因校验变化陷入 422 死循环。
     existing = db.scalar(select(ModelUsageReservation).where(
         ModelUsageReservation.request_id == body.request_id).with_for_update())
     if existing:
@@ -107,12 +112,15 @@ def reserve_usage(
         if existing.expires_at <= datetime.now(timezone.utc):
             db.rollback()
             raise HTTPException(status_code=409, detail="额度预留已过期；不得复用该请求 ID")
-        result = {"allowed": True, "duplicate": True, "enforced": enforced,
+        # 重试响应的 enforced 与首次判定同口径：按目录限速与服务端开关现值计算。
+        retry_model = db.get(ModelCatalog, body.model_id)
+        retry_settings = get_settings()
+        retry_enforced = bool(retry_settings.model_quota_enforcement_enabled) and retry_model is not None and (
+            retry_model.rpm_limit is not None or retry_model.tpm_limit is not None)
+        result = {"allowed": True, "duplicate": True, "enforced": retry_enforced,
                   "reservation_required": True, "expires_at": existing.expires_at}
         db.rollback()
         return result
-
-    # 已有用量账目说明该请求已经到达结算阶段，不能再以相同 ID 发起 Provider 调用。
     completed = db.scalar(select(ModelUsageEvent).where(ModelUsageEvent.request_id == body.request_id))
     if completed:
         same_subject = (completed.tenant_id == body.tenant_id and completed.model_id == body.model_id
@@ -121,6 +129,17 @@ def reserve_usage(
         if not same_subject:
             raise HTTPException(status_code=409, detail="网关请求 ID 已用于不同用量数据")
         return {"allowed": False, "already_settled": True, "reservation_required": False}
+
+    model = _validate_reservation_subject(body, db)
+    settings = get_settings()
+
+    enforced = settings.model_quota_enforcement_enabled and (
+        model.rpm_limit is not None or model.tpm_limit is not None)
+    if enforced:
+        model = db.scalar(select(ModelCatalog).where(ModelCatalog.id == body.model_id).with_for_update())
+        if not model or model.status != "active":
+            db.rollback()
+            raise HTTPException(status_code=422, detail="模型不可用")
 
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=60)
@@ -293,39 +312,71 @@ def report_usage(
     """
     _require_gateway_key(gateway_key)
 
-    tenant = db.scalar(select(Tenant).where(Tenant.id == body.tenant_id, Tenant.status == "active"))
-    model = db.scalar(select(ModelCatalog).where(ModelCatalog.id == body.model_id,
-                                                  ModelCatalog.tenant_id == body.tenant_id,
-                                                  ModelCatalog.status == "active"))
-    app = db.scalar(select(Application).where(Application.id == body.application_id,
-                                               Application.tenant_id == body.tenant_id,
-                                               Application.status == "active"))
-    user = db.scalar(select(User).where(User.id == body.user_id, User.status == "active"))
-    membership = db.scalar(select(TenantMembership.id).where(
-        TenantMembership.user_id == body.user_id, TenantMembership.tenant_id == body.tenant_id,
-        TenantMembership.status == "active",
-    ))
-    if not all((tenant, model, app, user, membership)):
-        raise HTTPException(status_code=422, detail="用量关联的租户、模型、应用或活动用户关系无效")
-
-    # 兼容旧版 report 路径：已有预留时账目写入必须同步完成预留状态。
-    # 与 reserve/settle 共用模型行 -> 预留行的加锁顺序，避免并发重复结算。
+    # 幂等优先：同 request_id 已有账目时直接做载荷比对并幂等返回——历史调用不受此后
+    # 回收/停用影响，网关重试不会因三级校验变化变成 422。
+    existing_event = db.scalar(select(ModelUsageEvent).where(
+        ModelUsageEvent.request_id == body.request_id))
     reservation_candidate = db.scalar(select(ModelUsageReservation).where(
         ModelUsageReservation.request_id == body.request_id))
     reservation = None
-    if reservation_candidate:
-        if (reservation_candidate.tenant_id != body.tenant_id
-                or reservation_candidate.model_id != body.model_id
-                or reservation_candidate.application_id != body.application_id
-                or reservation_candidate.user_id != body.user_id):
+    model: ModelCatalog | None = None
+    if existing_event is not None:
+        if reservation_candidate is not None and not _report_matches_reservation(reservation_candidate, body):
             db.rollback()
             raise HTTPException(status_code=409, detail="网关请求 ID 已用于不同调用主体")
+        same_payload = (
+            existing_event.tenant_id == body.tenant_id and existing_event.model_id == body.model_id
+            and existing_event.application_id == body.application_id
+            and existing_event.user_id == body.user_id
+            and existing_event.input_tokens == body.input_tokens
+            and existing_event.output_tokens == body.output_tokens
+            and existing_event.outcome == body.outcome
+            and existing_event.usage_is_estimated == body.usage_is_estimated
+            and existing_event.latency_ms == body.latency_ms
+        )
+        if not same_payload:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="网关请求 ID 已用于不同用量数据")
+        # 完全相同的重试只返回幂等确认；未结算预留随幂等确认一并结算。
+        if reservation_candidate and reservation_candidate.status == "reserved":
+            reservation = db.scalar(select(ModelUsageReservation).where(
+                ModelUsageReservation.request_id == body.request_id).with_for_update())
+            if reservation and reservation.status == "reserved":
+                reservation.status = "settled"
+                reservation.settled_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"recorded": False, "duplicate": True}
+
+    # 主体校验只对「无凭据的全新请求」强制：已有预留的请求在 reserve 时已通过三级校验
+    # （预留即前置授权凭证），免重复校验——避免回收窗口内的延迟上报丢账。
+    if reservation_candidate is None:
+        tenant = db.scalar(select(Tenant).where(Tenant.id == body.tenant_id, Tenant.status == "active"))
+        # 三级分发口径：模型按「租户下发 + 应用下发均 active」判定可记账，目录行不再按租户归属。
+        model = db.scalar(select(ModelCatalog).where(ModelCatalog.id == body.model_id,
+                                                      ModelCatalog.status == "active"))
+        tenant_grant_active = model is not None and ModelDistribution.tenant_grant_is_active(
+            db, body.model_id, body.tenant_id)
+        application_grant_active = ModelDistribution.application_grant_is_active(
+            db, body.model_id, body.application_id)
+        app = db.scalar(select(Application).where(Application.id == body.application_id,
+                                                   Application.tenant_id == body.tenant_id,
+                                                   Application.status == "active"))
+        user = db.scalar(select(User).where(User.id == body.user_id, User.status == "active"))
+        membership = db.scalar(select(TenantMembership.id).where(
+            TenantMembership.user_id == body.user_id, TenantMembership.tenant_id == body.tenant_id,
+            TenantMembership.status == "active",
+        ))
+        if not all((tenant, model, tenant_grant_active, application_grant_active, app, user, membership)):
+            raise HTTPException(status_code=422, detail="用量关联的租户、模型、应用或活动用户关系无效")
+    else:
+        # 有预留：比对调用主体一致后按预留快照记账（Provider 调用已发生）。
+        if not _report_matches_reservation(reservation_candidate, body):
+            raise HTTPException(status_code=409, detail="网关请求 ID 已用于不同调用主体")
         model = db.scalar(select(ModelCatalog).where(
-            ModelCatalog.id == reservation_candidate.model_id).with_for_update())
+            ModelCatalog.id == body.model_id).with_for_update())
         reservation = db.scalar(select(ModelUsageReservation).where(
             ModelUsageReservation.request_id == body.request_id).with_for_update())
         if not model or not reservation or reservation.status == "released":
-            db.rollback()
             raise HTTPException(status_code=409, detail="该调用预留已被管理员释放，不能补记用量")
 
     event = ModelUsageEvent(

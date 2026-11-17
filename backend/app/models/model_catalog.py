@@ -34,6 +34,44 @@ class ModelCatalog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ModelTenantGrant(Base):
+    """平台模型 → 租户下发关系；回收为软失效（revoked 行保留供恢复与审计）。"""
+    __tablename__ = "model_tenant_grants"
+    __table_args__ = (
+        UniqueConstraint("model_id", "tenant_id", name="uq_model_tenant_grant"),
+        CheckConstraint("status IN ('active', 'revoked')", name="ck_model_tenant_grant_status"),
+        Index("ix_model_tenant_grants_tenant_status", "tenant_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    model_id: Mapped[UUID] = mapped_column(ForeignKey("model_catalog.id", ondelete="CASCADE"), index=True, nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
+    granted_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ModelApplicationGrant(Base):
+    """租户 → 应用下发关系；租户级回收会级联软失效本表对应行。"""
+    __tablename__ = "model_application_grants"
+    __table_args__ = (
+        UniqueConstraint("model_id", "application_id", name="uq_model_application_grant"),
+        CheckConstraint("status IN ('active', 'revoked')", name="ck_model_application_grant_status"),
+        Index("ix_model_application_grants_app_status", "application_id", "status"),
+        Index("ix_model_application_grants_tenant_status", "tenant_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    model_id: Mapped[UUID] = mapped_column(ForeignKey("model_catalog.id", ondelete="CASCADE"), index=True, nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    application_id: Mapped[UUID] = mapped_column(ForeignKey("applications.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
+    granted_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ModelUsageEvent(Base):
     """模型网关完成请求后写入的不可变用量账目；绝不保存 Prompt、响应正文或凭证。"""
     __tablename__ = "model_usage_events"

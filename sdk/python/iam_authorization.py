@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import re
 from typing import Any, Callable, Mapping, Sequence
+import urllib.parse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -46,8 +47,43 @@ class IamAuthorizationClient:
     def __init__(self, api_base_url: str, application_id: str | None = None, timeout_seconds: float = 3.0) -> None:
         self.endpoint = api_base_url.rstrip("/") + "/api/v1/authorization/check"
         self.batch_endpoint = api_base_url.rstrip("/") + "/api/v1/authorization/check-batch"
+        self.models_endpoint = api_base_url.rstrip("/") + "/api/v1/authorization/my-models"
         self.application_id = application_id
         self.timeout_seconds = timeout_seconds
+
+    def list_my_models(self, access_token: str, client_id: str) -> list[dict[str, Any]]:
+        """返回本应用可见模型（平台目录 ∩ 租户下发 ∩ 应用下发，产品需求 §6.4）。
+
+        下发关系即授权：清单未返回的模型不得调用；用量上报的 model_id 必须来自本清单。
+        任何传输或契约错误都抛出（fail closed），绝不把失败伪装成空清单放行。
+        """
+        if not access_token:
+            raise ValueError("An end-user OIDC access token is required")
+        if not isinstance(client_id, str) or not client_id.strip():
+            raise ValueError("A client_id is required to resolve the application context")
+        request = Request(
+            f"{self.models_endpoint}?client_id={urllib.parse.quote(client_id.strip(), safe='')}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                body = json.loads(response.read())
+        except HTTPError as exc:
+            raise AuthorizationServiceError(exc.code, "IAM rejected the my-models request") from None
+        except (URLError, TimeoutError, OSError):
+            raise AuthorizationServiceError(503, "IAM authorization service is unavailable") from None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise AuthorizationServiceError(502, "IAM returned an invalid my-models response") from None
+        if not isinstance(body, list):
+            raise AuthorizationServiceError(502, "IAM returned an invalid my-models payload")
+        for item in body:
+            if (not isinstance(item, dict)
+                    or not isinstance(item.get("id"), str)
+                    or not isinstance(item.get("key"), str)
+                    or not isinstance(item.get("display_name"), str)):
+                raise AuthorizationServiceError(502, "IAM returned an invalid my-models entry")
+        return body
 
     def check(
         self,

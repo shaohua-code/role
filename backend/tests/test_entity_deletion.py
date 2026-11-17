@@ -90,7 +90,8 @@ class EntityDeletionApiTests(unittest.TestCase):
 
     def test_tenant_with_usage_records_is_blocked_with_409(self) -> None:
         app = self._make_application()
-        model = ModelCatalog(tenant_id=self.tenant.id, key="gpt-x", provider="openai",
+        # 目录行统一归属平台租户（§6.4 三级分发）；用量账目记业务租户侧消费。
+        model = ModelCatalog(tenant_id=self.platform_tenant.id, key="gpt-x", provider="openai",
                              model_name="gpt-x", display_name="GPT-X")
         self.db.add(model)
         self.db.commit()
@@ -179,7 +180,7 @@ class EntityDeletionApiTests(unittest.TestCase):
 
     def test_application_with_usage_records_is_blocked_with_409(self) -> None:
         app = self._make_application()
-        model = ModelCatalog(tenant_id=self.tenant.id, key="m-1", provider="openai",
+        model = ModelCatalog(tenant_id=self.platform_tenant.id, key="m-1", provider="openai",
                              model_name="m-1", display_name="M1")
         self.db.add(model)
         self.db.commit()
@@ -196,7 +197,8 @@ class EntityDeletionApiTests(unittest.TestCase):
 
     def test_model_with_usage_records_is_blocked_with_409(self) -> None:
         app = self._make_application()
-        model = ModelCatalog(tenant_id=self.tenant.id, key="m-2", provider="openai",
+        # 删除按 ID 走平台租户归属校验：目录行必须归属 platform 租户才能命中 409 分支。
+        model = ModelCatalog(tenant_id=self.platform_tenant.id, key="m-2", provider="openai",
                              model_name="m-2", display_name="M2")
         self.db.add(model)
         self.db.commit()
@@ -206,7 +208,7 @@ class EntityDeletionApiTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 409)
 
     def test_model_deletion_succeeds_without_usage(self) -> None:
-        model = ModelCatalog(tenant_id=self.tenant.id, key="m-3", provider="openai",
+        model = ModelCatalog(tenant_id=self.platform_tenant.id, key="m-3", provider="openai",
                              model_name="m-3", display_name="M3")
         self.db.add(model)
         self.db.commit()

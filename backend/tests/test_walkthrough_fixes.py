@@ -35,11 +35,10 @@ from app.api.v1.admin.users import (
 from app.api.v1.auth import record_event
 from app.db.base import Base
 from app.models.application import Application
-from app.models.authorization import Permission, Role, RoleBinding, RolePermission
+from app.models.authorization import Permission, Role, RoleBinding
 from app.models.groups import UserGroup
 from app.models.identity import AuditEvent, Tenant, TenantMembership, User, UserInvitation
 from app.models.model_catalog import ModelCatalog
-from app.models.organization import Organization
 from app.schemas.access_control import AuthorizationSimulation
 from app.schemas.auth import AdminPasswordReset, UserStatusUpdate
 from app.schemas.organizations import OrganizationCreate
@@ -218,15 +217,41 @@ class WalkthroughFixTests(unittest.TestCase):
         row = create_organization(body, self.request, self.l3, self.db)
         self.assertEqual(row["key"], "zz-l3-org")
 
+    # ── 审计操作者候选（人性化筛选后端）：同码判权 + 租户边界 + UUID 兜底 ──
+
+    def test_audit_actor_options_scoped_with_uuid_fallback(self) -> None:
+        """候选搜索按 menu.audit 判权；q 模糊匹配名字/邮箱，完整 UUID 退化为按 ID 精确。"""
+        from fastapi import HTTPException
+
+        from app.api.v1.admin.audit import list_audit_actor_options
+
+        # l3 只能搜到本租户成员；他租户用户不在候选中（数据边界与审计事件同口径）。
+        hits = list_audit_actor_options(q=self.member.email, actor=self.l3, db=self.db)
+        self.assertEqual([row["id"] for row in hits], [str(self.member.id)])
+        # UUID 粘贴兜底：完整 UUID 按 ID 精确查找。
+        by_uuid = list_audit_actor_options(q=str(self.member.id), actor=self.l3, db=self.db)
+        self.assertEqual([row["id"] for row in by_uuid], [str(self.member.id)])
+        self.assertEqual(list_audit_actor_options(q=self.outsider.email, actor=self.l3, db=self.db), [])
+        # 无 menu.audit（L4 应用成员）→ 403；候选端点不旁路审计判权。
+        with self.assertRaises(HTTPException) as denied:
+            list_audit_actor_options(q="anything", actor=self.member, db=self.db)
+        self.assertEqual(denied.exception.status_code, 403)
+
     # ── P1-3：可选租户列表的边界收敛 ───────────────────────────────────────
 
     def test_lists_scoped_without_tenant_param(self) -> None:
-        """groups / models / invitations 不传 tenant_id 时只出自身管理租户的数据。"""
-        for list_fn in (list_user_groups, list_models, list_invitations):
+        """groups / invitations 不传 tenant_id 时只出自身管理租户的数据。
+
+        models 列表已升级为三级分发口径（平台目录 ∩ 租户下发）：本租户未收到
+        任何平台下发时返回空，他租户数据同样不可见。
+        """
+        for list_fn in (list_user_groups, list_invitations):
             with self.subTest(endpoint=list_fn.__name__):
                 rows = list_fn(None, self.l3, self.db)
                 tenants = {row["tenant_id"] for row in rows}
                 self.assertNotIn(str(self.other_tenant.id), tenants)
+        # 三级口径：l3 只能看到下发给本租户的平台模型；夹具未下发 → 空列表。
+        self.assertEqual(list_models(self.l3, self.db), [])
 
     def test_lists_unscoped_for_platform_admin(self) -> None:
         """超管不传 tenant_id 仍全域可见。"""

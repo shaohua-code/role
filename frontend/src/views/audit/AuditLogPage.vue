@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 type DayjsLike = { isValid: () => boolean; toISOString: () => string }
 import { api } from '@/api'
 import { ADMIN_API_PREFIX } from '@/api/capabilities'
@@ -7,11 +7,17 @@ import AdminListPage from '@/components/AdminListPage.vue'
 import AdminFilterPanel from '@/components/AdminFilterPanel.vue'
 import AdminFilterField from '@/components/AdminFilterField.vue'
 import AdminMonoValue from '@/components/AdminMonoValue.vue'
+import {
+  AUDIT_ACTION_LABELS, AUDIT_TARGET_TYPE_LABELS,
+  formatAuditAction, formatAuditOutcome, formatAuditTargetType,
+} from '@/utils/auditLabels'
 import { DownOutlined, FilterOutlined, UpOutlined } from '@/plugins/icons'
 
 interface AuditEvent {
   id: string
   actor_user_id: string | null
+  actor_display_name?: string | null
+  actor_email?: string | null
   tenant_id: string | null
   action: string
   target_type: string
@@ -30,12 +36,15 @@ interface AuditSearchResult {
   has_more: boolean
 }
 
+// 人性化筛选①：操作者候选（menu.audit 同码的 actor-options 端点，支持名字/邮箱/UUID 粘贴兜底）。
+interface ActorOption { id: string; display_name: string; email: string }
+
 interface AuditFilters {
-  action: string
+  action: string | undefined
   outcome: string | undefined
-  target_type: string
+  target_type: string | undefined
   target_id: string
-  actor_user_id: string
+  actor_user_id: string | undefined
   tenant_id: string
 }
 
@@ -44,8 +53,8 @@ const props = defineProps<{ active: boolean }>()
 const auditTab = ref<'actions' | 'auth'>('actions')
 const events = ref<AuditEvent[]>([])
 const filters = ref<AuditFilters>({
-  action: '', outcome: undefined, target_type: '', target_id: '',
-  actor_user_id: '', tenant_id: '',
+  action: undefined, outcome: undefined, target_type: undefined, target_id: '',
+  actor_user_id: undefined, tenant_id: '',
 })
 const startAt = ref<DayjsLike | null>(null)
 const endAt = ref<DayjsLike | null>(null)
@@ -58,9 +67,66 @@ const selectedEvent = ref<AuditEvent | null>(null)
 const detailsOpen = ref(false)
 let requestSequence = 0
 
+// ── 人性化筛选②：操作编码按 Tab 分组下拉（中文 + 编码可搜索），替代手记编码 ──
+const actionOptionGroups = computed(() => {
+  const entries = Object.entries(AUDIT_ACTION_LABELS)
+    .map(([value, label]) => ({ value, label: `${label} ${value}` }))
+  const isAuth = (code: string): boolean => code.startsWith('auth.') || code.startsWith('oidc.')
+  return auditTab.value === 'auth'
+    ? [{ label: '登录与认证', options: entries.filter(item => isAuth(item.value)) }]
+    : [{ label: '管理操作', options: entries.filter(item => !isAuth(item.value)) }]
+})
+
+// 分组选项的自定义过滤：中文标签或原始编码命中皆可。
+function filterActionOption(input: string, option: unknown): boolean {
+  const label = String((option as { label?: unknown })?.label ?? '')
+  return label.toLowerCase().includes(input.trim().toLowerCase())
+}
+
+// 对象类型静态选项（auditLabels 同源，value 仍为编码供精确过滤）。
+const targetTypeOptions = Object.entries(AUDIT_TARGET_TYPE_LABELS)
+  .map(([value, label]) => ({ value, label }))
+
+// ── 人性化筛选①：操作者远程搜索（250ms 防抖；q 支持名字/邮箱/UUID 粘贴兜底）──
+const actorOptions = ref<ActorOption[]>([])
+const actorSearching = ref(false)
+let actorSearchTimer: ReturnType<typeof setTimeout> | undefined
+function searchActors(keyword: string): void {
+  if (actorSearchTimer) clearTimeout(actorSearchTimer)
+  const trimmed = keyword.trim()
+  if (!trimmed) {
+    actorOptions.value = []
+    return
+  }
+  actorSearchTimer = setTimeout(async () => {
+    actorSearching.value = true
+    try {
+      actorOptions.value = await api<ActorOption[]>(
+        `${ADMIN_API_PREFIX}/audit/actor-options?q=${encodeURIComponent(trimmed)}`)
+    } catch {
+      // 候选搜索失败不打断筛选：保留已选值，选择器清空重试即可。
+      actorOptions.value = []
+    } finally {
+      actorSearching.value = false
+    }
+  }, 250)
+}
+const actorSelectOptions = computed(() => actorOptions.value.map(item => ({
+  value: item.id,
+  label: item.display_name ? `${item.display_name}（${item.email}）` : item.email,
+})))
+
+// ── 人性化交互③：整行点击打开详情（详情列按钮保留，兼容明确点击路径）──
+function onEventRowClick(record: AuditEvent): void {
+  showDetails(record)
+}
+function eventRowProps(record: AuditEvent): Record<string, unknown> {
+  return { class: 'audit-row-clickable', onClick: () => onEventRowClick(record) }
+}
+
 const columns = [
   { title: '发生时间', dataIndex: 'created_at', key: 'created_at', width: 190 },
-  { title: '操作者 ID', dataIndex: 'actor_user_id', key: 'actor_user_id', width: 190, ellipsis: true },
+  { title: '操作者', dataIndex: 'actor_user_id', key: 'actor_user_id', width: 190 },
   { title: '操作', dataIndex: 'action', key: 'action', width: 200, ellipsis: true },
   { title: '对象类型', dataIndex: 'target_type', key: 'target_type', width: 130, ellipsis: true },
   { title: '对象 ID', dataIndex: 'target_id', key: 'target_id', width: 190, ellipsis: true },
@@ -82,7 +148,7 @@ async function loadEvents(): Promise<void> {
   const sequence = ++requestSequence
   loading.value = false
   errorText.value = ''
-  const actorId = filters.value.actor_user_id.trim()
+  const actorId = (filters.value.actor_user_id || '').trim()
   const tenantId = filters.value.tenant_id.trim()
   if (actorId && !uuidPattern.test(actorId)) {
     errorText.value = '操作者 ID 需要填写有效的 UUID'
@@ -114,9 +180,9 @@ async function loadEvents(): Promise<void> {
     // 登录 Tab 固定按 auth. 前缀聚合；操作 Tab 不加前缀即全量管理事件。
     if (auditTab.value === 'auth') query.set('action_prefix', 'auth.')
     const exactFilters: Array<[string, string | undefined]> = [
-      ['action', filters.value.action.trim()],
+      ['action', filters.value.action],
       ['outcome', filters.value.outcome],
-      ['target_type', filters.value.target_type.trim()],
+      ['target_type', filters.value.target_type],
       ['target_id', filters.value.target_id.trim()],
       ['actor_user_id', actorId],
       ['tenant_id', tenantId],
@@ -187,6 +253,7 @@ function applyDeepLinkPrefill(): void {
   const actor = params.get('actor') || ''
   if (!actor || !uuidPattern.test(actor)) return
   auditTab.value = 'auth'
+  // 深链只预填 UUID：选择器无对应候选时显示裸 ID，粘贴/重新搜索即可纠正。
   filters.value = { ...filters.value, actor_user_id: actor }
   filtersOpen.value = true
   window.history.replaceState(null, '', hash.slice(0, queryIndex))
@@ -210,41 +277,43 @@ watch(() => props.active, (active) => {
     :data-source="events"
     :loading="loading"
     row-key="id"
-    :scroll="{ x: 1580, y: 'calc(max(360px, 100vh - 430px))' }"
+    :scroll="{ x: 1580, y: 'calc(max(280px, 100vh - 520px))' }"
     :pagination="{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: (count: number) => `共 ${count} 条` }"
     :error-text="errorText"
     empty-emoji="🔍"
     :empty-text="total ? '当前页没有记录' : (auditTab === 'auth' ? '没有匹配的登录与认证记录' : '没有匹配的审计记录')"
+    :hint="`符合条件 ${total} 条 · 按时间倒序分页`"
+    :custom-row="eventRowProps"
     @table-change="handleTableChange"
   >
-    <!-- 卡片顶部：登录/操作类别 Tab + 筛选开关行（默认收起）+ 筛选表单 -->
+    <!-- 卡片顶部：类别 Tab + 筛选展开面板；筛选开关并入表格工具条（避免收起时整行空占位）。 -->
     <template #card-top>
       <a-tabs v-model:active-key="auditTab" class="mb-1" @change="switchAuditTab">
         <a-tab-pane key="actions" tab="管理操作" />
         <a-tab-pane key="auth" tab="登录与认证" />
       </a-tabs>
-      <div class="mb-3 flex min-w-0 flex-wrap items-center gap-3">
-        <!-- flex+gap 修正裸文本节点不触发 antd 图标间距、svg 基线偏移导致的图标文字错位 -->
-        <a-button class="flex items-center gap-2" @click="filtersOpen = !filtersOpen">
-          <FilterOutlined />
-          {{ filtersOpen ? '收起筛选' : '筛选条件' }}
-          <UpOutlined v-if="filtersOpen" />
-          <DownOutlined v-else />
-        </a-button>
-        <span class="min-w-0 flex-1 truncate text-xs text-[var(--color-text-muted)]">符合条件 {{ total }} 条；按时间倒序分页</span>
-      </div>
       <div v-show="filtersOpen" class="audit-filters-wrap">
         <AdminFilterPanel>
-          <AdminFilterField label="操作编码"><a-input v-model:value="filters.action" allow-clear placeholder="精确匹配" :maxlength="120" @press-enter="search" /></AdminFilterField>
+          <!-- 人性化筛选：操作编码/对象类型/操作者均改为选择器，替代手记编码与粘贴 UUID。 -->
+          <AdminFilterField label="操作">
+            <a-select v-model:value="filters.action" :options="actionOptionGroups" show-search
+              :filter-option="filterActionOption" allow-clear placeholder="选择或搜索操作" />
+          </AdminFilterField>
           <AdminFilterField label="结果">
             <a-select v-model:value="filters.outcome" allow-clear placeholder="全部结果">
               <a-select-option value="success">成功</a-select-option>
               <a-select-option value="denied">拒绝</a-select-option>
             </a-select>
           </AdminFilterField>
-          <AdminFilterField label="对象类型"><a-input v-model:value="filters.target_type" allow-clear placeholder="精确匹配" :maxlength="80" @press-enter="search" /></AdminFilterField>
+          <AdminFilterField label="对象类型">
+            <a-select v-model:value="filters.target_type" :options="targetTypeOptions" allow-clear placeholder="全部类型" />
+          </AdminFilterField>
           <AdminFilterField label="对象 ID"><a-input v-model:value="filters.target_id" allow-clear placeholder="精确匹配" :maxlength="180" @press-enter="search" /></AdminFilterField>
-          <AdminFilterField label="操作者 UUID"><a-input v-model:value="filters.actor_user_id" allow-clear placeholder="按回车查询" @press-enter="search" /></AdminFilterField>
+          <AdminFilterField label="操作者">
+            <a-select v-model:value="filters.actor_user_id" show-search :filter-option="false"
+              :options="actorSelectOptions" :loading="actorSearching" allow-clear
+              placeholder="搜索用户名 / 邮箱 / 粘贴 UUID" @search="searchActors" />
+          </AdminFilterField>
           <AdminFilterField label="租户 UUID"><a-input v-model:value="filters.tenant_id" allow-clear placeholder="按回车查询" @press-enter="search" /></AdminFilterField>
           <AdminFilterField label="开始时间"><a-date-picker v-model:value="startAt" show-time placeholder="开始时间" class="w-full" aria-label="审计开始时间" /></AdminFilterField>
           <AdminFilterField label="结束时间"><a-date-picker v-model:value="endAt" show-time placeholder="结束时间" class="w-full" aria-label="审计结束时间" /></AdminFilterField>
@@ -257,16 +326,24 @@ watch(() => props.active, (active) => {
     </template>
     <template #bodyCell="{ column, record }">
       <template v-if="column.key === 'created_at'">{{ formatTime(String(record.created_at || '')) }}</template>
-      <!-- U13 操作者 UUID：mono + 悬停完整值 + 一键复制，替代「切在连字符上形似乱码」的裸截断 -->
+      <!-- 操作者列：用户名为主、邮箱副行；悬停 title 保留完整 UUID，详情弹窗也可查。 -->
       <template v-else-if="column.key === 'actor_user_id'">
-        <AdminMonoValue v-if="record.actor_user_id" :value="String(record.actor_user_id)" max-width="150px" />
-        <span v-else class="text-xs text-[var(--color-text-muted)]">—</span>
+        <div v-if="record.actor_user_id" :title="String(record.actor_user_id)">
+          <div class="truncate">{{ record.actor_display_name || record.actor_email || '未知用户' }}</div>
+          <div v-if="record.actor_email && record.actor_display_name" class="truncate text-xs text-[var(--color-text-muted)]">{{ record.actor_email }}</div>
+        </div>
+        <span v-else class="text-xs text-[var(--color-text-muted)]">系统 / 未记录</span>
       </template>
-      <!-- 操作类型用中性 mono tag（P350 黑白灰：蓝色块破坏灰阶体系），结果列保留语义色 -->
-      <template v-else-if="column.key === 'action'"><a-tag class="font-mono">{{ record.action || '—' }}</a-tag></template>
+      <!-- 操作列中文为主；悬停 title 保留原始编码便于对照筛选。 -->
+      <template v-else-if="column.key === 'action'">
+        <a-tag :title="record.action">{{ formatAuditAction(record.action) }}</a-tag>
+      </template>
+      <template v-else-if="column.key === 'target_type'">
+        <span :title="record.target_type">{{ formatAuditTargetType(record.target_type) }}</span>
+      </template>
       <template v-else-if="column.key === 'outcome'">
         <a-tag :color="record.outcome === 'success' ? 'green' : record.outcome === 'denied' ? 'red' : 'default'">
-          {{ record.outcome === 'success' ? '成功' : record.outcome === 'denied' ? '拒绝' : record.outcome || '未知' }}
+          {{ formatAuditOutcome(record.outcome) }}
         </a-tag>
       </template>
       <template v-else-if="column.key === 'details'"><a-button type="link" size="small" @click="showDetails(record)">查看详情</a-button></template>
@@ -276,17 +353,46 @@ watch(() => props.active, (active) => {
     <template #card-bottom>
       <p class="audit-retention-note">审计事件只读；结束时间按开区间查询。来源 IP 展示 API 接收到的地址，经过代理时可能是代理节点。</p>
     </template>
+    <!-- 筛选开关并入表格工具条右侧（与「符合条件 X 条」同一行，收起时不再整行空占位）。 -->
+    <template #actions>
+      <a-button class="flex items-center gap-2" @click="filtersOpen = !filtersOpen">
+        <FilterOutlined />
+        {{ filtersOpen ? '收起筛选' : '筛选' }}
+        <UpOutlined v-if="filtersOpen" />
+        <DownOutlined v-else />
+      </a-button>
+    </template>
   </AdminListPage>
 
   <a-modal v-model:open="detailsOpen" title="审计事件详情" :footer="null" width="800px">
     <template v-if="selectedEvent">
       <a-descriptions bordered :column="1" size="small" class="audit-event-meta">
         <a-descriptions-item label="事件 ID">{{ selectedEvent.id }}</a-descriptions-item>
-        <a-descriptions-item label="操作者 ID">{{ selectedEvent.actor_user_id || '—' }}</a-descriptions-item>
+        <a-descriptions-item label="操作者">
+          <div>{{ selectedEvent.actor_display_name || selectedEvent.actor_email || '未知用户' }}</div>
+          <div v-if="selectedEvent.actor_email" class="audit-detail-code">{{ selectedEvent.actor_email }}</div>
+        </a-descriptions-item>
+        <!-- 操作者 UUID：排查/跨页对照仍需精确标识，mono + 复制组件保留。 -->
+        <a-descriptions-item label="操作者 ID">
+          <AdminMonoValue v-if="selectedEvent.actor_user_id" :value="String(selectedEvent.actor_user_id)" max-width="220px" />
+          <span v-else>—</span>
+        </a-descriptions-item>
         <a-descriptions-item label="租户 ID">{{ selectedEvent.tenant_id || '—' }}</a-descriptions-item>
         <a-descriptions-item label="发生时间">{{ formatTime(selectedEvent.created_at) }}</a-descriptions-item>
-        <a-descriptions-item label="操作 / 结果">{{ selectedEvent.action }} / {{ selectedEvent.outcome }}</a-descriptions-item>
-        <a-descriptions-item label="目标">{{ selectedEvent.target_type }} / {{ selectedEvent.target_id || '—' }}</a-descriptions-item>
+        <!-- 中文语义 + 原始编码双显：中文给可读性，mono 编码保证排查时与筛选/日志精确对照。 -->
+        <a-descriptions-item label="操作">
+          <div>{{ formatAuditAction(selectedEvent.action) }}</div>
+          <div class="audit-detail-code">{{ selectedEvent.action }}</div>
+        </a-descriptions-item>
+        <a-descriptions-item label="结果">
+          <div>{{ formatAuditOutcome(selectedEvent.outcome) }}</div>
+          <div class="audit-detail-code">{{ selectedEvent.outcome || '—' }}</div>
+        </a-descriptions-item>
+        <a-descriptions-item label="对象类型">
+          <div>{{ formatAuditTargetType(selectedEvent.target_type) }}</div>
+          <div class="audit-detail-code">{{ selectedEvent.target_type }}</div>
+        </a-descriptions-item>
+        <a-descriptions-item label="对象 ID">{{ selectedEvent.target_id || '—' }}</a-descriptions-item>
         <a-descriptions-item label="来源 IP">{{ selectedEvent.source_ip || '—' }}</a-descriptions-item>
       </a-descriptions>
       <h3 class="audit-detail-heading">变更摘要</h3>
@@ -298,6 +404,9 @@ watch(() => props.active, (active) => {
 <style scoped>
 /* P2-10：原 var(--subtle)/var(--text)/var(--soft) 全前端未定义导致样式静默失效，改用 tokens.css 变量。 */
 .audit-retention-note { margin: 14px 0 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.6; }
+/* 行点击可达性：整行可点开详情；hover 高亮走 bridge 的 rowHoverBg，这里只补指针与焦点反馈。 */
+.audit-detail-code { margin-top: 2px; color: var(--color-text-secondary); font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; overflow-wrap: anywhere; }
+.audit-row-clickable { cursor: pointer; }
 .audit-event-meta { margin-top: 8px; overflow-wrap: anywhere; }
 .audit-detail-heading { margin: 20px 0 8px; font-size: 14px; font-weight: 600; }
 .audit-detail-json { max-height: 360px; overflow: auto; padding: 14px; border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-subtle); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
