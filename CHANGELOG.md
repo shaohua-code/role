@@ -1,5 +1,54 @@
 #﻿##﻿# 变更日志
 
+## 2026-11-19 腾讯云 IAM 首次发布及迁移后恢复验证
+
+- 用户明确授权将腾讯云 IAM **专用空库**迁移至 `0010_model_test_usage`。以提交 `0c22341` 的已校验镜像执行迁移和一次性引导，管理员 `shaohua_code@163.com` 获得 L1 `platform.admin`。Nginx IP 站点已启用；首次 reload 后旧 worker 短暂返回旧证书，复核预期证书和接口后写入 `initialized`、`current-tag`，引导密码从环境文件移入服务器 root 专用文件。`deploy/first-release.sh` 增加 reload 后 HTTPS/OIDC 探测重试，已通过服务器 Bash 语法及 SHA-256 一致性核对。
+- **目标环境验证：** API、Console、专用 PostgreSQL 均 healthy；`alembic current` 为 `0010_model_test_usage (head)`；公网 IP 的证书指纹、管理台 HTML、`/api/v1/ready`、OIDC issuer/JWKS、管理员真实登录、L1 角色及登出通过；AI 简历两个现有域名回源仍为 200。迁移后 dump 已流式加密保存于本机受限目录，并解密恢复到随机临时库，复核 revision 为 `0010_model_test_usage`、用户记录数为 1；临时库已删除。**未运行：** 浏览器中对自签证书的信任配置、管理台页面交互走查、GitHub 自动代码发布；`stage_only` 大文件直传仍在进行。
+
+## 2026-11-19 腾讯云 IAM 首次发布备份与恢复演练
+
+- GitHub Actions `44525268966` 通过构建和 CI SSH 登录，记录时直传仍在进行。将同一工作流产物经本机中转，服务器验证 GitHub SHA-256 后解包到 root 专用暂存目录。首次发布脚本增加该暂存目录入口，已在服务器运行 `prepare`。目标提交 `0c22341`，镜像 Alembic head 为 `0010_model_test_usage`，工作区未提交的模型改动不在该版本内。
+- **验证：** 项目专用 PostgreSQL 健康且未映射宿主端口，无 `alembic_version`。空库 dump 在随机临时库恢复成功。通过 SSH 流式写入本机 `.dump.age`，解密流的 SHA-256 与服务器恢复标记相同，未在本机写入明文 dump。现有两个 AI 简历虚拟主机的回源请求在诊断模式下分别返回 200 和 200，回源证书链或有效期校验已有警告。**未运行：** `activate`、IAM 管理员引导、Nginx reload、真实登录和自动发布验收。
+
+## 2026-11-19 腾讯云 IAM 上线状态复核（只读）
+
+- **目标环境验收：未通过。** SSH 只读检查 `docker ps` 无 IAM 容器，`/opt/iam/shared/initialized` 不存在。公网 `https://175.178.62.55/api/v1/ready` 返回 HTTP 200，但 `Content-Type: text/html`、静态资源响应，不能作为 IAM readiness 证据；当前 IP 仍由既有 Nginx 站点响应。未执行传输、备份、迁移、bootstrap 或 Nginx reload。**未运行：** IAM 真实登录与业务接口验收。
+
+## 2026-11-19 腾讯云发布凭据与本机备份目录（配置完成；首次迁移未运行）
+
+- GitHub 仓库 `shaohua-code/role` 已创建 `production` Environment，并将受限 `iamdeploy` 的 CI SSH 私钥以加密 Environment Secret `IAM_DEPLOY_SSH_KEY` 写入；再次查询 Secret 元数据确认存在，未输出私钥。`IAM_AUTO_DEPLOY` 仍未启用。创建本机 `D:\secure-backups\iam-production`，ACL 仅允许当前用户、Administrators、SYSTEM；EFS 加密请求不受支持，BitLocker 状态因本机权限不足未核实，所以还不能把该目录中的明文 dump 视为已验证的加密备份。
+- `deploy/first-release.sh` 增加激活前的 Nginx 站点/引导密码/Compose 检查，prepare 等待专用 PostgreSQL 健康后再备份。运维手册与 AI 速查补充两阶段首次发布步骤、受保护本机路径和加密门禁。脚本已安装到目标机 `/opt/iam/bin/first-release.sh`。部署物料独立提交 `0c22341` 已推送 `main`；GitHub `production` Environment 仅允许 `main` 分支部署。**验证：** GitHub Environment/Secret API 查询、目录 ACL、本机及服务器 Bash 语法检查、服务器 root:root 755 权限与 SHA-256 一致性、首次 GitHub Actions 构建成功；服务器 `docker ps` 无 IAM 容器。**未运行：** CI `stage_only` 传输（API 请求发生 TLS 中断，公开列表未见新运行；浏览器自动化因 URL 允许性无法确认而停止）、首次备份及恢复、数据库迁移、bootstrap、目标环境登录验收。
+
+## 2026-11-19 腾讯云共用主机自动发布准备（源码与主机预备完成；未上线）
+
+- GitHub `main` 增加 Actions 构建/打包与可选受控部署工作流；新增主机 Nginx 覆盖、IP 虚拟主机模板、一次性主机准备脚本和仅允许同 revision 代码发布的服务器脚本。新迁移会在容器切换前停止；首次发布另需备份、恢复演练和明确迁移授权。同步运维手册、根与前后端 README、产品需求、AI 目录导航。
+- 目标机 `175.178.62.55` 已只读核对：AI 简历占用主机 Nginx 80/443，PostgreSQL/Node/Python 主机进程运行；Docker 无容器，4 核/约 3.6 GiB RAM，根盘余约 29 GiB。以独立 `iamdeploy` 密钥登录并仅允许运行 `/opt/iam/bin/receive-release.sh`；服务器生成 IAM 环境文件、OIDC 私钥及 IP 自签证书，暂存 Nginx 配置。未查看/回传密钥值，未启动 IAM 容器、改 Nginx 现行路由或迁移数据库。现有主机 PostgreSQL 5432 对公网 TCP 可达，需由 AI 简历项目独立收敛，本次未改。
+- **验证：** 本机与服务器 `bash -n` 通过；Actions YAML 结构解析、SSH 主机指纹核对、CI 密钥 SSH 登录及受限 sudo 列表通过；部署脚本在无 `initialized` 标记时按预期拒绝；目标机生产 Compose `config --quiet` 通过，IP 候选站点与既有 Nginx 合并 `nginx -t` 通过（只有既有 `api.aijianli.tech` 重复 server_name 告警，候选文件已移回暂存且未 reload）；TLS 证书含目标 IP SAN，密钥文件权限核对。**未运行：** GitHub Actions 实际构建/传输、首次数据库备份/恢复/迁移/引导、IAM readiness/OIDC/浏览器目标环境验收。`IAM_AUTO_DEPLOY` 未启用。
+
+## 2026-11-19 模型直连改造主库迁移 + 浏览器走查（备份→迁移 0011→全链路走查通过）
+
+- **受保护备份：** `deploy/backup-postgres.ps1 -OutputDirectory backups` 生成 `backups/iam-postgres-20261119T124220Z-c68c1d8e.dump`（SHA-256 `ec29a12c…a85f99`，容器内 `pg_restore --list` 校验通过；未做完整恢复演练）。
+- **迁移：** 开发主库 `alembic upgrade head`：`0010_model_test_usage → 0011_model_runtime_publish` 成功；`alembic current` 确认 `0011 (head)`；API readiness 迁移前 503（`database_migration_pending`）→ 迁移后 200。
+- **浏览器走查（管理台 localhost:5175，平台管理员）：** ① 模型治理页新增「运行时」列正常渲染（草稿/已发布 vN）；② 行菜单按状态切换「发布运行时/下架运行时」；③ 发布 DeepSeek V4 Pro：toast 成功 + 状态变「已发布 v1」；④ 编辑弹窗顶部「已发布自动回草稿」提示条出现；⑤ 保存非 HTTPS 地址（`http://api.deepseek.com/v1`）被 422 拦截（toast 显示完整校验文案，弹窗不关闭）；⑥ 改回合法地址保存成功后**自动回草稿**（防错误路由生效）；⑦ 再次发布→「下架运行时」确认弹窗文案正确→确认后回草稿；⑧ 应用工作台「模型」Tab 超管可见「用量上报凭据」按钮 → 弹窗说明/空态（🔑 引导文案）→ 签发成功：列表新增「生效中」行 + 一次性 Modal.info「只显示这一次」+ 剪贴板权限被拒时兜底明文展示生效；⑨ UI 吊销：确认弹窗文案正确 → 列表变「已吊销」。
+- **curl 端到端冒烟（真实开发库 + UI 签发凭据）：** 应用凭据上报 DeerFlow 自身用量 `201 {"recorded":true}`；同 request_id 重放幂等 `{"duplicate":true}`；换 application_id 上报 403「只能上报本应用自身的用量」；伪造 user_id 422；**吊销后重放 401**。走查用凭据 `uk_fd6bdb4a` 已在 UI 吊销（一次性明文不再有效）。
+- **遗留（按方案不属本阶段）：** M2M `client_credentials` + `model-runtime-config` 的实库 curl 冒烟未跑（现有应用 client_secret 均为哈希不可提取，不轮换既有密钥；该链路已由 `test_oidc_client_credentials.py` + `test_model_runtime_config.py` 以真实 RSA 签名/验签覆盖）；隔离 Postgres 套件 `run_isolated_postgres_suite.py` 未运行（随机库方案，主库迁移已直验）；console 仅一条导航竞态 `ready` 请求 ERR_ABORTED（既有壳层行为，非本次改动）。
+
+## 2026-11-19 模型直连改造 D0-D2 实施：运行时发布 / M2M 身份 / 应用级上报凭据（用户批准四项决策；后端 72+29 测试通过）
+
+- **范围与决策（用户拍板）：** D0+D1+D2 全做（D3 业务接入另行安排）；应用服务身份 = OIDC `client_credentials`（复用 client_secret，aud 限定、TTL 300s、无 refresh）；授权 Alembic 迁移；用量上报 = 应用级凭据（哈希存储）。
+- **迁移 0011_model_runtime_publish：** `model_catalog` 加 `runtime_status`(draft|published)/`runtime_published_at`/`runtime_config_version`（CheckConstraint + server_default，兼容旧代码）；新表 `application_usage_credentials`（key_id 唯一 + Argon2 secret_hash + 软吊销）。**已授权但未在开发主库执行**：`alembic upgrade head` 前须按门禁运行 `deploy/backup-postgres.ps1` 备份；`alembic history` 单头校验通过。
+- **D1 发布流：** 新 `services/model_runtime.py`（校验/发布/下架/别名派生/ETag 领域服务）。端点校验分级——保存时语法/HTTPS/允许集（`MODEL_RUNTIME_ALLOWED_HOSTS`，空=不限），发布时叠加 DNS 解析拒私网/环回/保留地址（`.test` 等不可解析域名发布时拒绝）；已发布模型编辑路由字段（地址/供应商/模型名/能力）自动回草稿防错误路由。新端点 `POST/POST /admin/models/{id}/runtime-publish|runtime-unpublish`（超管，同事务审计）；`_serialize_model` 加运行时三字段。
+- **D1 M2M 与读取：** token 端点新增 `client_credentials`（仅机密客户端，Basic 认证，签发 `aud=model-runtime-config`/`token_use=m2m_access`/scope 钉死/无 refresh+id_token，审计 `oidc.token.client_credentials` 无用户主体）；`core/security.py` 新增 `current_m2m_client`（aud/token_use 双校验 + 应用 active 实时查库，撤销=短期 TTL+停用即失效，无吊销表）；新端点 `GET /authorization/model-runtime-config`（仅 M2M、不接受 client_id 参数，白名单序列化绝不返回 credential_ref/env_var，`credential_alias=MODEL_KEY_<PROVIDER大写>` 派生不落库；ETag=结果集内容哈希 sha256 前 16 位，撤权/停用/下架即时 304 失效）。`my-models` 与 `authorization/check` 零改动。
+- **D2 上报凭据：** 新 `/admin/applications/{id}/usage-credentials` 三端点（超管范围闸门；签发 `secrets.token_urlsafe(32)` 明文仅响应一次、活跃上限 10、软吊销即失效）；`/internal/model-usage` 三端点双 Header——`X-IAM-Model-App-Credential: <key_id>:<secret>`（先按 key_id 定位再 Argon2 校验，未知 key_id 假哈希抹平时序），命中后主体钉死 `application_id/tenant_id` 与凭据应用一致（report/reserve 403，settle 404 不可区分），user_id 仍走真实成员校验；共享网关密钥路径行为逐字节兼容（Header 哨兵归一化兼容直调）。
+- **前端：** 模型治理页「运行时」列（已发布 vN/草稿 StatusDot）+ 行菜单「发布/下架运行时」（下架确认）；ModelFormModal 已发布编辑回草稿提示；应用工作台 ModelsTab 超管「用量上报凭据」弹窗（UsageCredentialsModal 新组件：签发一次性展示+剪贴板复制、列表、吊销确认）。
+- **D0 文档：** `docs/应用对接.md` 新增 §9b（M2M 令牌 / runtime-config 字段表 / 上报凭据契约 + 威胁模型要点）；`docs/模型配置下发与应用直连-改造方案.md` 状态改「D0-D2 已实施」并回填 §7 决策记录 + 两租户两应用两密钥权限/路由矩阵；`docs/产品需求.md` §6.4 提案段落状态更新；`ai/04-模块导航/模型用量/导航.md` 新增直连改造节 + 代码入口表更新。
+- **验证：** 新增 4 个测试文件 `test_oidc_client_credentials.py`/`test_model_runtime_config.py`/`test_model_runtime_publish.py`/`test_model_usage_app_credential.py` 共 **29 passed / 2 skipped**（跳过为 PG 集成类，需 DATABASE_URL）；后端全量套件 **400 passed / 51 skipped / 1 failed**——唯一失败 `test_g16_g24 主题上传` 为沙箱拦截容器路径 `D:\app\data\theme-uploads` 写入的**环境限制，与本次改动无关**（既有用例，无代码交集）；既有模型相关 5 个测试文件回归通过（`test_model_usage_quota.py`/`test_model_distribution.py` 直调 handler 改关键字传参适配新签名）；改动后端文件 py_compile 全过；`alembic` 迁移链单头校验通过；改动文件 ESLint 0。前端 `vue-tsc -b && vite build` EXIT=0；**后续补验：** 前端全量 `npm run lint` EXIT=0、`npm run smoke` ok（pageKeys: 20）；SDK（python/typescript）仅引用 `my-models`（本次设计不变），无需同步。**未运行：** 开发主库迁移与备份（部署动作，用户执行 `backup-postgres.ps1` → `alembic upgrade head`）、隔离 Postgres 套件 `run_isolated_postgres_suite.py`（需 Docker，本终端无 Docker CLI）、浏览器走查、真实 Provider 外呼与 D3 目标环境验收（方案明确不在本阶段）。
+
+## 2026-11-19 模型配置下发与应用直连改造方案（仅设计）
+
+- 新增 `docs/模型配置下发与应用直连-改造方案.md`：明确 IAM 管非敏感模型配置与三级分发，应用后端环境变量自持供应商密钥并直连；列出拟议服务端配置契约、密钥别名/目标绑定、在线 `model.invoke`、应用级计量身份、阶段任务和验收条件。同步产品需求、应用对接、根与前后端 README、AI 模型导航的提案入口。
+- **验证：** 对照现行 `my-models`、模型目录和 `/internal/model-usage/*` 源码核对字段与安全边界；执行 `git diff --check`。**未运行：** 自动化测试、构建、浏览器、真实 Provider 与目标环境验收（本次无功能代码改动）。未修改数据库、迁移、配额开关或业务应用；提案中的端点和应用级上报身份尚未实现。
+
 ## 2026-11-19 模型密钥配置简化为单文件（spec: simplify-model-key-config；隔离验证全绿）
 
 - **需求：** 用户要求「只要在 .env 配置密钥就好，重新设计」。原流程新增供应商需同时改 `.env` + `compose.yaml` 两处。

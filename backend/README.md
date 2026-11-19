@@ -4,6 +4,10 @@
 
 **后续模型接入需求（未实现）：** 产品需求 §6.4.1 规划模型/部署/凭据版本、统一调用网关、共享原子预留与对账。现有模型目录、三级下发、`/internal/model-usage/*` 与默认关闭的 quota enforcement 不因该文档改变；真实 Provider、多实例和故障链路验收是启用强制额度的前提。
 
+腾讯云自动发布脚本仅在目标 IAM 库 revision 等于新镜像 Alembic head 时更新 API/Console，遇迁移退出并走备份授权门禁（见[部署与运维 §4.2](../docs/部署与运维.md)）。目标机已完成首次迁移至 `0010_model_test_usage`，`https://175.178.62.55/api/v1/ready` 与 OIDC discovery 已验收。
+
+应用自持供应商密钥、IAM 下发已发布公开调用配置的服务端契约见[改造方案](../docs/模型配置下发与应用直连-改造方案.md)（D0-D2 已实施，2026-11-19）：运行时发布/下架、`client_credentials` M2M 令牌、`GET /api/v1/authorization/model-runtime-config` 与应用级上报凭据已交付；业务契约见[应用对接 §9b](../docs/应用对接.md)。`my-models` 的现行字段不变（用户清单与外呼配置分离）。
+
 [模型测试台设计](../docs/模型测试台设计.md)中的管理员受控测试通道已实现连接探针、文本对话流和停止接口，凭据引用仅在服务端解析；面向业务应用的统一模型代理接口仍未实现。
 
 **2026-10-30 三管理员 + 授权范围（重大重构）：** 五级角色收敛为四模板——`platform.admin`(super) / `tenant.admin`(tenant) / `app.admin`(app) / `app.member`(member)，`apps.admin` 并入 `app.admin`（管 N 个应用=绑 N 个应用）。`roles` 新增 `scope` 列（迁移 `0006_role_scope_nodes`，含 apps.admin 合并与管理面接口码清理）。管理面删除 27 个五域接口码与数据码目录，唯一权限目录=「菜单→按钮」树（`permission_kinds.py`，节点带 `min_scope`）；后端接口按节点判权（`ensure_codes`）+ 授权范围闸门（`ensure_scope`/`operator_scope`，只能向下）；列表数据按操作者绑定租户/应用过滤。「权限编码」登记/启停接口仅存业务码路径（管理面节点由种子固定）。创建用户改为 `tenant_ids`(≥1)/`organization_ids`/`application_ids` 多选绑定（绑应用自动补 `app.member`）。「权限编码」页面下线，权限配置收进平台角色（菜单→按钮树 + 授权范围下拉）。应用工作台业务面（业务码/资源树/数据叶子）保持不变。

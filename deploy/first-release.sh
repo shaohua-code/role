@@ -19,6 +19,7 @@ flock -n 9 || { echo 'Another IAM deployment is in progress.' >&2; exit 1; }
 iam_root=/opt/iam
 shared_dir=$iam_root/shared
 incoming_dir=/home/iamdeploy/incoming/$release_tag
+verified_artifact_dir=$iam_root/verified-staging/$release_tag
 release_dir=$iam_root/releases/$release_tag
 env_file=$shared_dir/.env.production.local
 backup_dir=$shared_dir/backups
@@ -35,6 +36,9 @@ compose=(docker compose -f "$release_dir/compose.production.yaml"
   -f "$release_dir/compose.production.host-nginx.yaml" --env-file "$env_file")
 
 if [[ $phase == prepare ]]; then
+  if [[ -d $verified_artifact_dir ]]; then
+    incoming_dir=$verified_artifact_dir
+  fi
   if [[ ! -f $incoming_dir/images.tar.gz || ! -f $incoming_dir/source.tar.gz || -e $backup_file ]]; then
     echo 'Release bundle is missing or the initial backup already exists.' >&2
     exit 1
@@ -137,15 +141,31 @@ if ! nginx -t; then
   exit 1
 fi
 systemctl reload nginx
-if ! curl --fail --silent --show-error --noproxy '*' \
-  --cacert "$shared_dir/tls/ip.crt" --resolve '175.178.62.55:443:127.0.0.1' \
-  https://175.178.62.55/api/v1/ready >/dev/null; then
+https_ready=false
+for _ in {1..10}; do
+  if curl --fail --silent --show-error --noproxy '*' \
+    --cacert "$shared_dir/tls/ip.crt" --resolve '175.178.62.55:443:127.0.0.1' \
+    https://175.178.62.55/api/v1/ready >/dev/null 2>&1; then
+    https_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ $https_ready != true ]]; then
   echo 'HTTPS IAM readiness failed. Keep initialization marker absent and investigate.' >&2
   exit 1
 fi
-if ! curl --fail --silent --show-error --noproxy '*' \
-  --cacert "$shared_dir/tls/ip.crt" --resolve '175.178.62.55:443:127.0.0.1' \
-  https://175.178.62.55/.well-known/openid-configuration >/dev/null; then
+oidc_ready=false
+for _ in {1..10}; do
+  if curl --fail --silent --show-error --noproxy '*' \
+    --cacert "$shared_dir/tls/ip.crt" --resolve '175.178.62.55:443:127.0.0.1' \
+    https://175.178.62.55/.well-known/openid-configuration >/dev/null 2>&1; then
+    oidc_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ $oidc_ready != true ]]; then
   echo 'OIDC discovery failed. Keep initialization marker absent and investigate.' >&2
   exit 1
 fi
