@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { api, ApiRequestError } from '@/api'
 import { ADMIN_API_PREFIX, hasButton } from '@/api/capabilities'
-import { PlusOutlined } from '@/plugins/icons'
-import { MODEL_CAPABILITY_OPTIONS, formatCapabilities } from '@/utils/modelCapabilities'
+import { PAGE_PATHS } from '@/router/navigation'
+import { EllipsisOutlined, PlusOutlined } from '@/plugins/icons'
+import { MODEL_CAPABILITY_OPTIONS } from '@/utils/modelCapabilities'
 import AdminPageHeader from '@/components/AdminPageHeader.vue'
 import AdminTableToolbar from '@/components/AdminTableToolbar.vue'
 import AdminTable from '@/components/AdminTable.vue'
@@ -15,22 +17,25 @@ import OverviewStatCard from '@/views/overview/components/OverviewStatCard.vue'
 // P400：用量趋势与模型分布图表（echarts 复用概览基建），数据来自新增的同口径聚合端点。
 import ModelUsageCharts from './components/ModelUsageCharts.vue'
 import type { UsageModelAggregate, UsageTimelinePoint } from './components/ModelUsageCharts.vue'
+// 重设计（P401）：目录概览带 / 状态点 / 分区表单弹窗 / 下发租户弹窗拆分到 components/。
+import CatalogSummaryCards from './components/CatalogSummaryCards.vue'
+import StatusDot from './components/StatusDot.vue'
+import ModelFormModal from './components/ModelFormModal.vue'
+import TenantGrantModal from './components/TenantGrantModal.vue'
 
 type View = 'catalog' | 'usage'
 interface Tenant { id: string; name: string; slug: string; kind: string; status: string }
 interface ModelRecord {
   id: string; tenant_id: string; key: string; provider: string; model_name: string; display_name: string
-  endpoint_url?: string | null; credential_configured: boolean; capabilities: string[]
+  endpoint_url?: string | null; credential_configured: boolean
+  // 凭证回显：secret_env 回传环境变量名（引用不含密钥）；other（如 vault://）只标注种类
+  credential_env_var?: string | null; credential_ref_kind?: 'secret_env' | 'other' | null
+  capabilities: string[]
   rpm_limit?: number | null; tpm_limit?: number | null; input_cost_per_million?: number | null
   output_cost_per_million?: number | null; quota_status: 'enforced' | 'configured_only' | 'unlimited'
   status: 'active' | 'disabled'; created_at?: string
   // 三级分发计数：超管视角返回已下发租户数；租户级视角返回活跃应用下发数。
   tenant_grant_count?: number; application_grant_count?: number
-}
-// 模型 → 租户下发关系行（软失效语义：revoked 保留供恢复与审计）。
-interface TenantGrantRow {
-  model_id: string; tenant_id: string; tenant_name: string
-  status: 'active' | 'revoked'; granted_at: string; revoked_at?: string | null
 }
 interface UsageEvent {
   id: string; request_id: string; tenant_id: string; model_name: string; application_name: string
@@ -53,15 +58,26 @@ interface UsageSummary {
 const props = defineProps<{ active: boolean; view: View; seedTenants?: Tenant[] }>()
 // 页内写按钮认 button.models.manage；L1 放行语义收进 hasButton 统一判权。
 const canManageModels = computed(() => hasButton('button.models.manage'))
+// 模型测试台入口（设计文档 §2）：目录行操作携带 model_id 深链，可达性与模型治理同码。
+const router = useRouter()
 const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const OUTCOME_FILTER_OPTIONS = [
   { value: 'succeeded', label: '成功' },
   { value: 'failed', label: '失败' },
 ]
+// 能力标签中文映射（标准集）：表格 chip 与悬停提示共用。
+const CAPABILITY_LABELS = new Map(MODEL_CAPABILITY_OPTIONS.map(option => [option.value, option.label]))
+const CAPABILITY_HINTS = new Map(MODEL_CAPABILITY_OPTIONS.map(option => [option.value, option.hint]))
+// 限额执行状态 → 色点语言：拦截中=琥珀点缀，仅记录/未设置保持中性。
+const QUOTA_STATUS_META: Record<ModelRecord['quota_status'], { tone: 'warn' | 'muted' | 'hollow'; text: string }> = {
+  enforced: { tone: 'warn', text: '拦截中' },
+  configured_only: { tone: 'muted', text: '仅记录' },
+  unlimited: { tone: 'hollow', text: '未设置' },
+}
 
 const tenants = ref<Tenant[]>([])
 const tenantId = ref<string>()
-// 目录视图本地筛选：关键字（标识/展示名/模型名/提供方）+ 状态；数据量小（≤500），不过节流。
+// 目录视图本地筛选：关键字（标识/展示名/模型名/提供方）+ 状态（由概览带点击驱动）；数据量小（≤500），不过节流。
 const catalogSearch = ref('')
 const catalogStatus = ref<'active' | 'disabled' | undefined>(undefined)
 const outcomeFilter = ref<'succeeded' | 'failed'>()
@@ -89,23 +105,12 @@ const chartsLoadFailed = ref(false)
 const usageDataLoaded = ref(false)
 const usageLoadError = ref('')
 const loading = ref(false)
-const saving = ref(false)
-const modalOpen = ref(false)
-const editingId = ref<string | null>(null)
-const clearCredentialRef = ref(false)
-// 三级分发：平台模型下发租户管理弹窗（超管操作，button.models.manage）。
+// 重设计：模型表单弹窗 / 下发租户弹窗状态收敛为「开 + 目标」，表单与关系逻辑由子组件托管。
+const formOpen = ref(false)
+const editingRecord = ref<ModelRecord | null>(null)
 const grantOpen = ref(false)
 const grantTarget = ref<ModelRecord | null>(null)
-const grantRows = ref<TenantGrantRow[]>([])
-const grantRowsLoading = ref(false)
-const grantTenantId = ref<string | undefined>(undefined)
-const granting = ref(false)
 const requestSequence = ref(0)
-const form = reactive({
-  key: '', provider: '', model_name: '', display_name: '', endpoint_url: '', credential_ref: '',
-  capabilities: ['chat'] as string[], rpm_limit: null as number | null, tpm_limit: null as number | null,
-  input_cost_per_million: null as number | null, output_cost_per_million: null as number | null,
-})
 const reviewOpen = ref(false)
 const reviewing = ref(false)
 const reviewTarget = ref<UsageReview | null>(null)
@@ -182,33 +187,23 @@ const ledgerSectionNo = computed(() => {
   return usageChartsHaveData.value ? '05' : '04'
 })
 
-const modelColumns = [
-  // 15 列宽表以横向滚动为合理形态；三级分发后「租户」列升级为「已下发租户」计数（仅超管视角有值）。
-  { title: '模型', dataIndex: 'display_name', key: 'display_name', width: 160, ellipsis: true },
-  { title: '模型标识', dataIndex: 'key', key: 'key', width: 130, ellipsis: true },
-  { title: '提供方', dataIndex: 'provider', key: 'provider', width: 120 },
-  { title: '模型名称', dataIndex: 'model_name', key: 'model_name', width: 140, ellipsis: true },
-  { title: '端点', dataIndex: 'endpoint_url', key: 'endpoint_url', width: 170, ellipsis: true },
-  { title: '能力', dataIndex: 'capabilities', key: 'capabilities', width: 110, ellipsis: true },
-  { title: '凭证引用', dataIndex: 'credential_configured', key: 'credential_configured', width: 96 },
-  { title: 'RPM', dataIndex: 'rpm_limit', key: 'rpm_limit', width: 80 },
-  { title: 'TPM', dataIndex: 'tpm_limit', key: 'tpm_limit', width: 80 },
-  { title: '输入价格/百万', dataIndex: 'input_cost_per_million', key: 'input_cost_per_million', width: 110 },
-  { title: '输出价格/百万', dataIndex: 'output_cost_per_million', key: 'output_cost_per_million', width: 110 },
-  { title: '限额执行', dataIndex: 'quota_status', key: 'quota_status', width: 110, ellipsis: true },
-  { title: '已下发租户', dataIndex: 'tenant_grant_count', key: 'tenant_grant_count', width: 104 },
+// 目录表格列（重设计）：15 列收敛为 10 列——
+// 模型/提供方双行单元格、能力 chip、限流与价格合并 mono 列、状态语言改色点；
+// 操作列仅超管可见，收敛为「下发租户 + ⋯ 更多」。
+const baseModelColumns = [
+  { title: '模型', dataIndex: 'display_name', key: 'display_name', width: 180, ellipsis: true },
+  { title: '提供方 / 模型', dataIndex: 'provider', key: 'provider', width: 170, ellipsis: true },
+  { title: '能力', dataIndex: 'capabilities', key: 'capabilities', width: 180 },
+  { title: '限流 RPM/TPM', dataIndex: 'limits', key: 'limits', width: 120, align: 'right' as const },
+  { title: '价格 / 百万', dataIndex: 'price', key: 'price', width: 130, align: 'right' as const },
+  { title: '凭证', dataIndex: 'credential_configured', key: 'credential_configured', width: 92 },
+  { title: '限额', dataIndex: 'quota_status', key: 'quota_status', width: 96 },
+  { title: '已下发', dataIndex: 'tenant_grant_count', key: 'tenant_grant_count', width: 100 },
   { title: '状态', dataIndex: 'status', key: 'status', width: 88 },
-  // 操作列 4 个链接（下发租户/编辑/停用/删除）约需 215px；190 会溢出裁切「删除」。
-  { title: '操作', dataIndex: 'actions', key: 'actions', width: 232, fixed: 'right' as const },
 ]
-// 下发租户管理弹窗内的关系表列。
-const grantColumns = [
-  { title: '租户', dataIndex: 'tenant_name', key: 'tenant_name', width: 160, ellipsis: true },
-  { title: '状态', dataIndex: 'status', key: 'status', width: 88 },
-  { title: '下发时间', dataIndex: 'granted_at', key: 'granted_at', width: 170 },
-  { title: '回收时间', dataIndex: 'revoked_at', key: 'revoked_at', width: 170 },
-  { title: '操作', dataIndex: 'actions', key: 'actions', width: 90 },
-]
+// 操作列 2 个元素（主操作 + 溢出菜单）约需 128px。
+const modelActionColumn = { title: '操作', dataIndex: 'actions', key: 'actions', width: 128, fixed: 'right' as const }
+const modelColumns = computed(() => (canManageModels.value ? [...baseModelColumns, modelActionColumn] : baseModelColumns))
 const usageColumns = [
   { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 180 },
   { title: '模型', dataIndex: 'model_name', key: 'model_name', width: 150, ellipsis: true },
@@ -235,9 +230,35 @@ const reviewColumns = [
   { title: '操作', dataIndex: 'actions', key: 'actions', width: 110, fixed: 'right' as const },
 ]
 // Keep each table viewport at least as wide as the sum of its configured columns.
-const modelTableScrollWidth = modelColumns.reduce((width, column) => width + column.width, 0)
+const modelTableScrollWidth = computed(() => modelColumns.value.reduce((width, column) => width + column.width, 0))
 const usageTableScrollWidth = usageColumns.reduce((width, column) => width + column.width, 0)
 const reviewTableScrollWidth = reviewColumns.reduce((width, column) => width + column.width, 0)
+
+// 目录单元格辅助：限流与价格合并为 mono 展示。
+function formatLimits(record: ModelRecord): string {
+  return `${record.rpm_limit ?? '—'} / ${record.tpm_limit ?? '—'}`
+}
+function formatPricePair(record: ModelRecord): string {
+  const hasInput = record.input_cost_per_million != null
+  const hasOutput = record.output_cost_per_million != null
+  if (!hasInput && !hasOutput) return '未知'
+  const input = hasInput ? formatCostValue(String(record.input_cost_per_million)) : '—'
+  const output = hasOutput ? formatCostValue(String(record.output_cost_per_million)) : '—'
+  return `${input} / ${output}`
+}
+function capabilityLabel(code: string): string {
+  return CAPABILITY_LABELS.get(code) ?? code
+}
+function capabilityHint(code: string): string {
+  return CAPABILITY_HINTS.get(code) ?? code
+}
+// 溢出菜单动作分发（测试 / 编辑 / 停用|启用 / 删除）。
+function onModelMenu(record: ModelRecord, info: { key: string | number }): void {
+  if (info.key === 'test') void router.push(`${PAGE_PATHS.model_test}?model_id=${encodeURIComponent(record.id)}`)
+  else if (info.key === 'edit') editModel(record)
+  else if (info.key === 'toggle') changeStatus(record)
+  else if (info.key === 'delete') deleteModel(record)
+}
 
 function changeReviewPage(pagination: { current?: number; pageSize?: number }): void {
   const nextPageSize = Math.min(Math.max(pagination.pageSize ?? reviewPageSize.value, 1), 200)
@@ -331,7 +352,6 @@ async function load(): Promise<void> {
   // 租户模式（L2/L3）必须显式锚定租户才能通过后端判权，默认选首个可见租户。
   const knownTenants = props.seedTenants?.length ? props.seedTenants : tenants.value
   if (!tenantId.value && knownTenants.length) tenantId.value = knownTenants[0].id
-  const tenantQuery = tenantId.value ? `?tenant_id=${encodeURIComponent(tenantId.value)}` : ''
   // seedTenants 提供时跳过 /admin/tenants（租户管理员无租户管理菜单节点）。
   const tenantsSource = props.seedTenants?.length
     ? Promise.resolve(props.seedTenants)
@@ -454,72 +474,21 @@ async function resolveReview(): Promise<void> {
   finally { reviewing.value = false }
 }
 
-function resetForm(): void {
-  Object.assign(form, {
-    key: '', provider: '', model_name: '', display_name: '',
-    endpoint_url: '', credential_ref: '', capabilities: ['chat'], rpm_limit: null, tpm_limit: null,
-    input_cost_per_million: null, output_cost_per_million: null,
-  })
-  editingId.value = null
-  clearCredentialRef.value = false
-}
+// ── 弹窗入口（表单 / 下发关系逻辑由子组件托管，页面只持开合与目标）─────────────
 
 function createModel(): void {
-  resetForm()
-  modalOpen.value = true
-}
-
-// 能力勾选桥接：标准集单选框布尔 ↔ form.capabilities 数组。
-function onCapabilityChange(value: string, event: Event | { target?: unknown }): void {
-  const checked = Boolean((event.target as HTMLInputElement | undefined)?.checked)
-  if (checked) {
-    if (!form.capabilities.includes(value)) form.capabilities.push(value)
-  } else {
-    form.capabilities = form.capabilities.filter(item => item !== value)
-  }
+  editingRecord.value = null
+  formOpen.value = true
 }
 
 function editModel(record: ModelRecord): void {
-  Object.assign(form, {
-    key: record.key, provider: record.provider, model_name: record.model_name,
-    display_name: record.display_name, endpoint_url: record.endpoint_url || '', credential_ref: '',
-    capabilities: [...record.capabilities], rpm_limit: record.rpm_limit ?? null, tpm_limit: record.tpm_limit ?? null,
-    input_cost_per_million: record.input_cost_per_million ?? null, output_cost_per_million: record.output_cost_per_million ?? null,
-  })
-  editingId.value = record.id
-  clearCredentialRef.value = false
-  modalOpen.value = true
+  editingRecord.value = record
+  formOpen.value = true
 }
 
-async function saveModel(): Promise<void> {
-  if (!form.provider.trim() || !form.model_name.trim() || !form.display_name.trim() || (!editingId.value && !form.key.trim())) {
-    message.warning('请填写所有必填模型信息')
-    return
-  }
-  saving.value = true
-  const isEditing = Boolean(editingId.value)
-  // 平台目录行归属由服务端指定（platform 租户）；tenant_id 不再进入契约。
-  const payload: Record<string, unknown> = {
-    provider: form.provider.trim(), model_name: form.model_name.trim(), display_name: form.display_name.trim(),
-    endpoint_url: form.endpoint_url.trim() || null,
-    capabilities: [...form.capabilities],
-    rpm_limit: form.rpm_limit, tpm_limit: form.tpm_limit,
-    input_cost_per_million: form.input_cost_per_million, output_cost_per_million: form.output_cost_per_million,
-  }
-  if (!isEditing) {
-    payload.key = form.key.trim()
-    if (form.credential_ref.trim()) payload.credential_ref = form.credential_ref.trim()
-  } else if (clearCredentialRef.value) payload.credential_ref = null
-  else if (form.credential_ref.trim()) payload.credential_ref = form.credential_ref.trim()
-  try {
-    await api(isEditing ? `${ADMIN_API_PREFIX}/models/${editingId.value}` : `${ADMIN_API_PREFIX}/models`, {
-      method: isEditing ? 'PATCH' : 'POST', body: JSON.stringify(payload),
-    })
-    message.success(isEditing ? '模型已更新' : '模型已创建')
-    modalOpen.value = false
-    await load()
-  } catch (error) { message.error(error instanceof Error ? error.message : '保存模型失败') }
-  finally { saving.value = false }
+function openTenantGrants(record: ModelRecord): void {
+  grantTarget.value = record
+  grantOpen.value = true
 }
 
 function changeStatus(record: ModelRecord): void {
@@ -560,67 +529,6 @@ function deleteModel(record: ModelRecord): void {
         message.error(error instanceof Error ? error.message : '删除模型失败')
         if (error instanceof ApiRequestError && error.status === 409) await load()
       }
-    },
-  })
-}
-
-// ── 三级分发：平台模型下发租户管理（超管）───────────────────────────────────
-
-// 可选租户：排除平台租户（目录宿主自身）与已 active 下发的租户（重复下发无意义）。
-const grantableTenantOptions = computed(() => tenants.value
-  .filter(tenant => tenant.slug !== 'platform' && tenant.status === 'active')
-  .filter(tenant => !grantRows.value.some(row => row.tenant_id === tenant.id && row.status === 'active'))
-  .map(tenant => ({ value: tenant.id, label: tenant.name })))
-
-async function loadTenantGrants(): Promise<void> {
-  if (!grantTarget.value) return
-  grantRowsLoading.value = true
-  try {
-    grantRows.value = await api<TenantGrantRow[]>(
-      `${ADMIN_API_PREFIX}/models/${grantTarget.value.id}/tenant-grants`)
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : '读取下发关系失败')
-  } finally { grantRowsLoading.value = false }
-}
-
-function openTenantGrants(record: ModelRecord): void {
-  grantTarget.value = record
-  grantTenantId.value = undefined
-  grantRows.value = []
-  grantOpen.value = true
-  void loadTenantGrants()
-}
-
-async function grantToTenant(): Promise<void> {
-  if (!grantTarget.value || !grantTenantId.value) {
-    message.warning('请选择要下发的租户')
-    return
-  }
-  granting.value = true
-  try {
-    await api(`${ADMIN_API_PREFIX}/models/${grantTarget.value.id}/tenant-grants`, {
-      method: 'POST', body: JSON.stringify({ tenant_id: grantTenantId.value }),
-    })
-    message.success('模型已下发给租户')
-    grantTenantId.value = undefined
-    await loadTenantGrants()
-    await load()
-  } catch (error) { message.error(error instanceof Error ? error.message : '下发模型失败') }
-  finally { granting.value = false }
-}
-
-function revokeFromTenant(row: TenantGrantRow): void {
-  Modal.confirm({
-    title: `回收租户“${row.tenant_name}”的模型？`,
-    content: '回收为软失效（可重新下发恢复）；该租户下全部应用的本模型下发会一并失效，业务端模型清单立即不可见。',
-    okText: '确认回收', cancelText: '取消', okButtonProps: { danger: true },
-    onOk: async () => {
-      try {
-        await api(`${ADMIN_API_PREFIX}/models/${row.model_id}/tenant-grants/${row.tenant_id}`, { method: 'DELETE' })
-        message.success('已回收该租户的模型下发')
-        await loadTenantGrants()
-        await load()
-      } catch (error) { message.error(error instanceof Error ? error.message : '回收模型下发失败') }
     },
   })
 }
@@ -760,16 +668,21 @@ watch([
           {{ view === 'usage' ? '调用账目' : '模型目录' }}
         </h3>
       </div>
+
+      <!-- 重设计：目录视图增加账本式概览带（点击卡片即筛选状态），位于目录区块之上。 -->
+      <CatalogSummaryCards
+        v-if="view === 'catalog'"
+        v-model:status-filter="catalogStatus"
+        :models="models"
+        :super-view="canManageModels"
+        class="mb-4"
+      />
+
       <a-card class="data-card" :bordered="false">
         <AdminTableToolbar :hint="view === 'catalog' ? '平台模型目录：超管维护并下发租户；租户/应用级视角只显示收到的模型（只读）。凭证仅保存外部引用，不回读。' : `共 ${usageEventTotal} 条模型调用账目，按时间倒序分页。结果、模型和 UTC 日期同时作用于汇总与账目，不筛选待核对队列。`">
-          <!-- 目录视图本地筛选：关键字 + 状态（数据量小，纯前端过滤即时生效） -->
+          <!-- 目录视图本地筛选：关键字（状态筛选由概览带承接）；数据量小，纯前端过滤即时生效 -->
           <template v-if="view === 'catalog'">
             <AdminSearchField v-model="catalogSearch" class="tenant-filter" placeholder="搜索名称 / 标识 / 提供方" />
-            <div class="tenant-filter-control">
-              <span class="tenant-filter-label">状态</span>
-              <a-select v-model:value="catalogStatus" class="tenant-filter" placeholder="全部状态" allow-clear
-                :options="[{ value: 'active', label: '启用' }, { value: 'disabled', label: '停用' }]" />
-            </div>
           </template>
           <div v-if="view === 'usage'" class="tenant-filter-control">
             <span class="tenant-filter-label">租户</span>
@@ -804,25 +717,80 @@ watch([
         </AdminTableToolbar>
         <!-- M4 日期错误提示用语义 token（原 Tailwind red-400） -->
         <p v-if="view === 'usage' && usageDateError" class="m-0 mb-3 text-xs text-[var(--color-error)]" role="alert">{{ usageDateError }}</p>
-        <!-- 超管视角整行可点直达下发租户；行内按钮 .stop 阻断冒泡避免重复打开弹窗 -->
+
+        <!-- 目录表：双行主列 + 能力 chip + mono 限流/价格 + 色点状态 + 收敛操作列 -->
         <a-table v-if="view === 'catalog'" :data-source="filteredModels" :columns="modelColumns" :loading="loading" row-key="id"
           :custom-row="canManageModels ? modelRowProps : undefined"
           :scroll="{ x: modelTableScrollWidth, y: 'calc(max(360px, 100vh - 430px))' }" :pagination="{ pageSize: 10, showSizeChanger: true }">
           <template #bodyCell="{ column, record }">
-            <template v-if="column.key === 'tenant_grant_count'">
+            <template v-if="column.key === 'display_name'">
+              <div class="min-w-0">
+                <div class="truncate font-medium text-[var(--color-text-primary)]">{{ record.display_name }}</div>
+                <div class="truncate font-mono text-[11px] leading-4 text-[var(--color-text-muted)]">{{ record.key }}</div>
+              </div>
+            </template>
+            <template v-else-if="column.key === 'provider'">
+              <!-- 悬停展示端点地址（原独立列收进提示，压缩横向宽度） -->
+              <div class="min-w-0" :title="record.endpoint_url || undefined">
+                <div class="truncate">{{ record.provider }}</div>
+                <div class="truncate font-mono text-[11px] leading-4 text-[var(--color-text-muted)]">{{ record.model_name }}</div>
+              </div>
+            </template>
+            <template v-else-if="column.key === 'capabilities'">
+              <div class="flex flex-wrap gap-1">
+                <span
+                  v-for="cap in record.capabilities"
+                  :key="cap"
+                  class="cap-chip"
+                  :title="capabilityHint(cap)"
+                >{{ capabilityLabel(cap) }}</span>
+                <span v-if="!record.capabilities?.length" class="text-[var(--color-text-muted)]">—</span>
+              </div>
+            </template>
+            <template v-else-if="column.key === 'limits'">
+              <span class="font-mono text-[12.5px] tabular-nums" :title="`RPM ${record.rpm_limit ?? '不限'} · TPM ${record.tpm_limit ?? '不限'}`">{{ formatLimits(record) }}</span>
+            </template>
+            <template v-else-if="column.key === 'price'">
+              <span class="font-mono text-[12.5px] tabular-nums" :class="{ 'text-[var(--color-text-muted)]': record.input_cost_per_million == null && record.output_cost_per_million == null }">{{ formatPricePair(record) }}</span>
+            </template>
+            <template v-else-if="column.key === 'credential_configured'">
+              <StatusDot :tone="record.credential_configured ? 'muted' : 'hollow'" :text="record.credential_configured ? '已配置' : '未配置'" />
+            </template>
+            <template v-else-if="column.key === 'quota_status'">
+              <StatusDot :tone="QUOTA_STATUS_META[record.quota_status as ModelRecord['quota_status']].tone" :text="QUOTA_STATUS_META[record.quota_status as ModelRecord['quota_status']].text" />
+            </template>
+            <template v-else-if="column.key === 'tenant_grant_count'">
               <a-button v-if="canManageModels" type="link" size="small" class="!px-0" @click.stop="openTenantGrants(record)">
                 {{ record.tenant_grant_count ?? 0 }} 个租户
               </a-button>
-              <span v-else>{{ record.application_grant_count ?? 0 }}</span>
+              <span v-else class="tabular-nums">{{ record.application_grant_count ?? 0 }} 个应用</span>
             </template>
-            <template v-else-if="column.key === 'capabilities'">{{ formatCapabilities(record.capabilities) }}</template>
-            <template v-else-if="column.key === 'credential_configured'"><a-tag>{{ record.credential_configured ? '已配置' : '未配置' }}</a-tag></template>
-            <template v-else-if="column.key === 'quota_status'"><a-tag :color="record.quota_status === 'enforced' ? 'orange' : record.quota_status === 'configured_only' ? 'blue' : 'default'">{{ ({ enforced: '已启用拦截', configured_only: '已配置，未拦截', unlimited: '未设置限额' } as Record<string, string>)[record.quota_status] }}</a-tag></template>
-            <template v-else-if="column.key === 'status'"><a-tag :color="record.status === 'active' ? 'green' : 'default'">{{ record.status === 'active' ? '启用' : '停用' }}</a-tag></template>
-            <template v-else-if="column.key === 'actions'"><a-space v-if="canManageModels" :size="2"><a-button type="link" size="small" @click.stop="openTenantGrants(record)">下发租户</a-button><a-button type="link" size="small" @click.stop="editModel(record)">编辑</a-button><a-button type="link" size="small" @click.stop="changeStatus(record)">{{ record.status === 'active' ? '停用' : '启用' }}</a-button><a-button type="link" size="small" danger @click.stop="deleteModel(record)">删除</a-button></a-space></template>
+            <template v-else-if="column.key === 'status'">
+              <StatusDot :tone="record.status === 'active' ? 'ok' : 'off'" :text="record.status === 'active' ? '启用' : '停用'" />
+            </template>
+            <template v-else-if="column.key === 'actions'">
+              <!-- 操作收敛：主操作直达下发租户，低频动作进溢出菜单（§9 操作列收敛） -->
+              <div class="flex items-center" @click.stop>
+                <a-button type="link" size="small" class="!px-0" @click="openTenantGrants(record)">下发租户</a-button>
+                <a-dropdown trigger="click" placement="bottomRight">
+                  <a-button type="text" size="small" aria-label="更多操作" @click.prevent>
+                    <EllipsisOutlined />
+                  </a-button>
+                  <template #overlay>
+                    <a-menu :selectable="false" @click="onModelMenu(record, $event)">
+                      <a-menu-item key="test">测试</a-menu-item>
+                      <a-menu-item key="edit">编辑</a-menu-item>
+                      <a-menu-item key="toggle">{{ record.status === 'active' ? '停用' : '启用' }}</a-menu-item>
+                      <a-menu-item key="delete" danger>删除</a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+              </div>
+            </template>
           </template>
           <template #emptyText><AdminEmpty emoji="🤖" :description="catalogEmptyDescription" /></template>
         </a-table>
+
         <!-- M3 统一表格组件：加载 / 错误 / 空态由 AdminTable 托管，替代原 v-if 三分支自定义空态 -->
         <AdminTable v-else
           :columns="usageColumns"
@@ -838,67 +806,31 @@ watch([
         >
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'created_at'">{{ new Date(record.created_at).toLocaleString() }}</template>
-            <template v-else-if="column.key === 'estimated_cost'">{{ record.estimated_cost === null ? '未知' : formatCostValue(record.estimated_cost) }}</template>
-            <template v-else-if="column.key === 'source'"><a-tag>{{ record.source === 'admin_reconciliation' ? '管理员核对' : '网关上报' }}</a-tag></template>
-            <template v-else-if="column.key === 'usage_is_estimated'"><a-tag :color="record.usage_is_estimated ? 'orange' : 'green'">{{ record.usage_is_estimated ? '估算' : '实测' }}</a-tag></template>
-            <template v-else-if="column.key === 'outcome'"><a-tag :color="record.outcome === 'succeeded' ? 'green' : 'red'">{{ record.outcome === 'succeeded' ? '成功' : '失败' }}</a-tag></template>
+            <template v-else-if="column.key === 'estimated_cost'">
+              <span class="font-mono text-[12.5px] tabular-nums" :class="record.estimated_cost === null ? 'text-[var(--color-text-muted)]' : ''">{{ record.estimated_cost === null ? '未知' : formatCostValue(record.estimated_cost) }}</span>
+            </template>
+            <template v-else-if="column.key === 'source'">
+              <span class="text-[13px] text-[var(--color-text-secondary)]">{{ record.source === 'admin_reconciliation' ? '管理员核对' : '网关上报' }}</span>
+            </template>
+            <template v-else-if="column.key === 'usage_is_estimated'">
+              <StatusDot :tone="record.usage_is_estimated ? 'warn' : 'ok'" :text="record.usage_is_estimated ? '估算' : '实测'" />
+            </template>
+            <template v-else-if="column.key === 'outcome'">
+              <StatusDot :tone="record.outcome === 'succeeded' ? 'ok' : 'err'" :text="record.outcome === 'succeeded' ? '成功' : '失败'" />
+            </template>
+            <template v-else-if="column.key === 'latency_ms'">
+              <span class="font-mono text-[12.5px] tabular-nums">{{ record.latency_ms ?? '—' }}</span>
+            </template>
           </template>
         </AdminTable>
       </a-card>
     </div>
 
-    <a-modal v-model:open="modalOpen" :title="editingId ? `编辑模型：${form.display_name}` : '新建平台模型'"
-      ok-text="保存" cancel-text="取消" :confirm-loading="saving" @ok="saveModel">
-      <a-form layout="vertical">
-        <a-form-item v-if="!editingId" label="模型标识"><a-input v-model:value="form.key" :maxlength="100" placeholder="gpt-4o" /></a-form-item>
-        <a-form-item label="提供方"><a-input v-model:value="form.provider" :maxlength="100" placeholder="openai-compatible" /></a-form-item>
-        <a-form-item label="模型名称"><a-input v-model:value="form.model_name" :maxlength="160" /></a-form-item>
-        <a-form-item label="展示名称"><a-input v-model:value="form.display_name" :maxlength="160" /></a-form-item>
-        <a-form-item label="端点 URL（HTTPS）"><a-input v-model:value="form.endpoint_url" :maxlength="500" placeholder="留空可清除当前地址" /></a-form-item>
-        <a-form-item label="外部凭证引用"><a-input v-model:value="form.credential_ref" :maxlength="300" :disabled="clearCredentialRef" :placeholder="editingId ? '留空保持现有引用不变' : 'vault://team/provider-key'" /></a-form-item>
-        <a-checkbox v-if="editingId" v-model:checked="clearCredentialRef">清除当前凭证引用</a-checkbox>
-        <!-- 能力标准集勾选（深度思考/思考过程/工具调用等），与后端白名单同源校验 -->
-        <a-form-item label="能力">
-          <div class="flex flex-wrap gap-x-4 gap-y-1">
-            <a-checkbox v-for="option in MODEL_CAPABILITY_OPTIONS" :key="option.value"
-              :checked="form.capabilities.includes(option.value)"
-              :title="option.hint"
-              @change="onCapabilityChange(option.value, $event)"
-            >{{ option.label }}</a-checkbox>
-          </div>
-        </a-form-item>
-        <a-form-item label="RPM 限额（请求/分钟）"><a-input-number v-model:value="form.rpm_limit" :min="1" style="width:100%" placeholder="留空表示不限制" /></a-form-item>
-        <a-form-item label="TPM 限额（Token/分钟）"><a-input-number v-model:value="form.tpm_limit" :min="1" style="width:100%" placeholder="留空表示不限制" /></a-form-item>
-        <a-form-item label="输入价格/百万 Token"><a-input-number v-model:value="form.input_cost_per_million" :min="0" :precision="6" style="width:100%" /></a-form-item>
-        <a-form-item label="输出价格/百万 Token"><a-input-number v-model:value="form.output_cost_per_million" :min="0" :precision="6" style="width:100%" /></a-form-item>
-        <a-alert :message="editingId ? '模型标识只读；凭证留空保持原引用，只有勾选清除才会删除。' : '目录统一归属平台租户；创建后通过「下发租户」控制租户可见性。模型凭证仅接受 vault:// 或 secret:// 外部引用；限额是否拦截由服务端配额开关控制。'" type="info" show-icon />
-      </a-form>
-    </a-modal>
+    <!-- 重设计：模型表单弹窗（分区表单，保存链路契约不变） -->
+    <ModelFormModal v-model:open="formOpen" :model="editingRecord" @saved="load" />
 
     <!-- 三级分发：平台模型 → 租户 下发管理（超管；回收为软失效并级联应用下发）。 -->
-    <a-modal v-model:open="grantOpen" :title="`下发租户：${grantTarget?.display_name || ''}`" :footer="null" width="720px">
-      <div class="mb-4 flex items-center gap-2">
-        <a-select v-model:value="grantTenantId" class="min-w-0 flex-1" aria-label="选择要下发的租户"
-          placeholder="选择要下发的租户" allow-clear :disabled="grantTarget?.status !== 'active'"
-          :options="grantableTenantOptions" />
-        <a-button type="primary" :loading="granting" :disabled="!grantTenantId || grantTarget?.status !== 'active'" @click="grantToTenant">下发</a-button>
-      </div>
-      <a-alert v-if="grantTarget?.status !== 'active'" class="mb-3" type="warning" show-icon
-        message="模型已停用：全链路不可见；启用后才能重新下发。" />
-      <a-table :data-source="grantRows" :columns="grantColumns" :loading="grantRowsLoading" row-key="tenant_id" :pagination="false" size="small">
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'status'"><a-tag :color="record.status === 'active' ? 'green' : 'default'">{{ record.status === 'active' ? '生效中' : '已回收' }}</a-tag></template>
-          <template v-else-if="column.key === 'granted_at'">{{ record.granted_at ? new Date(record.granted_at).toLocaleString() : '—' }}</template>
-          <template v-else-if="column.key === 'revoked_at'">{{ record.revoked_at ? new Date(record.revoked_at).toLocaleString() : '—' }}</template>
-          <template v-else-if="column.key === 'actions'">
-            <a-button v-if="record.status === 'active'" type="link" size="small" danger @click="revokeFromTenant(record)">回收</a-button>
-            <span v-else class="text-xs text-[var(--color-text-muted)]">—</span>
-          </template>
-        </template>
-        <template #emptyText><AdminEmpty emoji="🏷️" description="尚未下发给任何租户" /></template>
-      </a-table>
-      <p class="mb-0 mt-3 text-xs text-[var(--color-text-muted)]">回收为软失效：该租户下全部应用的本模型下发一并失效；重新下发即恢复租户级可见（应用级需租户重新下发）。</p>
-    </a-modal>
+    <TenantGrantModal v-model:open="grantOpen" :model="grantTarget" :tenants="tenants" @changed="load" />
 
     <a-modal v-model:open="reviewOpen" title="核对模型调用" ok-text="提交核对" cancel-text="取消"
       :confirm-loading="reviewing" @ok="resolveReview">
@@ -948,6 +880,19 @@ watch([
 .tenant-filter { flex: 0 0 auto; }
 /* 超管视角整行可点（直达下发租户）；hover 高亮沿用 antd 行悬停默认 */
 .model-governance-page :deep(.model-row-clickable) { cursor: pointer; }
+/* 能力 chip：原生 span + token（P362/P388 教训，不走 a-tag），黑白灰发丝线轮廓 */
+.cap-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  white-space: nowrap;
+}
 @media (max-width: 700px) {
   .tenant-filter-control { align-items: stretch; flex-direction: column; gap: 6px; }
   .tenant-filter { width: 100%; }

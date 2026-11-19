@@ -10,7 +10,6 @@ export {
   AppstoreOutlined,
   ApartmentOutlined,
   BankOutlined,
-  ClusterOutlined,
   UserOutlined,
   MailOutlined,
   TeamOutlined,
@@ -24,7 +23,6 @@ export {
   FileSearchOutlined,
   ReadOutlined,
   SearchOutlined,
-  UserSwitchOutlined,
   IdcardOutlined,
   MenuOutlined,
   MenuFoldOutlined,
@@ -46,5 +44,12 @@ export {
   // 圆圈感叹号：页头副标题 / 工具条提示的降噪入口图标，悬停经 a-tooltip 展示完整说明。
   ExclamationCircleOutlined,
   SettingOutlined,
-  CheckCircleFilled,
+  // 模型测试台：发送 / 连接探针 / 停止生成 / 清空会话 / 回到底部（均为官方具名图标）。
+  SendOutlined,
+  ThunderboltOutlined,
+  StopOutlined,
+  ClearOutlined,
+  ArrowDownOutlined,
+  // 模型测试台：助手消息「重新生成」动作（官方 redo 图标）。
+  RedoOutlined,
 } from '@ant-design/icons-vue'

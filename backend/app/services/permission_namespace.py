@@ -74,12 +74,6 @@ def resolve_permission_namespace(*, code: str, catalog_namespace: str | None) ->
     return normalized
 
 
-def is_platform_catalog_namespace(catalog_namespace: str) -> bool:
-    """判断目录命名空间是否为平台保留命名空间（platform）。"""
-    return normalize_namespace(catalog_namespace) == PLATFORM_NAMESPACE
-
-
-# 与前端 permissionGroups.ts 同一套管理面判定：五域前缀或菜单/按钮码。
 def is_management_code(code: str) -> bool:
     """管理面码判定：五域前缀或菜单/按钮码。"""
     return code.startswith(MANAGEMENT_DOMAIN_PREFIXES)

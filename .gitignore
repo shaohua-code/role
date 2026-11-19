@@ -12,3 +12,6 @@ __pycache__/
 *.py[cod]
 *.tsbuildinfo
 .ruff_cache/
+
+# pnpm 本地 content store（沙箱环境下置于 frontend 内，勿提交）
+frontend/.pnpm-store/

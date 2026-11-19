@@ -85,22 +85,6 @@ export function hasAnyCode(held: ReadonlySet<string>, codes: readonly string[]):
   return codes.some(code => held.has(code))
 }
 
-export function hasCode(held: ReadonlySet<string>, code: string): boolean {
-  return held.has(code)
-}
-
-/** 汇总某租户（含其应用）持有的全部管理码。 */
-export function tenantCodes(capabilities: Capabilities, tenantId: string): Set<string> {
-  const held = new Set<string>(capabilities.platform_codes)
-  const tenant = capabilities.tenants.find(item => item.tenant_id === tenantId)
-  if (!tenant) return held
-  for (const code of tenant.codes) held.add(code)
-  for (const application of tenant.applications) {
-    for (const code of application.codes) held.add(code)
-  }
-  return held
-}
-
 /** 全局（跨租户并集）持有的管理码，用于菜单裁剪与按钮判权。 */
 export function allCodes(capabilities: Capabilities): Set<string> {
   const held = new Set<string>(capabilities.platform_codes)
@@ -136,10 +120,6 @@ export function cachedHasAny(codes: readonly string[]): boolean {
   return hasAnyCode(allCodes(cached), codes)
 }
 
-export function cachedHas(code: string): boolean {
-  return cachedHasAny([code])
-}
-
 /**
  * 统一判权口径（F7）：菜单/按钮显隐只走这一处，替代散落的
  * `platform_admin && hasAny(...)` / `platform_admin || hasAny(...)` 双轨写法。
@@ -154,11 +134,6 @@ function hasKindCode(kind: 'menu' | 'button', code: string): boolean {
   // 仅接受本码域的码，域外码视为未持有，避免跨域误判
   if (!code.startsWith(`${kind}.`)) return false
   return hasAnyCode(allCodes(capabilities), [code])
-}
-
-/** 菜单可见判权：L1 放行，否则需持有该 menu.* 码。 */
-export function hasMenu(code: string): boolean {
-  return hasKindCode('menu', code)
 }
 
 /** 按钮显隐判权：L1 放行，否则需持有该 button.* 码。 */

@@ -1,7 +1,7 @@
 """greenfield_iam
 
 绿场唯一初始迁移：完整 IAM schema（四级 RBAC：roles.kind + permissions.surface/requires_data_scope）。
-由 ORM metadata 自动生成；旧迁移链已归档至 migrations/archive_pre_greenfield/。
+由 ORM metadata 自动生成；旧五域迁移链已删除（git 历史可查）。
 
 Revision ID: 0001_greenfield_iam
 Revises:

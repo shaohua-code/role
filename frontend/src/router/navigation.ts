@@ -16,7 +16,7 @@ import {
 } from '@/plugins/icons'
 
 /** Admin page keys. 接入向导已下线，只读对接指南与应用工作台同权；运营总览为 L1 入口，日常主路径是两个工作台，列表页进「高级管理」。profile 为个人信息页（登录即可达，不占侧栏，入口在顶栏用户菜单）。 */
-export type PageKey = 'overview' | 'profile' | 'tenants' | 'applications' | 'application_workspace' | 'integration_guide' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'organization_workspace' | 'tenant_access' | 'roles' | 'authorization_simulation' | 'models' | 'model_usage' | 'themes' | 'audit'
+export type PageKey = 'overview' | 'profile' | 'tenants' | 'applications' | 'application_workspace' | 'integration_guide' | 'application_roles' | 'users' | 'invitations' | 'groups' | 'organizations' | 'organization_workspace' | 'tenant_access' | 'roles' | 'authorization_simulation' | 'models' | 'model_test' | 'model_usage' | 'themes' | 'audit'
 
 /** Sidebar groups aligned with user-centent IA + 高级收口。 */
 export type NavGroupKey = 'root' | 'identity' | 'access' | 'advanced' | 'platform' | 'ops'
@@ -43,6 +43,8 @@ export const PAGE_PATHS: Record<PageKey, string> = {
   roles: '/roles',
   authorization_simulation: '/authorization-simulation',
   models: '/models',
+  // 模型测试台：不占侧栏导航（入口在模型治理目录行操作），深链携带 model_id。
+  model_test: '/models/test',
   model_usage: '/model-usage',
   themes: '/themes',
   audit: '/audit',
@@ -122,6 +124,7 @@ export const PAGE_INFO: Partial<Record<PageKey, { title: string }>> = {
   organization_workspace: { title: '组织工作台' },
   authorization_simulation: { title: '鉴权模拟' },
   models: { title: '模型治理' },
+  model_test: { title: '模型测试台' },
   model_usage: { title: '模型用量' },
   themes: { title: '登录主题' },
   audit: { title: '审计日志' },

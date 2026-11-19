@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import * as echarts from 'echarts/core'
-import { graphic } from 'echarts/core'
-import { BarChart, PieChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+import * as echarts from 'echarts/lib/export/core'
+import { graphic } from 'echarts/lib/export/core'
+import { BarChart, PieChart } from 'echarts/lib/export/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/lib/export/components'
+import { CanvasRenderer } from 'echarts/lib/export/renderers'
 import type { AdminOverview } from '@/api'
 
 echarts.use([PieChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])

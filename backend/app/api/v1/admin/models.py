@@ -36,8 +36,20 @@ def _serialize_model(
     tenant_grant_count: int | None = None,
     application_grant_count: int | None = None,
 ) -> dict:
-    """目录行摘要；凭证引用只转换为是否已配置，不向控制台回传。"""
+    """目录行摘要；明文密钥永不回传，secret://env 引用回显变量名便于管理员确认配置。"""
     enforcement_enabled = get_settings().model_quota_enforcement_enabled
+    # 凭证回显分级：secret_env 回传环境变量名（引用本身不含密钥）；other（如 vault://）
+    # 只标注种类不回传原文；未配置为 None。真实密钥在部署平台环境中，数据库/UI 均不可得。
+    credential_ref = model.credential_ref
+    if credential_ref and credential_ref.startswith("secret://env/"):
+        credential_env_var: str | None = credential_ref.removeprefix("secret://env/")
+        credential_ref_kind: str | None = "secret_env"
+    elif credential_ref:
+        credential_env_var = None
+        credential_ref_kind = "other"
+    else:
+        credential_env_var = None
+        credential_ref_kind = None
     item = {
         "id": str(model.id),
         "tenant_id": str(model.tenant_id),
@@ -46,7 +58,9 @@ def _serialize_model(
         "model_name": model.model_name,
         "display_name": model.display_name,
         "endpoint_url": model.endpoint_url,
-        "credential_configured": bool(model.credential_ref),
+        "credential_configured": bool(credential_ref),
+        "credential_env_var": credential_env_var,
+        "credential_ref_kind": credential_ref_kind,
         "capabilities": model.capabilities,
         "rpm_limit": model.rpm_limit,
         "tpm_limit": model.tpm_limit,

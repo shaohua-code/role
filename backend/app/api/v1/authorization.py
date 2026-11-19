@@ -102,10 +102,19 @@ def list_my_resources(client_id: str, user: User = Depends(current_user), db: Se
 
     取用户有效角色（直连绑定 ∪ 活跃用户组继承）的资源授权并集，仅回传 active 节点；
     分配时服务端已补齐祖先，这里仍按「父节点不在集合内则上提到顶层」兜底组装。
+    P1 收口：与 my-models 同口径——目标应用以服务端验签的 OIDC 上下文
+    （_oidc_application_id）为准，不信任客户端传入的 client_id，同租户持应用 A
+    token 查应用 B 一律拒绝；管理会话无已定义的应用可见性边界，fail-closed 拒绝。
     """
-    application = db.scalars(select(Application).where(Application.client_id == client_id)).first()
+    if getattr(user, "_auth_protocol", None) != "oidc" or not getattr(user, "_oidc_application_id", None):
+        # 本端点只服务业务应用 OIDC 会话；管理台在应用工作台资源页查看资源树。
+        raise HTTPException(403, "资源树仅向业务应用 OIDC 会话开放")
+    application = db.get(Application, user._oidc_application_id)
     if not application or application.status != "active":
         raise HTTPException(404, "应用不存在")
+    if client_id != application.client_id:
+        # client_id 只作一致性校验：与已验证应用不符即拒绝，杜绝跨应用读取资源树。
+        raise HTTPException(403, "client_id 与登录应用不一致")
     memberships = db.scalars(select(TenantMembership).where(
         TenantMembership.user_id == user.id,
         TenantMembership.tenant_id == application.tenant_id,

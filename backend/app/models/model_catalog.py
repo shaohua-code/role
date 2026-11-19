@@ -79,7 +79,8 @@ class ModelUsageEvent(Base):
         UniqueConstraint("request_id", name="uq_model_usage_request_id"),
         CheckConstraint("input_tokens >= 0 AND output_tokens >= 0 AND (latency_ms IS NULL OR latency_ms >= 0)", name="ck_model_usage_nonnegative"),
         CheckConstraint("outcome IN ('succeeded', 'failed')", name="ck_model_usage_outcome"),
-        CheckConstraint("source IN ('gateway', 'admin_reconciliation')", name="ck_model_usage_source"),
+        # model_test=管理台测试台经受控出口发起的真实调用（设计文档 §5，与业务流量可区分但不漏计）。
+        CheckConstraint("source IN ('gateway', 'admin_reconciliation', 'model_test')", name="ck_model_usage_source"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

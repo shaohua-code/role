@@ -9,6 +9,7 @@ from app.api.v1.admin.audit import router as audit_router
 from app.api.v1.admin.groups import router as user_groups_router
 from app.api.v1.admin.invitations import router as invitations_router
 from app.api.v1.admin.model_usage import router as model_usage_router
+from app.api.v1.admin.model_tests import router as model_tests_router
 from app.api.v1.admin.models import router as model_catalog_router
 from app.api.v1.admin.organizations import router as organization_router
 from app.api.v1.admin.overview import router as overview_router
@@ -35,6 +36,7 @@ for domain_router in (
     themes_router,
     uploads_admin_router,
     model_catalog_router,
+    model_tests_router,
     model_usage_router,
     audit_router,
 ):

@@ -17,6 +17,7 @@ export const GroupManagement = loadFeature(() => import('@/views/groups/GroupMan
 export const LoginThemeManagement = loadFeature(() => import('@/views/themes/LoginThemeManagement.vue'))
 export const OverviewPage = loadFeature(() => import('@/views/overview/OverviewPage.vue'))
 export const ModelGovernancePage = loadFeature(() => import('@/views/models/ModelGovernancePage.vue'))
+export const ModelTestPage = loadFeature(() => import('@/views/models/test/index.vue'))
 export const TenantManagement = loadFeature(() => import('@/views/tenants/TenantManagement.vue'))
 export const ApplicationWorkspace = loadFeature(() => import('@/views/application-workspace/index.vue'))
 export const IntegrationGuidePage = loadFeature(() => import('@/views/integration-guide/index.vue'))

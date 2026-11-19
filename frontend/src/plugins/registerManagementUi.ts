@@ -16,7 +16,11 @@ import {
   Result,
   Row,
   Col,
+  // 模型测试台「应用对话 / 平台连接」模式切换（走查发现未注册导致 a-segmented 解析告警、fallback 渲染）。
+  Segmented,
   Select,
+  // 模型测试台调试抽屉 Temperature / Top P 滑杆（与 Segmented 同轮走查发现未注册告警）。
+  Slider,
   Statistic,
   Steps,
   Switch,
@@ -49,7 +53,9 @@ export function registerManagementUi(app: App): void {
     Result,
     Row,
     Col,
+    Segmented,
     Select,
+    Slider,
     Statistic,
     Steps,
     Switch,

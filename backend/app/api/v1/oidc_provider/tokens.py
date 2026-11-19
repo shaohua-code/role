@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from urllib.parse import unquote_plus
 from uuid import UUID, uuid4
 import jwt
@@ -18,8 +19,9 @@ from app.core.security import (access_token_is_revoked, dummy_password_hash, oid
                                revoke_access_token, verify_password)
 from app.db.session import get_db_session
 from app.models.application import Application
-from app.models.identity import TenantMembership, User
+from app.models.identity import AuditEvent, TenantMembership, User
 from app.models.oidc import OAuthAuthorizationCode, OAuthRefreshToken
+from app.services.login_throttle import LoginThrottleService
 from .common import _active_client, _app_membership, _error, _hash, _issuer, _oauth_audit, _parse_form
 from .constants import ACCESS_TOKEN_TTL, VERIFIER_RE
 router = APIRouter()
@@ -217,6 +219,21 @@ async def token(request: Request, authorization: str | None = Header(default=Non
         # 密码授权不经过授权同意页，scope 白名单硬编码为标准四项，不允许客户端自扩。
         if not scopes <= {"openid", "profile", "email", "offline_access"} or "openid" not in scopes:
             return _error("invalid_scope", "scope 超出密码授权允许范围")
+        # P1 收口：与管理登录共用三桶节流（账号 / 邮箱×来源 / 来源），防止绕过管理台
+        # 限流对公开 token 端点持续撞库、刷 Argon2 计算；地址用统一可信解析。
+        settings = get_settings()
+        client_ip = LoginThrottleService.client_ip_for_request(request, settings)
+        ticket = LoginThrottleService.begin_login_attempt(
+            db, username.strip().casefold(), client_ip, settings)
+        if ticket.blocked_until:
+            retry_after = max(1, ceil((ticket.blocked_until - datetime.now(timezone.utc)).total_seconds()))
+            db.commit()
+            # 保持 OAuth 错误结构（error/error_description），429 + Retry-After 供退避。
+            return JSONResponse(
+                {"error": "rate_limited", "error_description": "登录尝试过于频繁，请稍后再试。"},
+                status_code=429,
+                headers={"Cache-Control": "no-store", "Pragma": "no-cache", "Retry-After": str(retry_after)},
+            )
         # 与管理登录同口径：小写匹配 + 无用户时对比一次性假哈希抹平时序差异。
         user = db.scalar(select(User).where(func.lower(User.email) == username.strip().casefold()))
         try:
@@ -224,9 +241,21 @@ async def token(request: Request, authorization: str | None = Header(default=Non
         except (ValueError, TypeError):
             valid = False
         if not user or not valid or user.status != "active":
+            # 失败计入节流桶并写拒绝审计（与管理登录 auth.login denied 同构）；
+            # 未知账号不落操作者 ID，防以审计枚举已注册邮箱。
+            LoginThrottleService.record_login_failure(db, ticket, settings)
+            db.add(AuditEvent(actor_user_id=user.id if user else None, tenant_id=app.tenant_id,
+                              action="auth.login", target_type="user",
+                              target_id=str(user.id) if user else None,
+                              outcome="denied", source_ip=client_ip,
+                              details={"client_id": app.client_id, "grant_type": "password"}))
+            db.commit()
             return _error("invalid_grant", "账号或密码不正确")
+        LoginThrottleService.clear_login_identifier_failures(db, ticket, settings)
         membership = _app_membership(db, app, user)
         if not membership:
+            # 凭证正确但无本应用有效角色：不计入失败桶（非撞库信号），按入场口径拒绝。
+            db.commit()
             return _error("invalid_grant", "账号没有该应用的租户授权")
         result, _ = _token_payload(db, user, app, scopes, None, membership)
         _oauth_audit(db, user, app, "oidc.token.password", " ".join(sorted(scopes)), request)

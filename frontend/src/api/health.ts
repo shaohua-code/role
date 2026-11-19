@@ -1,4 +1,4 @@
-export interface HealthResponse {
+interface HealthResponse {
   status: string
   service: string
 }

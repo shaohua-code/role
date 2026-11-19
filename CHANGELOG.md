@@ -1,5 +1,180 @@
 #﻿##﻿# 变更日志
 
+## 2026-11-19 模型密钥配置简化为单文件（spec: simplify-model-key-config；隔离验证全绿）
+
+- **需求：** 用户要求「只要在 .env 配置密钥就好，重新设计」。原流程新增供应商需同时改 `.env` + `compose.yaml` 两处。
+- **方案：** `compose.yaml` api 服务新增 `env_file: - ./.env` 整文件注入（置于 environment 前，注释说明优先级语义）；Docker Compose 语义下显式 `environment` 优先于 `env_file`，现有全部显式映射行为零变化，`DEEPSEEK_API_KEY` 显式透传行保留。**此后新增供应商密钥只改 `.env` 一处 + `docker compose up -d api` 重建容器，compose.yaml 永不再改。** 注入变量集与既有显式透传高度重合（SMTP 密码等本就进容器），敏感面无实质扩大；明文密钥仍不入库/不落审计/不进 UI。
+- **附带修复：** `model_channel.py` 第 1 行被误粘贴一行 `.env` 内容（`MOONSHOT_API_KEY=sk-你的真实key`），Python 语法损坏、模块无法导入——恢复原 docstring 首行（误操作修正，非回滚有意改动）。
+- **文档同步：** `.env` 模型密钥区新增操作注释（只改本文件 + 重建容器 + 管理台填变量名）；`ai/04-模块导航/模型用量/导航.md` 新增「供应商密钥注入」条目。
+- **验证：** `model_channel.py` ast 语法解析 OK + `tests/test_model_channel.py` 15/15 passed；`compose.yaml` PyYAML 解析 OK（`env_file=['./.env']` 且 `DEEPSEEK_API_KEY` 显式透传仍在）。**未运行：** `docker compose config` 与目标环境容器内 `printenv` 验证、管理台 moonshot 模型真实外呼探针（本终端无 Docker CLI，CHANGELOG 2026-11-18 已有同类记录）——用户侧执行：`.env` 加 `MOONSHOT_API_KEY=<真实key>` → `docker compose up -d api` → 管理台建模型（provider=moonshot、API 地址留空、密钥填 `MOONSHOT_API_KEY`）→ 测试台探针应 ok。
+
+## 2026-11-19 全项目死代码与冗余文件清理（零引用静态排查；前端 build/smoke/eslint + 后端导入检查全绿）
+
+- **范围与方法：** 用户要求梳理全项目删除无用文件与代码。前端/后端各做一轮全量引用图静态排查（入口 main.ts / App.vue / page-registry 与 main.py / 路由聚合器出发，覆盖静态 import、`@/` 别名、`() => import()` 懒加载；后端另做 AST 符号级统计与动态 import 扫描，零动态引用）。SQLAlchemy 事件钩子（`_role_kind_default` 等）、`seed_greenfield._prune_retired_catalog_codes`、`LEGACY_REVOKED_NODE_CODES` 等疑似死代码经复核为存活机制，未动。用户拍板三项：删 `archive_pre_greenfield`、一并清冗余导出、`ApplicationPermissionPanel` 搬家收口。
+- **删除（文件级）：** `frontend/src/appearance.css`（空壳，main.ts 同步去 import）；空目录 `views/organizations/`、`views/permission-health/`、`views/_archive/` 整棵（5 子目录全空，归档实体早已不存在）；`views/applications/`（唯一存活的 ApplicationPermissionPanel.vue 搬入 `application-workspace/components/`，PermissionsTab 改相对路径引用，顺带修正两处「应用管理抽屉」过时注释）；`backend/migrations/archive_pre_greenfield/`（32 个旧五域迁移归档，Alembic 不加载，git 历史可查，0001 迁移 docstring 同步改写）；缓存与产物 `frontend/.pnpm-store/`（257MB）、`frontend/dist/`、`frontend/tsconfig.tsbuildinfo`、`backend/.ruff_cache/`、根目录 `_agent_dump/`。`backups/`（受保护备份）、`sdk/`、`scripts/`、`page-registry.ts`（smoke 依赖）确认保留。
+- **删除（符号级）：** 后端零引用死符号 `permission_namespace.is_platform_catalog_namespace`、`schemas/organizations.MembershipCreate`；前端零引用冗余导出约 15 处——capabilities.ts（hasCode/tenantCodes/cachedHas/hasMenu，hasKindCode 与 hasButton 保留）、permissionTree.ts（buildPermissionTree/flattenLeaves/createPrefixForNode/CREATE_KIND_OPTIONS/DOMAIN_CHIPS 删除；PermissionLeaf/PermissionMenuMeta/PermissionLevelScopes/normalizeTreeApiNode/relatedApiCodes/inferPermissionKind/splitDataScopeCode 收为模块私有）、permissionContract.ts（getCachedPermissionContract/getCachedPermissionMeta）、page-registry.ts（createVisitedPages）、useReadinessPoll.ts（ReadinessPoll 类型）、paged.ts/modelCapabilities.ts/health.ts/authCapabilities.ts（内部类型去 export）、icons.ts（ClusterOutlined/UserSwitchOutlined/CheckCircleFilled 三个零引用 re-export）。
+- **同步修正：** tsconfig.json 去掉 `_archive` exclude；eslint.config.mjs 去 `_archive` ignore；router `/project-integration` 注释改为「向导源码已删除」；frontend/README.md「目录」节 views 清单更新为现存 16 模块并删 appearance.css 行（历史记录段不动）；docs/应用对接.md、ai/导航 5 处（项目是什么/信息架构/术语表/红线/目录地图）及组织管理、角色与访问控制、审计与运维 3 个模块导航中指向已删目录的引用全部改写。`frontend/README.md` 正文长段落仍引用更早期 IA（views/permissions、application-roles 等，早于本次清理即已过时），留待后续 README 专项重写。
+- **验证：** 前端 `vue-tsc -b && vite build` EXIT=0、`pnpm smoke` ok（pageKeys: 20）、改动 15 文件 ESLint EXIT=0；后端两个改动文件 py_compile 通过 + `permission_namespace`/`organizations`/`permission_kinds` 导入 OK、`is_management_code` 行为正常；全仓 grep 确认 `archive_pre_greenfield`/`is_platform_catalog_namespace`/`MembershipCreate`/`views/_archive`/`appearance.css` 无残留代码引用（仅历史文档表述）。未运行：后端 pytest 全量套件（零行为改动，仅删零引用符号；隔离 Postgres 套件需本地 DB 环境）。
+
+## 2026-11-19 模型编辑回显凭证环境变量名（用户反馈「编辑时看不到已配的密钥变量名」；隔离验证全绿）
+
+- **背景：** 用户编辑模型时凭证输入框为空，无法确认已配置的环境变量名。原设计为「凭证引用一律不回读」（仅回 credential_configured 布尔）；经确认改造为**分级回显**——`secret://env/` 引用回传变量名（引用本身不含密钥，且接口已有超管范围 + button.models.manage 双重收口，无增量泄露），vault:// 等其他格式只标注「外部引用」不回传原文，明文密钥任何形态仍然永不回传。
+- **后端（admin/models.py `_serialize_model`）：** 新增 `credential_env_var`（secret_env 时剥离前缀回传变量名，否则 null）与 `credential_ref_kind`（`secret_env` / `other` / null）两个字段；PATCH 响应不变（前端保存后 reload 列表走新序列化）。
+- **前端：** ModelRecord / ModelFormTarget 契约加两字段；编辑打开时 `credential_ref_kind === 'secret_env'` 回显变量名到输入框；状态标签四级化——环境变量（已回显）/ 外部引用（vault 旧格式）/ 已配置（未知种类兼容）/ 未配置；hint 补「修改后保存即替换」说明。保存语义不变：留空保持原引用、改动即替换、显式勾选才清除。
+- **验证：** 后端 test_model_catalog_updates + test_model_distribution + test_model_channel 共 33 passed / 2 skipped；前端 vue-tsc 0 / ESLint 0。未运行：浏览器走查（编辑已配置 deepseek 模型应回显 DEEPSEEK_API_KEY 并带「环境变量」标签）。
+- **安全边界说明：** 「不回读」边界由「不回传明文密钥」收窄为「不回传密钥引用原文，secret://env 仅回传变量名」；docstring 与注释同步。
+
+## 2026-11-19 模型表单对齐截图改造：凭证只填环境变量名 + 内置供应商默认端点扩充（隔离验证全绿）
+
+- **背景：** 用户提供外部「编辑AI模型」表单截图（模型名称/模型Key/供应商标识/API 地址/API 密钥环境变量名/基准价），要求参考改造。经确认三项取舍：凭证只填环境变量名、扩充内置供应商默认表、完整地址自动剥离 `/chat/completions` 尾巴。
+- **后端（model_channel.py）：** `_PROVIDER_DEFAULT_BASE_URLS` 由 2 家扩至 10 个键：deepseek/openai 保留，新增 moonshot（月之暗面）、qwen+dashscope（百炼兼容模式）、zhipu+glm（智谱）、yasoll（截图聚合网关）、openrouter、siliconflow；全部为 OpenAI 兼容端点（与 stream_chat SSE 协议匹配）。逻辑零改动，仅数据行扩充——表单留空 API 地址时按供应商标识兜底，未列入的仍须显式配置端点。
+- **前端（ModelFormModal.vue）：** ① 04 区由「外部凭证引用」（手填 vault:///secret:// 完整引用）改为「API 密钥环境变量名」——只填 `YASOLL_API_KEY` 形态的变量名，提交时前端组装 `secret://env/<变量名>`；正则 `^[A-Za-z_][A-Za-z0-9_]*$` 前置校验；编辑态不回读（沿用 credential_configured 布尔），label 挂「已配置/未配置」a-tag，留空保持原引用 + 清除勾选语义不变。② API 地址提交前 `normalizeEndpointUrl` 剥尾斜杠与尾部 `/chat/completions`（兼容截图填完整端点习惯，避免服务端拼出重复路径）；placeholder 改「留空使用供应商标识内置默认地址」。③ 提示文案与底部 alert 同步改写（.env + compose.yaml 注入说明）。后端契约零变化（credential_ref 仍为 secret://env/ 完整引用）。
+- **验证：** 后端 `tests/test_model_channel.py` 15/15 passed（resolve_base_url 既有用例不受扩充影响；venv 补装 pytest）；前端 ESLint 0 / vue-tsc 0 / vite build EXIT=0（dist 已清理）。未运行：浏览器走查（表单交互与真实外呼需本地环境 docker compose up 后人工验证——新建模型填 provider=yasoll、环境变量名 YASOLL_API_KEY、API 地址留空，测试台探针应走内置默认端点）。
+- **同步：** ai/04-模块导航/模型用量/导航.md（内置默认端点清单）。
+
+## 2026-11-19 `/models/test` 操作行二次重设计 + 未选模型占位（用户两轮「还是丑」反馈；浏览器走查 5/5 PASS）
+
+- **用户反馈（两张截图）：** ① 助手消息操作行三枚胶囊（完成/用量/请求 ID）换行散乱依然丑；② 未选模型时工具条一长句灰字提示很怪。
+- **操作行二次收敛（ChatColumn.vue）：** 右侧元数据由「描边徽标 + 两个灰底胶囊」改为**一段轻文字**（`完成 · ↑84 ↓201 实测 6.3s`，finish_reason 中文化 title 留原值；usageText 改空格分隔保持紧凑）+ **仅请求 ID 一枚 chip**（缩短 mt-xxx…xxx、点击复制带 check 反馈）；实测三个元素垂直中心对齐单行无换行。左组 重新生成（RedoOutlined 新增图标出口）/复制 ghost 钮保留；用户消息行 复制/编辑重发（EditOutlined）同步 ghost 统一。
+- **未选模型占位（index.vue）：** 长句提示改为与选中态同构占位——虚线 40px ExperimentOutlined 图标块 + 「未选择模型」/「在右侧『测试范围』中选择模型」两行（长说明收进 tooltip，reload 实测出现并被选中态替换，高度不跳动）；backToCatalog/useRouter 随之删除（无引用）。
+- **验证：** ESLint 0 / vue-tsc 0；浏览器走查 5/5 PASS（单行 y 中心 539.25 对齐、ID pill 点击已复制 1.6s 回落、新消息复验、未选态 placeholder、零页面 Vue 错误）。未运行：窄屏单列下操作行折行表现。
+
+## 2026-11-19 `/models/test` 右栏范围折叠 + 发送按钮主题色（用户截图标注；浏览器走查 4/4 PASS）
+
+- **用户标注：** ① 右栏「测试范围」区「加上折叠，默认收起」；② 发送「按钮颜色适应主题」（截图指向输入区发送钮）。
+- **范围折叠（TestSidePanel.vue）：** Scope 区默认收起为一行摘要（`测试范围 / SCOPE` + `应用对话 · 租户 · 应用 · 模型` 实时摘要 + 旋转箭头），点击展开 ContextBar；模型被清空时自动展开引导重新选择。收起后右栏纵向空间让给遥测与诊断区。
+- **发送按钮主题色（ChatColumn.vue）：** 石墨黑 brand → 主题科技蓝 `--color-tech-accent`（双主题令牌：浅 #2563eb / 深 #60a5fa），hover 提亮 opacity-90；禁用态同色 opacity-40（浅蓝语义，不再是死灰）。
+- **验证：** ESLint 0 / vue-tsc 0；浏览器走查 4/4 PASS——Scope 默认折叠（选择器不可见）→ 点击展开/再收起正常、摘要随切换模型实时更新（V4 Pro ↔ V4 Flash 实测）、发送钮启用/禁用态均为 #2563eb（opacity 1 / 0.4）、console 零 Vue 错误。未运行：真实发送、窄屏。
+
+## 2026-11-19 `/models/test` 诊断 Tab 冻结缺陷修复：思考过程/请求与用量永久显示空态（Vue computed 同引用短路；浏览器复现→修复→回归 PASS）
+
+- **用户反馈：** 真实对话完成后（遥测全绿、事件 99+），「思考过程」「请求与用量」两个 Tab 无内容——实测同一时刻聊天区已展示「已深度思考 276 字」与「↑90·↓132·实测」，诊断 Tab 却停在「原因判定：生成中 / 尚未执行调用」。
+- **排查（四轮判别实验）：** ① 后端确认 `usage`/`done`/`reasoning_visible` 事件均正常下发（model_tests.py L407/L432/L440）；② Tab 点击切换正常（非交互问题）；③ 组件实例 setupState 直读出现自相矛盾——`lastSettledAssistant.status='done'`、`thinking.length=276`，而 `thinkingText=''`、`thinkingReason='生成中'`；④ 开合调试抽屉强制父组件重渲染后 Tab 仍冻结，排除渲染层未刷新。
+- **根因（教科书级 computed 陷阱）：** 助手消息对象在流式期间被**原地变更**（同一引用）；`messages.value=[...]` 数组替换虽触发父组件重渲染（聊天区正常），但诊断 computed 链上游 `lastSettledAssistant` 重算后返回**同一对象引用**，Vue 按 `Object.is` 判定值未变而**短路下游**——`thinkingText`/`thinkingReason`/`usageSnapshot` 的缓存停留在流式初期值（思考开始前的 `''` 与 `生成中`、usage 为 null），此后永不失效。
+- **修复（index.vue）：** 新增 `diagnosticTick` ref，`applyEvent` 每个 SSE 事件落地时自增；`thinkingText`/`thinkingReason`/`usageSnapshot` 显式依赖 tick 强制失效重算。附带加固：诊断源改取「最近一条已终结（done/aborted/failed）」的助手消息（`lastSettledAssistant`，生成中消息思考/用量未定形且流式实时思考已由消息内思考块展示）；`sendMessage` finally 增加流生命周期兜底—— consumeEvents 返回后若仍 streaming 则如实标记 `aborted/stream_disconnected`，杜绝卡死幽灵消息。
+- **验证：** ESLint 0 / vue-tsc 0；浏览器真实外呼回归 PASS——思考过程 Tab 显示 `reasoning_visible` 徽标 + 616 字真实 Provider 思考流，请求与用量 Tab 显示 HTTP 2xx / 输入 88 / 输出 382 / req id / actual·可信，与左栏消息操作行数字交叉一致；console 零 Vue 错误。未运行：停止/编辑重发路径下 Tab 表现、窄屏。
+- **遗留（既有，非本轮引入）：** 硬刷新后 `model_id` 深链偶发不恢复选中——`loadDictionaries` 以 `canManage`（异步能力表）为前置，未就绪时整段早退；SPA 首跳正常。
+
+## 2026-11-19 `/models/test` 截图标注四项整改：右栏统一卡融合 + splitter 拖拽把手 + 输入区重设计（浏览器终验 4/4 PASS）
+
+- **用户标注驱动（页面截图红箭头）：** ① 「测试范围」与下面卡片融合成一个；② 诊断 Tab 与遥测关系混乱（tab）；③ 「拖拽不明，用户不知道可以拖拽」；④ 输入框「颜色不好看」。
+- **右栏统一卡（标注①②）：** ContextBar 从顶部工具条移入 `TestSidePanel.vue`，与 2×2 遥测、诊断三 Tab 融合为单张卡片三分区（测试范围 / Scope → 连接遥测 / Telemetry → Tab 区吃满剩余独立滚动）；顶部工具条右组只剩清空/调试，未选模型提示改指向右侧「测试范围」。ContextBar 重排为窄栏紧凑布局（模式行 Segmented 同行、租户/应用双列、模型整行、能力 chips）；DiagnosticPanel 去独立卡片外壳，事件 Tab 加计数徽标（>99 显示 99+）；窄屏「查看诊断」开关改「展开测试范围与诊断」（面板固定高 480→520px）。
+- **splitter 拖拽把手（标注③）——两轮根因修复：** 首轮复写样式仍不生效，浏览器实测定位双重根因：① Tailwind v4 前缀 `!important`（`!bg-x`）语法被静默丢弃，需用后缀 `x!`；② **任意变体 `[&_.splitpanes__splitter]` 中 `__` 被转译为两个空格，生成死选择器 `.splitpanes splitter`（不存在的标签）——此前两轮 splitter 样式从未真正生效**（分栏默认 min-width:1px 几乎不可见，即用户标注的根因）。修复：改用 `[&_[role=separator]]` 属性变体（splitpanes splitter 自带 role="separator"）+ 仅 `min-w-[14px]!` 后缀 important 压过 splitpanes.css 默认。终效：14px 热区 + 4×40px 居中灰胶囊 grip，hover 展高 56px 转科技蓝 #2563eb + 浅蓝底，拖拽中保持高亮。
+- **输入区重设计（标注④）：** 灰底输入盒改白底描边卡（rounded-lg + border-strong + shadow-sm），聚焦科技蓝描边 + 3px subtle 光晕；卡内原两行灰字提示合并为一行（`携带最近 N 轮上下文 · Enter 发送 · Shift + Enter 换行` + 右侧字数计数，>15000 变警示色）；费用说明移至发送钮 tooltip；编辑重发浮层内 textarea 覆盖同步修正。
+- **既有类修复连带：** ChatColumn 输入/编辑 textarea 与 DiagnosticPanel a-tabs 的前缀 `!` 覆盖全部改后缀语法（此前同样被丢弃，antd 默认样式裸奔）。
+- **验证：** ESLint 0 / vue-tsc 0；浏览器（5175 已登录实例）终验 4/4 PASS——splitter width 14px、::before 4×40px 药丸 #d4d4d8、hover 实测 #2563eb、真实鼠标拖拽左 pane 612.69→485.76→597.23px 往返可调、textarea border 0、右栏统一卡三分区在位、console 零 Vue 告警（仅 /ready 轮询既有 ERR_ABORTED）。**附带观察（未修复，建议跟进）：** 硬刷新后 `model_id` 深链偶发不恢复选中——`loadDictionaries` 以 `canManage` 为前置，能力表异步未就绪时整段早退（首跳 SPA 进入正常，属既有时序问题，非本轮引入）。未运行：真实 Provider 发送、窄屏 375px 复验、深色主题。
+- **运维备注：** 5173 端口为本轮新起的 dev server（无登录态），验收走 5175 已登录实例；无新依赖、无镜像重建需求。
+
+## 2026-11-19 `/models/test` 页面与多轮对话增强（源码完成；隔离与浏览器走查通过；本轮未做真实 Provider 验收）
+
+- **页面：** 测试范围桌面默认可见、窄屏默认收起；顶部整合模型身份、连接探针和操作；对话空态、输入框、轮次提示及请求费用提示重排，移动端诊断改按需展开。平台连接模式不再显示对话示例。375px 宽度下对话输入可见且页面无横向溢出。
+- **多轮：** 前端仅携带最近 10 个已完成 user/assistant 轮次（历史总长 ≤32000 字），失败与中止结果不进入上下文；服务端校验交替顺序、非空、长度和字段白名单，并按系统提示词→历史→当前输入转发 Provider。编辑重发截断后续，末轮可重新生成。切换目标或离开页面请求服务端取消在途会话；无 done 的 SSE EOF 进入重连，重复 sequence 不再插入。调试抽屉删除当前出口未生效的开关，只保留实际转发的四项参数。
+- **验证：** 前端 `pnpm run build` 通过（含 vue-tsc，Vite 有既有大 chunk 提示），`pnpm exec eslint src/views/models/test --max-warnings 0` 通过，后端 `test_model_test_history` + `test_model_channel` + `test_model_test_context` 共 **28/28** 通过，`git diff --check` 通过。已登录浏览器检查桌面布局、375×812 布局与横向溢出、示例填入、移动端诊断展开及滚动；浏览器仅见扩展自身 disconnected-port 错误，未观察到页面错误。
+- **未运行：** 本轮未发送真实 Provider 多轮请求，未核对目标环境账目/费用，也未做暗色主题、真机与 429/超时浏览器场景验收；无数据库迁移、权限码或 DeerFlow 改动。源码与隔离验证不等于目标环境端到端完成。
+
+## 2026-11-19 模型测试台对话区重设计：Splitpanes 拖拽分栏 + markdown-it/highlight.js 富渲染 + 工具条整合（浏览器 6 项走查全过 + 窄屏三轮修复）
+
+- **用户反馈驱动：** ① 对话区不够大；② 探针按钮应缩小融入顶部（截图一）；③ 输入区两段灰字提示无必要（截图二）；④ 左右分栏可拖拽（要求市面成熟依赖）；⑤ 对话渲染要兼容大部分主流模型输出。
+- **新依赖（pnpm 12.6.0，lockfile 同步）：** `splitpanes@4.1.2`（Vue3 拖拽分栏，成熟方案）、`markdown-it@15.0.3` + `@types/markdown-it`、`highlight.js@11.12.0`。依赖环境修复：本机 corepack pnpm 12.6.0 安装残缺（pnpm.cjs 缺失），改 npm 全局重装恢复；pnpm 默认 store 落在 role 根（沙箱拒写致首次安装 echarts 包体损坏、`echarts/core` 解析失败），以 `--config.store-dir=frontend/.pnpm-store` 重建（该路径已加入根 .gitignore），node_modules 230 包重装；echarts 5.6.0 模块化入口实际位于 `lib/export/*` 且 exports 未映射类型，改 `ModelUsageCharts.vue`/`OverviewDashboardCharts.vue` 导入路径并新增 `src/types/echarts-shims.d.ts` 桥接 `types/dist/*`。
+- **markdown.ts 重写（手写解析器 → 成熟引擎）：** markdown-it（html:false 全量转义无注入面 / breaks 中文单换行 / linkify 自动链接）+ highlight.js core 按需注册 15 语言（js/ts/py/json/bash/sql/yaml/xml/css/java/go/rust/dockerfile/ini/md，未知语言纯转义降级）；补齐主流模型输出兼容：GFM 表格、嵌套列表、任务列表（- [x] 零依赖 renderer 规则 + 主题令牌勾选框）、代码高亮（github-dark 主题，fence 深色卡片带语言标签与复制按钮，data-md-copy 委托契约不变）、链接强制 target=_blank + rel 隔离；流式光标保持 tech-blink；新增 `MD_BODY_CLASS` 容器排版常量（Tailwind 后代任意值覆盖标准标签）。
+- **布局重构：** 顶部工具条单行整合——模型身份 + 状态/凭据圆点 + 小号「连接测试」描边钮（含说明 tooltip，融入顶部不再单独占卡）+ Context 切换（带摘要）/清空/调试三小钮；状态遥测四格（2×2）随 StatusStrip 移入右栏顶部（新建 `TestSidePanel.vue` = 遥测 + 诊断 Tab 组合）；lg+ 工作区改 Splitpanes 双 Pane 拖拽分栏（默认 64:36，min 38/26、max 62，splitter 悬停科技蓝），窄屏（<lg，matchMedia 响应式）降级纵向堆叠固定高（对话 560px / 信息 520px）+ 页面容器滚动。ChatColumn 删除输入区两条冗余提示（图二），空状态新增四张示例 prompt 卡（点击仅填入不自动发送），消息头补 HH:MM:SS 时间戳。
+- **附带缺陷修复：** GENERATION 遥测成功态闭环缺口——done 事件 outcome 非 failed 时翻转 `generationCell=ok`（此前只有 fail/warn 路径，成功后恒「未测试」）。
+- **窄屏高度链三轮修复：** 375px iframe 实测发现堆叠卡片被压成 348/588——根因链为 ① 堆叠 wrapper 可收缩（补 `shrink-0`）② TestSidePanel 根 `h-full` 与父页 `h-[520px]` 冲突（收窄为 `lg:h-full`，同 ChatColumn/DiagnosticPanel 先例）。终验 4/4 PASS：chat 560px / panel 520px 精确生效、scrollWidth=375 无横溢、页面容器可滚且面板完整可见。
+- **验证：** ESLint 0 / vue-tsc 0 / 本地与容器内（Dockerfile 构建步）Vite build 双通过；console 镜像重建（npipe tar 上下文，136KB，node_modules 固化入镜像）+ 容器按原配置 recreate，5175 就绪 200。浏览器走查 6/6 PASS：splitter 存在且拖拽四档线性生效（621→770px）、示例卡填入不发送、真实外呼富渲染（h2/两列表格/8 个 hljs token 深色代码卡/任务列表勾选框）、右栏 2×2 遥测位于诊断 Tab 上、GENERATION 成功闭环（绿点「成功」）、console 零 Vue 告警（仅 /events 与 /ready 的 ERR_ABORTED 既有 dev 代理噪音）。**依赖变更需重建镜像的运维结论再次验证**；未运行：真机设备、429/超时路径、深色主题×分栏拖拽组合。
+- **清理：** 根目录损坏 `.pnpm-store`（233MB，失败安装产物，robocopy 镜像法清除）、Temp 的 console-context.tar 与 iam-docker-ops.py 运维脚本；frontend/.pnpm-store（在用 store，已 gitignore）保留。
+
+## 2026-11-19 模型测试台「极简浅色科技」改版 + 视口锁定独立滚动布局（深舱方向被用户推翻；浏览器多轮走查）
+
+- **决策事实：** 先实施的「深色实验舱」方向（spec redesign-model-test-lab，终端绿 + 深舱令牌）经用户确认推翻，改 Linear/Vercel 式极简浅色科技（spec redesign-model-test-minimal-tech）；lab spec 文档存档不再实施。LAB 令牌/纹理/keyframes 全部删除，全局 grep `color-lab|lab-breathe|lab-blink|lab-grid` 零命中。
+- **令牌层（tokens.css）：** 新增 TECH 组——`--color-tech-accent`（浅色 #2563eb / 深色主题 #60a5fa 双主题对比）、`--color-tech-accent-subtle`（8% 蓝底）、`--tech-dot-image`（极淡点阵，当前页面未启用，留作可选纹理）、`@keyframes tech-blink`（仅流式光标，无呼吸辉光重动效）。业务组件零裸 hex。
+- **视觉重塑（5 组件 + markdown.ts）：** 白底细框卡片与全站管理台同构；静态状态点四态（绿/红/琥珀/空心，去发光）；英文 mono 模块标签（CONFIG/AUTHZ/PROVIDER/GENERATION）+ 中文 tooltip；ContextBar Select/Segmented 回归默认浅色外观，能力 chips 蓝描边高亮；ChatColumn 细 zinc 左边线会话流、YOU 角标、石墨黑发送钮/红描边停止钮/蓝描边探针钮；DiagnosticPanel Tab ink-bar 蓝、时间线静态语义点；markdown 浅色化但代码块保留深色卡片（工程文档聚焦惯例）。原生 button 结构保留仅换样式。
+- **布局架构（用户二轮反馈核心）：** ① 视口锁定——App.vue 测试台包裹层加 `mgmt-shell-child-lock`，style.css 以高优先级覆盖全局 `flex:1 0 auto` 为 `flex:1 1 0;min-height:0;overflow:hidden`（<lg 恢复 overflow:visible），高度链下传；index.vue 根 `lg:overflow-hidden`、工作区去 calc hack 改 `flex-1 min-h-0`，对话消息区与诊断面板各自独立滚动，外壳零页面滚动、输入区常驻视口。② 折叠降噪——身份卡与上下文卡合并，Context 默认折叠为一行摘要（可展开切换租户/应用/模型）；状态行探针区 lg 内联第五格省一整行；页头/卡头/输入提示垂直收紧。③ 删减重复——输入区参数 chips 行删除（调试抽屉与诊断「请求与用量」已有），同步移除 paramChips prop 与 computed，paramsSummary 直算。
+- **窄屏修复：** 走查发现组件根 `h-full` 同特异性覆盖父级固定高度（375px 下两面板被压成 91.5px、页面不滚）；改 ChatColumn/DiagnosticPanel 根为 `lg:h-full`，窄屏由父级 `h-[560px]`/`h-[420px]` 固定，页面级容器 `max-lg:overflow-y-auto` 承接纵向滚动。
+- **验证：** ESLint 0 / vue-tsc 0 / Vite build EXIT=0（dist 已清理）。浏览器多轮：浅色真实外呼（独立滚动 PASS：外壳 clientHeight=scrollHeight=763，聊天区内部 scrollHeight 1025>279 可滚，输入框在视口）；深色主题 PASS（五区块暗底零白块，accent 实测 #60a5fa）；375px 同源 iframe 复验 PASS（scrollWidth=375 无横溢，chat 560px/diag 420px 固定高，纵向可滚 803px，Context 展开无溢出）；折叠交互 PASS；console 零 Vue 警告（仅 /ready 轮询与 /events SSE 拆除的 ERR_ABORTED 既有 dev 代理噪音）。未运行：真机设备、429/超时/停止/编辑重发交互路径走查。
+
+## 2026-11-18 模型测试台对话渲染对齐主流产品（Markdown 渲染 + 思考折叠 + 加载动画 + 智能滚动；浏览器三轮走查）
+
+- **背景：** 用户截图反馈对话区「太丑」：Markdown 原文裸奔（`###`/`-` 直出）、思考流逐片断行成竖排、无加载反馈、不自动滚动。本轮按主流 AI 对话产品（ChatGPT/DeepSeek 官网）规格重做渲染层，全部在 P350 黑白灰令牌体系内实现，零新增依赖。
+- **Markdown 渲染（新增 `views/models/test/markdown.ts`，零依赖安全渲染器）：** 不引入 markdown 库的原因——console 容器依赖固化在镜像，加依赖须重建镜像（仅挂载 src 热更新）。实现：先全文 HTML 转义再解析结构、代码/行内码内容不参与标签拼接（无注入面，v-html 处加 eslint 说明注释）；覆盖 fenced 代码块（石墨黑底 `--color-sider-bg` + 语言标签 + 复制按钮，事件委托实现）/标题/有序无序列表/引用/表格/分隔线/粗体/斜体/删除线/行内码/http(s) 链接；流式时在最后文本块尾随闪烁光标。代码块与操作行复制均带「已复制」瞬时反馈。
+- **思考流修复 + 折叠交互：** 竖排根因 = `applyEvent` 对每个 `reasoning_visible` 增量 push 独立段、模板逐段渲染 `<p>`；改为 `thinking: string[]` → 单连续文本增量拼接（api.ts/index.vue/DiagnosticPanel 同步）。交互对齐深度思考产品惯例：生成中默认展开（「深度思考中…」+三点跳动）、完成后自动折叠为「已深度思考 + 字数」，点击可切换（`thinkingOpen` 覆盖默认推导）。
+- **加载与滚动：** 等待首个 token 显示三点跳动 +「正在思考…」（无思考输出的模型路径）；智能滚动 = 贴底跟随/用户上滚暂停/右下角「回到底部」悬浮按钮（ArrowDownOutlined）。消息结构重构：头像行（模型首字方块 + 展示名 + 状态点）、完成态操作行（复制/↑↓token/实测·估算/耗时/finish_reason/req 可点复制）；工作区行高约束 `lg:h-...` 下放为全断点 `h-[calc(max(480px,100vh_-_470px))]`，保证对话列内部滚动区在窄屏也是权威滚动容器。
+- **顺手修复（走查发现，均为测试台上线以来既有缺陷）：** `Segmented`/`Slider` 从未注册进 `plugins/registerManagementUi.ts`（a-segmented/a-slider 解析告警 + fallback 渲染）；`StatusStrip.vue` 用 `ThunderboltOutlined` 却未导入（图标渲染为不可见未知元素）。SSE 收尾从「读到 EOF」改为 done 事件即 `reader.cancel()` 正常关闭（`consumeEvents` finally 只清引用不再 abort）。
+- **验证：** ESLint 0 / vue-tsc 0 / Vite build EXIT=0（dist 已清理）。已登录浏览器三轮走查（真实外呼 4 轮消息）：①登录 → 测试台深链 PASS；②发送「用 Markdown 介绍快排」PASS——三点加载出现、`<h2>`/python 代码卡（深底+语言标签+复制按钮）/真实 ul·li 渲染、无裸 `##`/```、操作行「复制 ↑109·↓1506·实测·28.9s + req」齐全；③滚动专项初轮 FAIL（走查视口 <lg 时长高的是页面容器）→ 行高全断点受限修复后复验 PASS（长回答流式 6 次采样贴底 gap 0~1px 跟随）。遗留说明：`/events` 请求在 dev console 残留一条 `net::ERR_ABORTED`——自然 EOF/abort/cancel 三种客户端收尾策略下均出现，定性为 vite dev 代理对 SSE 连接的拆除噪音（生产静态托管 + 独立 API 源无代理，不受影响），非应用缺陷。思考块「已深度思考 64 字」折叠态、深色主题、375px 窄屏、停止/编辑重发、429/超时场景未走查（未运行）。
+
+## 2026-11-18 模型测试台凭据配置打通 + 后台任务静默死亡缺陷修复（目标环境端到端验证通过：探针 ok、SSE 流式、真实用量落账）
+
+- **凭据配置（用户开发库）：** 4 个 DeepSeek 模型（deepseek-chat / deepseek-reasoner / deepseek-v4-flash / deepseek-v4-pro）`credential_ref` 由 `vault://deepseek/api-key` UPDATE 为 `secret://env/DEEPSEEK_API_KEY`（psql 经 docker exec，受控引用不落密钥原文）；根 `.env` 已有 `DEEPSEEK_API_KEY`；`compose.yaml` api 服务透传 `DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}`（L110-111）并重建容器注入。容器内直呼验证：`deepseek-v4-pro` 为有效模型名（POST /chat/completions 200 流式返回）。
+- **缺陷修复（端到端验证发现）：** 对话后台任务静默死亡——`create_test_conversation` 中 `asyncio.create_task` 之后执行 `db.commit()`（SQLAlchemy 默认 `expire_on_commit=True`）使 `model` ORM 实例字段过期，请求结束后会话关闭实例分离；后台任务随后访问 `model.credential_ref` 抛 `DetachedInstanceError`，非 `ChannelError` 未被捕获 → create_task 异常静默，无 error/done 事件、无落账、SSE 挂死（表现：会话创建 201 后事件流只有 keep-alive，`model_usage_events` 零行，日志无 traceback）。修复：① 新增 `_ModelSnapshot` 冻结字段快照，在 commit 前固化 credential_ref/endpoint_url/provider/model_name/key/id，后台任务只读快照不触碰 ORM；② `_run_conversation` 拆分外壳+主体（`_execute_conversation`），外壳全量异常兜底：`logger.exception` 记服务端日志（含 conversation/request ID，不含正文）+ `internal_error` 稳定分类事件 + failed 落账 + done 终结，保证前端任何情况下都能收到终态。
+- **验证（目标环境，用户开发库）：** 探针 `verdict=ok` 三阶段全过（凭据解析 0ms / 网络 TLS 498ms / Provider 响应 498ms，endpoint `https://api.deepseek.com`）；对话端到端：会话创建 → SSE 事件流（可见思考 749 字、正文 47 字流式）→ 真实用量 `input 89 / output 473 / usage_is_estimated=false / first_token_ms=1160` → 落账行 `model_usage_events: model_test|succeeded|89|473|f`（可区分不漏计）。单测回归 24/24 OK（test_model_channel 15 + test_model_test_context 9）。前端零改动（console 容器 src 热挂载，刷新页面即得修复后行为；重启导致旧会话失效属预期——会话仅存服务端进程内存）。
+- **运维备忘：** uvicorn `--reload` 热重载会等待既有 SSE 连接关闭，宿主侧挂死的验证脚本会阻塞 reload——重启容器（Docker Engine API `POST /containers/{id}/restart`）为确定性手段；`exec` 运行环境继承容器 env，可直接验证密钥注入。
+
+## 2026-11-18 模型测试台受控通道实施（用户反馈「用不了」→ 真实外呼 + SSE 流式；隔离验证全绿，开发库迁移 0010 待授权执行）
+
+- **背景：** 上一轮实施子集里连接探针/对话通道未实现，页面所有测试动作都返回「测试通道未开放」（用户截图确认页面判权与渲染正常但发不出去）。本轮按设计文档 §5 补齐受控出口全链路：凭据解析 → OpenAI 兼容外呼 → SSE 流式 → 用量落账。
+- **后端新增：** `services/model_channel.py`（受控 Provider 出口）：凭据引用解析仅支持 `secret://env/<变量名>`（环境变量注入，`vault://` 未接入返回明确分类错误，不回显密钥）；端点解析 endpoint_url 优先、deepseek/openai 内置默认、其余要求显式配置；错误统一稳定分类（credential_unavailable/credential_rejected/rate_limited+Retry-After/connect_timeout/read_timeout/network_error/upstream_error），不透传上游响应正文。`admin/model_tests.py` 扩展四个端点：`POST /{id}/test-connection`（分阶段探针，GET /models 不产生计费 token）、`POST /{id}/test-conversations`（外呼前重验三级下发交集，403 authz_denied；进程内会话，正文不落库不进日志，TTL 自动回收）、`GET .../events`（SSE：单调 sequence，last_sequence 断线重连去重，15s 心跳）、`POST .../cancel`（中断流并按已收用量如实落账）。用量 `source='model_test'` 落 `model_usage_events`（Provider 精确用量优先，否则字符估算并标 usage_is_estimated——未知≠0）；审计只记操作者/模型/动作/结果/请求 ID。新增 httpx>=0.27 依赖（venv 已装 0.28.1，requirements/lock 同步）；config 新增 MODEL_TEST_* 超时/上限/TTL 配置。
+- **迁移 0010（待授权执行）：** `migrations/versions/0010_model_test_usage_source.py` 放宽 `ck_model_usage_source` CHECK 加入 `'model_test'`。**执行 `alembic upgrade head` 前须按部署与运维门禁完成受保护备份并取得明确授权；未迁移时对话/探针可用，仅落账 INSERT 会失败（首次调用建议先跑迁移）。**
+- **前端重写：** api.ts 增加 ProbeReport/ConversationStart 类型与 `streamConversationEvents`（fetch 流式解析 SSE + Bearer 头，EventSource 不可用因无法带认证头）；ChatColumn 支持流式正文光标/可见思考独立块/探针分阶段报告卡/错误分类横幅（限流带重试等待）；index.vue 事件驱动状态机：发送→创建会话→SSE 消费（断线按 last_sequence 自动重连一次，仍失败标「流中断·用量待核对」不伪装完成）→usage/done 终态；停止按钮调 cancel；Provider/生成状态行由真实通道事件驱动。
+- **测试：** 新增 `tests/test_model_channel.py`（15 用例，httpx MockTransport：凭据/端点解析、SSE 解析顺序、401/429+Retry-After/5xx/超时分类、cancel 预置不产出切片、探针可达性）；`test_model_test_context.py` 改 IsolatedAsyncioTestCase + StaticPool（路由 async 化后线程池判定与内存 SQLite 跨线程）。模型域全量 + p404 共 70 tests OK（skipped=13 既有 PG 专项）。前端 ESLint 0 / vue-tsc 0 / Vite build EXIT=0（dist 已清理）/ smoke-nav ok。
+- **未运行：** 真实 Provider 外呼联调（需用户环境凭据）、已登录浏览器走查——本终端无 Docker/PG，须由用户在本地环境验证；验证步骤见交付说明。权限码无变化；`MODEL_QUOTA_ENFORCEMENT_ENABLED`、`my-models`、DeerFlow 未触碰。
+- **同步：** ai/04-模块导航/模型用量/导航.md（通道章节 + model_channel 入口）、frontend/README、backend/README（受控出口条目）。
+- **环境修复与迁移执行（用户授权，经 Docker Engine API 命名管道通道）：** 用户环境 api 容器因镜像缺 httpx（app 目录热挂载、依赖固化在镜像）进入 crash 状态导致整个管理台后端不可用。已重建镜像 `iam-platform-api:dev-oidc-consent-v1`（pip 层重装，httpx 0.28.1 入镜像）并按原配置重建 `iam-platform-api-1` 容器；随后以同配置一次性容器执行迁移 **0009 → 0010_model_test_usage**（exit 0）。验证：`/api/v1/ready` 200、控制台 5175 200。注意：容器依赖变更必须 `--build` 重建镜像（仅挂载 app/ 代码不更新依赖）；该结论已记入本次交付说明。
+
+## 2026-11-18 模型测试台页面实施（设计稿现行边界子集；后端判定端点 + 前端页面 + 入口；隔离验证通过，登录浏览器走查未运行）
+
+- **实施范围判定（依设计稿 §2/§5/§6 诚实性边界）：** 连接探针与对话流式通道属「M0 对端能力/凭据/出口盘点」后实施范围，本轮不实现、不 mock——页面可真实落地的子集 = 服务端权威判定（目录配置 + 三级下发交集 + 操作者应用访问）+ 完整页面骨架与交互状态；`MODEL_QUOTA_ENFORCEMENT_ENABLED=false`、`my-models` 契约、DeerFlow 范围均未触碰；无数据库迁移、无新增权限码（`button.models.test` 仍为设计稿 §6 提案，本轮沿用超管范围 + `button.models.manage` 边界，后端逐请求判权兜底）。
+- **后端（新增，真实实现）：** `app/api/v1/admin/model_tests.py` → `GET /api/v1/admin/models/{model_id}/test-context?application_id=`：按 ID 加载平台目录行（非平台行与缺失一律 404 防枚举，同 `_get_platform_model` 口径）；三级层级状态 `active/missing/hidden/disabled`（操作者无目标应用访问关系时下发明细返回 hidden，防枚举口径与 AdminAccessGuard 一致）；`authz_allowed` 与 `missing` 缺失层级列表；`test_channel_available` 恒 false，通道端点落地后翻真。入口 = 超管范围 + `button.models.manage`（`_ensure_model_test` 双重收口）。已注册进 `admin/__init__.py` 聚合器。
+- **前端（新增页面 `/models/test`）：** PageKey `model_test`（navigation/PAGE_PATHS/PAGE_INFO/page-registry/loaders/App.vue 挂载；不占侧栏，路由守卫与 `isPageReachable` 按 `menu.models` 特例放行，深链 `/models/test?model_id=...`）。页面 `views/models/test/`（index + components/{ContextBar,StatusStrip,ChatColumn,DiagnosticPanel,DebugDrawer} + api.ts）：模型身份条（展示名/稳定 ID/Provider·模型/活动状态/凭据引用）；上下文行（应用对话 | 平台连接 分段、租户/应用/模型联动、能力 chip 按目录真实数据）；四段状态行（配置/授权来自 test-context 权威判定，Provider/本次生成在真实通道调用前保持「未测试」，停用模型→配置失败、凭据未配置→配置失败、缺失层级→授权不可用并明示）；对话列（空态引导、发送=真实通道调用、失败分类横幅「测试通道未开放」不伪造回复、编辑重发截断提示、清空会话二次确认、会话仅存浏览器内存）；平台连接模式=探针面板替代输入区；诊断列三 Tab（思考过程缺失原因分类：模型不支持/参数关闭/通道未开放；事件时间线仅记录真实节点含授权判定与通道错误、payload 可展开；请求与用量未执行显示「尚未执行调用」、未知不显示 0）；调试抽屉按目录能力逐项禁用（reasoning/json_output/tool_calls 未声明→禁用+锁+原因），应用/取消/恢复默认、关闭重置未提交修改。模型治理目录行操作新增「测试」入口（溢出菜单首项，携带 model_id 深链）；`plugins/icons.ts` 增补 SendOutlined/ThunderboltOutlined/StopOutlined/ClearOutlined 官方具名导出；`StatusDot.vue` 增加可选 `textClass` 覆盖（默认不变，向后兼容）。
+- **测试：** 新增 `backend/tests/test_model_test_context.py`（9 用例：403 闸门 / 模型与应用 404 / 全链 allowed / 两级缺失分别指出 / 租户回收级联后应用下发判定 / 停用模型 / 跨租户应用 / 平台视角只判目录 / `test_channel_available=false`）；模型域全量回归 46 tests OK（skipped=13 为既有 PG 专项）；`test_p404_visibility` 9/9 OK（路由聚合器变更无回归）。前端 ESLint 0 告警、`vue-tsc --noEmit` 0 错误、Vite production build EXIT=0（dist 已清理）、`smoke-nav` ok（20 PageKeys）。
+- **未运行（环境受限，如实记录）：** 已登录浏览器走查与 375px/深色主题核对未运行——本终端 Docker CLI 不可用、127.0.0.1:5432 无 PostgreSQL、backend 无 .env，开发库迁移属受保护操作未获授权（readiness 预期 503 拦截登录）；页面视觉与交互需待环境恢复后按验收清单 §7 补跑。目标环境 Provider 验收不适用（通道未实施）。
+- **同步：** `ai/04-模块导航/模型用量/导航.md`（新增模型测试台章节 + 代码入口两行）、`frontend/README.md`、`backend/README.md`（test-context 契约条目）；权限码表无变化（ai/02-架构与权限/权限模型.md 无需更新）。临时产物清理：`frontend/dist` 已删除，无其他遗留。
+
+## 2026-11-18 模型测试台交互式原型（仅新增原型文档；浏览器三轮验证，1 缺陷已修复）
+
+- **新增 `docs/prototypes/模型测试台-交互式原型.html`：** 基于《模型测试台设计》的自包含高保真原型（Tailwind CDN + tokens.css 同源令牌，P350 黑白灰体系，禁新增裸 hex；全部数据前端模拟并在页头标注「原型演示」，不发起真实 Provider 请求）。覆盖：模型身份条（展示名/稳定 ID/Provider·部署/活动状态/能力标签，reasoning 与 thinking_output 分开标注）、四段状态行（配置/授权/Provider/本次生成，未测试≠成功、平台模式授权=不适用）、应用对话模式三级下发交集逐次判权（预置 租户未下发/应用未下发/模型停用 判例，缺失层级明确指出、发送禁用）、平台连接模式（隐藏租户/应用、探针面板替代输入框）、固定短探针分阶段报告卡（凭据解析→网络/TLS→Provider 响应）、流式对话（可见思考独立流+正文流、代码块、逐段 caret）、诊断次列三 Tab（思考过程缺失原因四分类 / 事件时间线含单调 sequence 与 payload 展开、answer_delta 聚合展示 / 请求与用量含 TTFT·token·费用·actual/estimated/unknown 质量与待核对提示）、调试设置抽屉（不支持能力禁用+锁+原因、应用/取消/恢复默认、关闭丢弃未提交修改）、停止/编辑重发截断/清空会话二次确认、429/超时/流中断演示场景、深浅主题切换、375px 窄屏（状态两列、诊断底部抽屉）。左下角「原型演示」控制条切场景/主题/重置。
+- **浏览器验证（本地静态服务 + 真实浏览器交互，三轮）：** ① 桌面主流程 PASS——初始四格「未测试」、选 DeepSeek-R1 发送后出现可见思考 3 段与 SQL 代码块回复，状态行转四绿（配置有效/授权可用/Provider 可达/本次生成成功），console 无未捕获错误；② PASS——限流 429 场景红色横幅+「建议 12s 后重试」徽章+本次生成=未成功；调试抽屉控件齐全且 JSON/工具按模型能力禁用带锁与原因，应用参数 toast 正常；深色主题画布/卡片/文字全量翻转，无白块残留（主按钮为品牌翻转高对比设计）；③ 平台连接模式 PASS（租户/应用隐藏、琥珀提示、授权=不适用、探针报告三阶段+连接可用绿判定）；窄屏 375x812 无横向溢出（scrollWidth=375）、状态行两列 PASS。
+- **缺陷修复（本轮发现并已修）：** 窄屏诊断抽屉双重缺陷——「诊断」浮钮初始 hidden 无入口、点击浮钮仅移除 lg:hidden 未移除下滑位移类导致抽屉不滑入。已改为 matchMedia(≤1023px) 初始化显示浮钮+初始收起、开/关处理器按断点分别操作位移类与隐藏类、断点跨越自动重置；修复后窄屏浮钮入口与抽屉滑入逻辑经静态复核（代码级确认，未再跑浏览器回归）。
+- **验证记录口径：** 原型静态页/浏览器验证=已完成（如上）；真机移动端、移动端×深色主题、平台连接×429 组合未运行；窄屏修复后的浏览器回归已由同日回归轮补跑通过（见下条）。业务源码、后端契约、数据库零改动；本原型不构成端到端验收，实施仍以设计文档 §6 顺序为准。证据截图：`.trae/verification/desktop-platform-mode.png`、`.trae/verification/desktop-probe-report.png`。
+- **窄屏诊断抽屉修复回归（同日补跑，PASS）：** 375x812 视口模拟（同源 iframe，媒体查询与 matchMedia 均按 375px 实算）并 reload——①「诊断」浮钮初始即见于右下角（display:flex、visibility:visible，rect 左269/上676/90x40，含 badge 红点）；②点击浮钮：位移类 `max-lg:translate-y-[calc(100%_+_16px)]` 被移除，抽屉自底部滑入完全可见（rect 上260/下812/高552=68vh），「思考过程/事件/请求与用量」三 Tab 全部可见，浮钮转 hidden（display:none）；③点面板右上「‹」（收起诊断区）：位移类加回、抽屉滑出视口（top=828≥812），浮钮原位重现（同 rect）；④全程 `document.documentElement.scrollWidth=375 ≤ 375` 无横向溢出。console 报错未采集；真机视口未运行（模拟方式如上）。证据截图：`C:/Users/刘少华/.trae-cn/trae-browser-screenshots/6afd16f88c4f12e1bfde1667/`（shot-20261118-035035 初始 / 035100 打开 / 035130 收起）。
+
+## 2026-11-18 模型测试台页面方案（文档设计）
+
+- 新增 `docs/模型测试台设计.md`：明确平台连接测试与应用对话测试、四段状态判定、连续对话、可见思考片段、事件/用量诊断、调试设置、权限边界、服务端接口草案及验收清单；同步产品需求、根目录与前后端 README、模型模块导航。
+- 源码完成：未开始；隔离/mock 验证：未运行；目标环境 Provider/浏览器验收：未运行。本文是设计稿，当前无模型代理或真实对话测试接口；未执行数据库迁移、Provider 调用或配额开关变更。
+
+## 2026-11-17 模型治理 / 模型用量管理台页面重设计（纯前端展示层；构建通过 + 已登录浏览器走查通过）
+
+- **改版范围：** 按项目「黑白灰重度精修 + 交互重构」改版语言（对齐 P389/P368/P369 先例）重构 `frontend/src/views/models/ModelGovernancePage.vue` 展示层。目录视图新增账本式概览带（全部模型 / 启用中 / 已停用 / 下发关系四卡，点击卡片即筛选状态、再点取消，选中石墨黑边）；表格 15 列收敛为 10 列——模型与提供方改双行单元格（key/模型名 mono 副行、端点转悬停提示）、能力列 chip 化（原生 span + token）、限流与价格合并为 mono tabular 数字列（价格未知显式标注）、凭证/限额/状态改「色点+文本」（语义色仅 启用/拦截中/成功 等点缀）、操作列收敛为「下发租户 + ⋯ 溢出菜单（编辑/停用|启用/删除）」。新建/编辑弹窗拆为 `ModelFormModal.vue`（01 基础信息 / 02 能力标准集卡片化 / 03 限流与价格 / 04 凭证引用等宽输入 + 不回显提示）；下发租户弹窗拆为 `TenantGrantModal.vue`（模型摘要行 + 色点关系表 + 软失效脚注）。用量视图汇总卡与图表保持 P369/P400 成果，计量方式/结果/来源列改色点与 mono 费用。新增组件 `views/models/components/{StatusDot,CatalogSummaryCards,ModelFormModal,TenantGrantModal}.vue`；ai/04-模块导航/模型用量 与 frontend/README 同步。
+- **零改动清单：** 后端与 API 契约零改动；判权（`button.models.manage`）、目录/用量加载与筛选、日期校验、分页、409 冲突处理、软失效回收/删除阻塞等业务逻辑零改动（重写时原样保留并复核）；无新增依赖、无裸 hex（新增文件全部走 token）、深浅主题自适应。
+- **验证：** `vue-tsc -b` + Vite production build 通过（3877 modules，修复一轮重写时漏 import `AdminEmpty` 的运行时告警后复跑 exit 0；晚间一次 `npm run build` 因系统内存压力 vue-tsc OOM，拆分 `node --max-old-space-size=6144` 单跑 vue-tsc 与 vite build 均 exit 0）；已登录浏览器走查通过——登录 → 模型治理（概览带四卡数值正确、色点/mono/chip/⋯ 菜单/右固定操作列均渲染正确）、新建模型弹窗 01–04 分区与能力卡片选中态、编辑回填与凭证「留空保持现有引用不变」占位、下发租户弹窗摘要行/关系表/软失效脚注、模型用量页五张统计卡，交互后 console 零警告。用量账目色点列因本地库无调用记录仅源码级确认（StatusDot 在同页其他位置渲染正常）；375px 窄屏与深色主题走查未运行；目标环境验收未运行。
+- **用户走查修正（同日）：** 用户截图发现「新建平台模型」弹窗部分字段 label 与输入框同行错位——`ModelFormModal.vue` 重写时丢失原实现的 `<a-form layout="vertical">` 根节点，a-form-item 无竖排布局上下文回落默认横排。已补回 a-form vertical 包裹并注释成因；复验构建 exit 0，浏览器实测弹窗 10 个字段标签全部独立成行位于输入框上方、console 无警告（favicon 404 为全站既有问题非本次引入）。
+
+## 2026-11-17 项目缺陷复查修复：my-resources 身份绑定 + 密码授权节流 + 审计分类口径 + lint 清零（隔离 393/393）
+
+按 `docs/项目缺陷复查报告-2026-11-17.md` 逐项修复 2 项 P1、1 项 P2、1 项 P3。
+
+- **P1 `my-resources` 应用身份绑定（已修）：** `authorization.py` `list_my_resources()` 与已修复的 `my-models` 同口径——目标应用以服务端验签的 OIDC 上下文（`_oidc_application_id`）为准，`client_id` 仅作一致性校验（不一致 403，与不存在不可区分防枚举）；管理会话 fail-closed 403。资源树范围不再可被同租户应用 A token 改 `client_id` 读走应用 B 的菜单/按钮/`extra`。
+- **P1 密码授权失败节流（已修）：** `oidc_provider/tokens.py` `grant_type=password` 分支接入与管理登录同一套 `LoginThrottleService` 三桶节流（账号 / 邮箱×来源 / 来源，统一可信 IP 解析）：连续失败跨阈值返回 429 + `Retry-After`（保持 OAuth 错误结构，`error=rate_limited`）；失败写 `auth.login denied` 审计（未知账号不落操作者 ID 防枚举）；成功清理账号/邮箱×来源桶；凭证正确但无应用有效角色不计失败桶。授权码与 refresh grant 不经过节流分支，行为不变。
+- **P2 审计分类口径（已修）：** `admin/audit.py` 新增 `action_category` 查询参数（`auth` = `auth.*` ∪ `oidc.*`，`management` = 其余；非法值 422），谓词在 filters 列表构造、count 与列表天然同源；前端 `AuditLogPage.vue` 两 Tab 都显式传类别——「管理操作」不再混入登录/刷新/重置/令牌事件，分页计数与列表一致。
+- **P3 lint 清零（已修）：** 删除 `ModelsTab.vue` 未使用的 `AdminEmpty` 导入与 `ModelGovernancePage.vue` 已赋值未使用的 `tenantQuery` 死变量。
+- **契约文档同步：** `docs/应用对接.md` §8（my-resources token 身份绑定）与 §2.1（密码直登节流、429/Retry-After、失败审计口径）。
+- **测试：** 新增 `test_oidc_password_throttle.py`（内存 SQLite 六组用例：连续失败 429+Retry-After 与审计、未知账号计数、成功重置、账号桶跨来源、地址桶同源多账号、无有效角色不计失败）；`test_application_resources.py` 新增同租户跨应用/管理会话拒绝用例，my-resources 用例改为 OIDC 上下文，未知 client 用例改判 403 契约；`test_audit_query.py` 新增类别拆分/计数/叠加/非法值用例（夹具补 `oidc.token.exchange` 事件）；`test_p404_visibility.py` 直调 `search_audit` 补 `action_category=None`（FastAPI Query 默认值非 None 的直调惯例）。
+- **验证：** 后端隔离全量 393/393 OK（49 skipped 为既有 PG 专项；PG 集成套件未配置 DATABASE_URL 未运行）；前端 `eslint --max-warnings 0` 0 告警、`vue-tsc --noEmit` 通过、Vite build EXIT=0（首次因系统内存压力 OOM 一次，重试通过）。已登录浏览器走查、跨应用动态复现、目标环境验收未运行。
+
+## 2026-11-17 模型目录与分发交互式 PRD 原型（仅新增原型文档）
+
+- 新增 `docs/prototypes/模型目录与分发-交互式原型.html`：基于《产品需求》§6.4 的自包含交互式原型（分屏：左侧管理台可点击原型 + 右侧联动需求文档，含文本全文与打印模式）。覆盖平台模型目录维护（超管，`button.models.manage`）、平台→租户下发与撤回、租户→应用下发与回收（软失效）、三级交集可见性（应用管理员只读）、停用与删除阻塞（有账目禁删提示走停用）、用量账本（配额拦截关闭横幅、待核对队列、actual/estimated/unknown 质量标记、未知单价）、关键状态（空目录 / 租户未收到 / 应用未下发 / 空账本 / 读取失败重试）与审计提示；示例数据仅供评审。能力标签、权限口径、状态与审计规则在「规则」页集中定义，与 §6.4/§3.2/§7 对齐；凭证引用编辑不回显等两处标注为假设。
+- 验证：Node 静态服务 + 浏览器实测通过——初始渲染（深色侧栏「模型治理」高亮、GPT-4o 目录表、右侧 概述/功能需求/规则 标签）、切换租户管理员视角（已收到模型 + 下发应用按钮）、下发应用弹窗勾选保存均无 JS 运行时错误。功能需求 / 规则页联动跳转、空态与读取失败演示、文本全文模式未逐一浏览器复验（静态检查通过）；未接入真实后端，非端到端验收。业务源码、配置、数据库无改动。
+
+## 2026-11-17 本地运行项目缺陷复查（静态审查 + 匿名探测）
+
+- 新增 `docs/项目缺陷复查报告-2026-11-17.md`：确认 `my-resources` 未绑定 OIDC 应用身份、trusted 客户端密码授权缺少登录失败节流、审计页分类查询不互斥、前端严格 lint 两处未使用代码；按影响和验收目标列出。上次报告的 5 项问题在当前源码已有对应修复，本轮未做目标环境复验。
+- 验证：本地 Console、API health、ready 均 HTTP 200；匿名 my-resources 为 401；前端直接 `vue-tsc --noEmit --incremental false` 通过，直接 ESLint 因 2 条 warning 在 `--max-warnings 0` 下失败。`pnpm` 与 `vue-tsc -b` 遇本机文件 EPERM；后端 unittest 因本机 Python 缺依赖未运行。浏览器控制不可用，已登录页面走查、跨应用动态复现、PG 隔离套件、目标环境验收均未运行。未改业务源码、配置或数据库。
+
+## 2026-11-17 权限管理平台模型统一接入与用量控制 PRD（仅文档）
+
+- 在现行 `docs/产品需求.md` §6.4.1 写入跨应用模型配置、Provider 凭据、模型网关、三级下发判权、RPM/TPM/并发/周期预算、调用前原子预留、结算与人工对账、管理体验和 M0–M4 分期验收；参考 LiteLLM、Azure API Management 和 OAuth 官方规范。
+- 同步 `docs/应用对接.md` 及根、前端、后端 README。现有接口、代码、数据库和配置未修改；配额 enforcement 保持关闭。文档/链接与差异检查完成；自动化测试、构建、真实 IAM/Provider 联调及目标环境验收未运行。
+
 ## 2026-11-17 更新腾讯云无域名部署指引（仅文档；部署与预检未运行）
 
 - 扩充 `docs/部署与运维.md` §4.1：加入腾讯云地域选择、CVM/Lighthouse 固定 IP 差异、安全组/防火墙规则、服务器准备、环境变量与 RSA key、Compose 静态检查、首装迁移边界、健康检查、自签根 CA 分发及 IP/issuer 迁移步骤。

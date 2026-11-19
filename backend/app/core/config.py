@@ -1,4 +1,4 @@
-﻿"""集中定义服务配置，避免路由和业务层各自读取环境变量。"""
+"""集中定义服务配置，避免路由和业务层各自读取环境变量。"""
 
 from functools import lru_cache
 from urllib.parse import urlsplit
@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     model_usage_api_key: str = ""
     # 配额预留执行默认关闭，必须在模型网关与故障策略验收后显式开启。
     model_quota_enforcement_enabled: bool = False
+    # 模型测试台受控出口（设计文档 §5）：探针与对话外呼的超时与输出上限由服务端强制，
+    # 会话仅存进程内存（正文不落库不进日志），超时会话自动回收。
+    model_test_connect_timeout_seconds: int = Field(default=8, ge=1, le=30)
+    model_test_read_timeout_seconds: int = Field(default=120, ge=5, le=600)
+    model_test_max_output_tokens: int = Field(default=2048, ge=64, le=8192)
+    model_test_session_ttl_seconds: int = Field(default=600, ge=60, le=3600)
     # 邀请邮件默认关闭；启用后仅在管理员创建邀请时使用下方 SMTP 配置投递一次性链接。
     invitation_email_enabled: bool = False
     # 密码重置与可选邀请邮件共用 SMTP；不保存邮件服务密码到数据库。

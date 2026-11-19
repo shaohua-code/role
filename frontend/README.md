@@ -1,5 +1,15 @@
 # 前端技术与目录说明
 
+**后续模型治理需求（未实现）：** 产品需求 §6.4.1 规划在现有“模型治理 / 模型用量”入口展示部署、凭据状态、发布版本、有效限额与对账。当前页面、路由和权限码未改；配额 enforcement 仍关闭。
+
+模型测试台的页面布局、对话调试、流式事件和可见思考输出方案见[设计稿](../docs/模型测试台设计.md)，可交互原型见 [`docs/prototypes/模型测试台-交互式原型.html`](../docs/prototypes/模型测试台-交互式原型.html)。
+
+**2026-11-18 模型测试台页面（判定 + 受控通道全量实施）：** 新增 `/models/test?model_id=...`（PageKey `model_test`，不占侧栏；入口在模型治理目录行操作「测试」，可达性同 `menu.models`，页内动作按 `button.models.manage` 收口）。页面 `views/models/test/`：上下文行、四段状态行（配置/授权来自后端权威判定）、对话列（SSE 流式正文 + 可见思考独立流 + 停止/断线重连）、探针报告卡、诊断列（思考/事件/用量）、调试抽屉。通道：创建会话 → fetch 流消费 SSE（Bearer 头，last_sequence 重连去重），取消按钮触发服务端中断。无新增权限码（`button.models.test` 仍为设计稿提案）。后端需迁移 0010（用量账目 source=model_test）。验证见根 CHANGELOG。
+
+**2026-11-19 对话体验更新：** 测试范围在桌面默认展开、窄屏默认收起；主对话区突出输入与状态，移动端诊断按需展开。已完成的最近 10 轮（历史总长不超过 32000 字）随下一次请求发送，失败/中止轮次不进入上下文；编辑重发截断后续轮次，末轮可重新生成。切换目标会请求服务端取消在途调用，异常 EOF 进入重连流程。调试抽屉仅保留当前后端真实转发的温度、Top P、最大输出与系统提示词。隔离与浏览器验证见根 CHANGELOG。
+
+**2026-11-17 模型治理页重设计（纯展示层）：** 目录视图新增账本式概览带（全部/启用中/已停用/下发关系四卡，点击即筛选状态）；表格 15 列收敛为 10 列（模型/提供方双行单元格、端点转悬停提示、能力 chip 化、限流与价格合并 mono 列、状态/凭证/限额改「色点+文本」、操作列收敛为「下发租户 + ⋯ 菜单」）；新建/编辑弹窗重构为 01–04 分区表单（能力卡片化、凭证等宽输入），下发租户弹窗拆分独立组件（模型摘要行 + 色点关系表）。新增 `views/models/components/{StatusDot,CatalogSummaryCards,ModelFormModal,TenantGrantModal}.vue`；用量视图汇总卡与图表不变，计量方式/结果列改色点。API 契约、判权（`button.models.manage`）、筛选与分页逻辑零改动。验证见根 CHANGELOG。
+
 **2026-11-11 项目对接指南：** 侧栏「应用与权限」新增只读页 `/integration-guide`（与应用工作台同用 `menu.application_workspace`）。旧地址 `/project-integration` 改指向该页。归档向导未恢复。验证见根 CHANGELOG。
 
 **2026-10-30 权限体检下线：** 「权限体检」页与菜单整体删除（`views/permission-health/`、路由注册、`menu.permission_health` 码、`/admin/permissions/health` 与 `/admin/permissions/user-chain` 端点）；旧深链 `/permission-health` 由全捕获路由回退到首个可见页。高级管理只剩平台角色 / 用户组。验证见根 CHANGELOG。
@@ -283,10 +293,10 @@ frontend/
     │   ├── index.ts           # vue-router 路由表（原 app/router.ts）
     │   ├── navigation.ts      # 页面白名单、侧栏项和面包屑标题
     │   └── loaders.ts         # 异步页面加载器（原 app/featureLoaders.ts）
-    ├── views/                 # 页面模块（原 features/）：access-control、applications、
-    │                          #   application-roles、application-workspace、audit、auth、groups、
-    │                          #   integration、invitations、models、overview、organizations、
-    │                          #   organization-workspace、permissions、roles、tenant-admin、
+    ├── views/                 # 页面模块（文件夹/index.vue 写法）：access-control、
+    │                          #   application-workspace、audit、auth、groups、
+    │                          #   integration-guide、invitations、models、overview、
+    │                          #   organization-workspace、profile、roles、tenant-admin、
     │                          #   tenants、themes、users
     ├── layout/                # AppSidebar.vue（桌面 a-menu 与窄屏 a-drawer）、AppBreadcrumb.vue
     ├── api/                   # index.ts 认证 API 请求、health/capabilities 探针（原 shared/services/）
@@ -295,8 +305,7 @@ frontend/
     ├── plugins/               # antd.ts 公共组件注册、registerManagementUi.ts、icons.ts
     ├── components/            # index.ts barrel + AdminPageHeader、加载/错误反馈等通用组件
     ├── main.ts                # Vue/Ant Design Vue 启动
-    ├── style.css              # OIDC 主题变量、预览画布、窄屏弹窗
-    └── appearance.css         # 外观覆盖（P329 后基本清空）
+    └── style.css              # OIDC 主题变量、预览画布、窄屏弹窗
 ```
 
 `frontend/` 是独立 Vue 工程，只包含 Vue、TypeScript 和浏览器侧 API 调用；Python 路由、ORM 模型和迁移仅存在于同级的 `backend/` 工程。两边不共享源码，通过 `@/api`（`src/api/index.ts`）和 HTTP/OpenAPI 契约协作。OIDC 授权、令牌、用户信息和登出协议实现仅位于后端 `app/api/v1/oidc_provider/`，前端不持有客户端密钥、签名私钥或服务端 SDK 凭证；签名公钥重叠由 API 的 JWKS 端点发布给 OIDC relying party。工作台、每应用登录主题、用户组、成员邀请、授权模拟、审计查询、模型治理、权限目录、角色授权、租户目录、OAuth 应用、单应用角色、用户、组织管理和租户委派管理分别由 `views/overview/`、`views/themes/`、`views/groups/`、`views/invitations/`、`views/access-control/`、`views/audit/`、`views/models/`、`views/permissions/`、`views/roles/`、`views/tenants/`、`views/applications/`、`views/application-roles/`、`views/users/`、`views/organizations/` 和 `views/tenant-admin/` 管理。用户 feature 自管用户查询/创建/启停、活动租户角色绑定及成员组织归属，并在组织归属保存时保留已有停用组织；组织 feature 自管租户过滤、组织创建/层级和启停；租户委派 feature 自管当前授权租户中的成员搜索、组织归属读取/替换、角色权限读取和角色数据范围读取/替换。应用角色 feature 自管单应用角色 CRUD/启停、业务权限预览与原子替换、已授权成员查询和直接绑定移除；权限预览展示直接绑定/用户组继承成员去重数及逐权限的通用授权覆盖估算，不能新增 `iam.*` 权限。仅允许绑定现有活动租户成员，用户组关系仍只读显示。只读身份可以查看允许范围内的租户资源，修改入口仅在 manage 权限下开放，服务端逐请求重新授权。模型 feature 自管目录/用量请求，租户 feature 自管租户生命周期，应用 feature 自管 OAuth 客户端列表、回调校验、资料编辑、信任策略、密钥轮换及一次性密钥展示，邀请 feature 自管列表筛选、表单校验、创建/撤销和只展示一次的邀请链接，审计 feature 自管只读查询和操作编码筛选，角色 feature 自管角色 CRUD/启停、权限变更预览与数据范围编辑，权限 feature 自管稳定编码目录的检索、创建、停用/恢复确认及关联角色影响提示。`views/auth/AuthEntry.vue` 负责公开登录、OIDC consent、邀请接受与登录主题展示；`src/App.vue` 负责登录后会话、当前页状态和页面装配。`router/navigation.ts` 是页面键/标题/导航项的单一来源，`layout/AppSidebar.vue` 负责桌面 `a-menu`、窄屏 `a-drawer` 与健康状态展示。前后端项目与代码目录继续分离。完整工程边界见[架构说明](../docs/技术架构与接入.md)。

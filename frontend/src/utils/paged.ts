@@ -1,5 +1,5 @@
 /** 列表接口分页包装；兼容升级前返回裸数组的调用方。 */
-export interface PagedList<T> {
+interface PagedList<T> {
   items: T[]
   total: number
   limit: number

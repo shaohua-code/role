@@ -25,6 +25,7 @@ import {
   InvitationManagement,
   LoginThemeManagement,
   ModelGovernancePage,
+  ModelTestPage,
   OrganizationWorkspace,
   OverviewPage,
   ProfilePage,
@@ -146,6 +147,8 @@ const visibleNavigation = computed(() => {
 // 个人信息页不占侧栏、不判管理码，登录即可达（守卫与下拉入口共用该口径）。
 function isPageReachable(key: PageKey): boolean {
   if (key === 'profile') return true
+  // 模型测试台不占侧栏（入口在模型治理行操作）：可达性与模型治理同码（menu.models）。
+  if (key === 'model_test') return hasAnyCode(heldCodes.value, ['menu.models'])
   const item = NAV_ITEMS.find(candidate => candidate.key === key)
   return Boolean(item && hasAnyCode(heldCodes.value, item.requiredPermissions))
 }
@@ -659,6 +662,13 @@ onUnmounted(() => {
           <div v-if="visitedPages.has('models') || visitedPages.has('model_usage')" v-show="page === 'models' || page === 'model_usage'">
             <ModelGovernancePage :active="page === 'models' || page === 'model_usage'" :view="page === 'models' ? 'catalog' : 'usage'"
               :seed-tenants="consoleMode === 'tenant' ? tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) })) : []" />
+          </div>
+          <!-- 模型测试台：不占侧栏（模型治理行操作进入），路由守卫与可达性已按 menu.models 收口。
+               child-lock：视口锁定页，包裹层允许收缩，高度链下传至对话/诊断双列独立滚动区。 -->
+          <div v-if="visitedPages.has('model_test')" v-show="page === 'model_test'" class="mgmt-shell-child-lock">
+            <ModelTestPage
+              :seed-tenants="consoleMode === 'tenant' ? tenants.map(tenant => ({ id: String(tenant.id), name: String(tenant.name), status: String(tenant.status) })) : []"
+            />
           </div>
           <div v-if="visitedPages.has('tenants')" v-show="page === 'tenants'">
             <TenantManagement

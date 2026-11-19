@@ -16,6 +16,5 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/**/*.ts", "src/**/*.vue"],
-  "exclude": ["src/views/_archive"]
+  "include": ["src/**/*.ts", "src/**/*.vue"]
 }

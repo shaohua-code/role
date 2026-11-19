@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>模型测试台 · 高保真原型 — IAM 管理台</title>
+<link rel="icon" href="data:," />
+<!-- 原型说明：所有数据均为前端模拟，不发起任何真实 Provider 请求；视觉令牌取自 frontend/src/styles/tokens.css（P350 轻奢极简黑白灰） -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // Tailwind 配置：字体与关键帧对齐管理台令牌
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', '"Noto Sans SC"', 'system-ui', 'sans-serif'],
+          mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+        },
+        keyframes: {
+          caret: { '0%, 45%': { opacity: '1' }, '50%, 100%': { opacity: '0' } },
+          fadeUp: { from: { opacity: '0', transform: 'translateY(6px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
+          drawerIn: { from: { transform: 'translateX(100%)' }, to: { transform: 'translateX(0)' } },
+          popIn: { from: { opacity: '0', transform: 'scale(.96)' }, to: { opacity: '1', transform: 'scale(1)' } },
+        },
+        animation: {
+          caret: 'caret 1s steps(1) infinite',
+          'fade-up': 'fadeUp .28s ease both',
+          'drawer-in': 'drawerIn .26s cubic-bezier(.32,.72,.35,1) both',
+          'pop-in': 'popIn .18s ease both',
+        },
+      },
+    },
+  }
+</script>
+<!-- 设计令牌：与 frontend/src/styles/tokens.css 保持一致，另补品牌对比色 -->
+<style>
+  :root {
+    --color-bg-canvas: #fafafa;
+    --color-bg-elevated: #ffffff;
+    --color-bg-subtle: #f4f4f5;
+    --color-border: #e4e4e7;
+    --color-border-strong: #d4d4d8;
+    --color-text-primary: #18181b;
+    --color-text-secondary: #52525b;
+    --color-text-muted: #a1a1aa;
+    --color-sider-bg: #09090b;
+    --color-sider-text: rgba(255, 255, 255, 0.72);
+    --color-sider-text-active: #fafafa;
+    --color-sider-item-hover: rgba(255, 255, 255, 0.06);
+    --color-sider-item-active: rgba(255, 255, 255, 0.1);
+    --color-brand: #18181b;
+    --color-brand-hover: #3f3f46;
+    --color-brand-subtle: rgba(24, 24, 27, 0.06);
+    --color-brand-contrast: #ffffff;
+    --color-success: #059669;
+    --color-warning: #d97706;
+    --color-error: #dc2626;
+    --color-info: #2563eb;
+    /* 语义色低透明度背景/描边（Tailwind 不能对 var() 颜色用 /alpha 修饰符，预置混合色） */
+    --tone-success-border: rgba(5, 150, 105, 0.30);
+    --tone-success-bg: rgba(5, 150, 105, 0.07);
+    --tone-warning-border: rgba(217, 119, 6, 0.40);
+    --tone-warning-bg: rgba(217, 119, 6, 0.07);
+    --tone-error-border: rgba(220, 38, 38, 0.35);
+    --tone-error-bg: rgba(220, 38, 38, 0.07);
+    --tone-error-bg-soft: rgba(220, 38, 38, 0.045);
+    --tone-info-border: rgba(37, 99, 235, 0.30);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.05), 0 24px 48px rgba(0, 0, 0, 0.12);
+  }
+  html[data-theme='dark'] {
+    --color-bg-canvas: #0e0e10;
+    --color-bg-elevated: #18181b;
+    --color-bg-subtle: #1f1f23;
+    --color-border: #2e2e32;
+    --color-border-strong: #3f3f46;
+    --color-text-primary: #fafafa;
+    --color-text-secondary: #a1a1aa;
+    --color-text-muted: #71717a;
+    --color-brand: #fafafa;
+    --color-brand-hover: #ffffff;
+    --color-brand-subtle: rgba(255, 255, 255, 0.08);
+    --color-brand-contrast: #18181b;
+    --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.45), 0 24px 48px rgba(0, 0, 0, 0.55);
+  }
+  /* 细滚动条：贴地轻奢，不抢视觉 */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 9999px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  /* 滑杆控件：中性轨道 + 品牌滑块 */
+  input[type='range'] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 9999px; background: var(--color-border-strong); outline: none; }
+  input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--color-brand); border: 2px solid var(--color-bg-elevated); box-shadow: var(--shadow-sm); cursor: pointer; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+<style type="text/tailwindcss">
+  /* 组件类：仅用 @apply 抽离公共样式，颜色全部走令牌变量 */
+  .card { @apply rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-sm)]; }
+  .btn { @apply inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] px-3.5 text-[13px] font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-text-muted)] disabled:pointer-events-none disabled:opacity-40; }
+  .btn-primary { @apply border-transparent bg-[var(--color-brand)] text-[var(--color-brand-contrast)] hover:bg-[var(--color-brand-hover)]; }
+  .btn-danger { @apply border-[var(--tone-error-border)] text-[var(--color-error)] hover:bg-[var(--tone-error-bg)]; }
+  .btn-sm { @apply h-8 px-3 text-xs; }
+  .chip { @apply inline-flex h-6 items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 text-[11px] leading-none text-[var(--color-text-secondary)]; }
+  .chip-mono { @apply font-mono text-[11px]; }
+  .field-label { @apply mb-1.5 block text-[11px] font-medium tracking-wide text-[var(--color-text-muted)]; }
+  .select-box { @apply h-9 w-full appearance-none rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] px-3 pr-8 text-[13px] text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-text-muted)] disabled:opacity-40; }
+  .seg { @apply flex rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-0.5; }
+  .seg-item { @apply h-7 rounded-full px-3.5 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]; }
+  .seg-item-active { @apply bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-[var(--shadow-sm)]; }
+  .dot { @apply inline-block h-2 w-2 shrink-0 rounded-full; }
+  .tab-item { @apply relative h-9 px-3 text-[13px] font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-secondary)]; }
+  .tab-active { @apply text-[var(--color-text-primary)]; }
+  .sider-item { @apply flex h-9 items-center gap-2.5 rounded-md px-3 text-[13px] text-[var(--color-sider-text)] transition-colors hover:bg-[var(--color-sider-item-hover)] hover:text-[var(--color-sider-text-active)]; }
+  .sider-item-active { @apply bg-[var(--color-sider-item-active)] text-[var(--color-sider-text-active)]; }
+  .kv-row { @apply flex items-start justify-between gap-4 border-b border-[var(--color-border)] py-2 last:border-0; }
+  .kv-key { @apply shrink-0 text-xs text-[var(--color-text-muted)]; }
+  .ev-payload { @apply mt-1.5 overflow-x-auto rounded-md bg-[var(--color-bg-subtle)] p-2 font-mono text-[11px] leading-relaxed text-[var(--color-text-secondary)]; }
+  .drawer-scrim { @apply fixed inset-0 z-40 bg-black/25; }
+</style>
+</head>
+<body class="h-screen overflow-hidden bg-[var(--color-bg-canvas)] font-sans text-[var(--color-text-primary)] antialiased">
+<div class="flex h-full">
+
+  <!-- ============ 侧栏（纯黑，与管理台一致；本页不新增一级导航，入口在「模型治理」行操作） ============ -->
+  <aside class="hidden w-[232px] shrink-0 flex-col bg-[var(--color-sider-bg)] md:flex">
+    <div class="flex h-14 items-center gap-2.5 px-5">
+      <span class="flex h-6 w-6 items-center justify-center rounded-md border border-white/25 font-mono text-[10px] font-bold text-white">IA</span>
+      <span class="text-[13px] font-medium tracking-wide text-[var(--color-sider-text-active)]">IAM 控制台</span>
+    </div>
+    <nav class="flex-1 space-y-5 overflow-y-auto px-3 py-3">
+      <div>
+        <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>运营总览</div>
+      </div>
+      <div>
+        <p class="px-3 pb-1.5 text-[11px] font-medium tracking-widest text-white/35">身份与组织</p>
+        <div class="space-y-0.5">
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21V8l7-5 7 5v13"/><path d="M10 21v-6h4v6"/></svg>组织工作台</div>
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><path d="M16 4a3.5 3.5 0 0 1 0 7"/><path d="M18 15.5c1.8.7 3 2.1 3.5 4.5"/></svg>用户管理</div>
+        </div>
+      </div>
+      <div>
+        <p class="px-3 pb-1.5 text-[11px] font-medium tracking-widest text-white/35">应用与权限</p>
+        <div class="space-y-0.5">
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18"/><path d="M8 4v5"/></svg>应用工作台</div>
+        </div>
+      </div>
+      <div>
+        <p class="px-3 pb-1.5 text-[11px] font-medium tracking-widest text-white/35">高级管理</p>
+        <div class="space-y-0.5">
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.9-3.4 3.7-5.5 7-5.5s6.1 2.1 7 5.5"/></svg>平台角色</div>
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>用户组</div>
+        </div>
+      </div>
+      <div>
+        <p class="px-3 pb-1.5 text-[11px] font-medium tracking-widest text-white/35">平台治理</p>
+        <div class="space-y-0.5">
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="9" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>模型治理</div>
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h16"/><path d="M7 20V9"/><path d="M12 20V4"/><path d="M17 20v-7"/></svg>模型用量</div>
+        </div>
+      </div>
+      <div>
+        <p class="px-3 pb-1.5 text-[11px] font-medium tracking-widest text-white/35">审计与验证</p>
+        <div class="space-y-0.5">
+          <div class="sider-item"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>审计日志</div>
+        </div>
+      </div>
+    </nav>
+    <div class="mx-3 mb-4 flex items-center gap-2.5 rounded-lg bg-white/[0.06] px-3 py-2.5">
+      <span class="flex h-7 w-7 items-center justify-center rounded-full bg-white/15 text-[11px] font-medium text-white">刘</span>
+      <div class="min-w-0">
+        <p class="truncate text-xs font-medium text-[var(--color-sider-text-active)]">刘少华</p>
+        <p class="text-[10px] text-white/45">平台管理员 · L1</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ 主内容区 ============ -->
+  <main class="flex min-w-0 flex-1 flex-col">
+
+    <!-- 页头 -->
+    <header class="flex items-start justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 py-4 max-lg:px-4">
+      <div class="min-w-0">
+        <p class="flex items-center gap-2 text-[11px] font-medium tracking-[0.06em] text-[var(--color-text-muted)]">
+          <span class="inline-block h-3 w-0.5 bg-[var(--color-border-strong)]"></span>平台治理 · 模型治理
+          <span class="rounded border border-dashed border-[var(--color-border-strong)] px-1.5 py-px font-mono text-[10px] normal-case">/models/test</span>
+        </p>
+        <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h1 class="text-xl font-semibold leading-tight">模型测试台</h1>
+          <span class="chip border-dashed !text-[var(--color-text-muted)]" title="本页面为设计原型：全部状态、对话、事件与用量数据均为前端模拟，不发起真实 Provider 请求">原型演示 · 数据均为模拟</span>
+        </div>
+      </div>
+      <div class="flex shrink-0 items-center gap-2">
+        <button id="btnClear" class="btn btn-sm" disabled>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14"/></svg>清空会话
+        </button>
+        <button id="btnDebug" class="btn btn-sm">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>调试设置
+        </button>
+      </div>
+    </header>
+
+    <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-6 max-lg:p-4 workspace-scroll">
+
+      <!-- 模型身份条：展示名 / 稳定 ID / Provider·部署 / 活动状态 / 能力标签 -->
+      <section id="modelIdentity" class="card flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3.5"></section>
+
+      <!-- 上下文行：模式 / 租户 / 应用 / 模型 -->
+      <section class="card px-5 py-4">
+        <div class="flex flex-wrap items-end gap-x-5 gap-y-3">
+          <div>
+            <span class="field-label">测试模式</span>
+            <div class="seg" role="tablist" aria-label="测试模式">
+              <button id="modeApp" class="seg-item seg-item-active" role="tab" aria-selected="true">应用对话</button>
+              <button id="modePlatform" class="seg-item" role="tab" aria-selected="false">平台连接</button>
+            </div>
+          </div>
+          <div id="fieldTenant" class="w-44"><label class="field-label" for="selTenant">租户</label><select id="selTenant" class="select-box"></select></div>
+          <div id="fieldApp" class="w-44"><label class="field-label" for="selApp">应用</label><select id="selApp" class="select-box"></select></div>
+          <div class="w-64"><label class="field-label" for="selModel">模型</label><select id="selModel" class="select-box"></select></div>
+          <div id="platformNote" class="chip !h-8 gap-1.5 border-[var(--tone-warning-border)] bg-[var(--tone-warning-bg)] !text-[var(--color-warning)]" hidden>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+            平台级验证 · 需超管范围与模型管理权限，不代表业务应用已获授权
+          </div>
+        </div>
+      </section>
+
+      <!-- 状态行：四项状态分开显示，未跑过的环节显示"未测试" -->
+      <section class="card flex flex-col lg:flex-row lg:items-stretch">
+        <div id="statusStrip" class="grid flex-1 grid-cols-2 md:grid-cols-4"></div>
+        <div class="flex items-center justify-between gap-3 border-t border-[var(--color-border)] px-5 py-3 lg:ml-2 lg:border-l lg:border-t-0 lg:py-0">
+          <div class="text-[11px] leading-tight text-[var(--color-text-muted)]">最近测试<br id="lastTestBr" /><span id="lastTestAt" class="font-mono text-[var(--color-text-secondary)]">—</span></div>
+          <button id="btnProbe" class="btn btn-sm">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-4l-3 8-6-16-3 8H2"/></svg>测试连接
+          </button>
+        </div>
+      </section>
+
+      <!-- 工作区：对话主列 + 诊断次列 -->
+      <section class="grid min-h-[420px] flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_400px]">
+
+        <!-- 对话主列 -->
+        <div class="card flex min-h-0 flex-col overflow-hidden">
+          <div class="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-2.5">
+            <div class="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+              <span>会话</span><span id="sessionId" class="chip-mono rounded bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[var(--color-text-secondary)]">—</span>
+              <span class="text-[var(--color-border-strong)]">|</span>
+              <span>仅存于当前浏览器，刷新即清除</span>
+            </div>
+            <span id="chatTurns" class="text-[11px] text-[var(--color-text-muted)]">0 轮</span>
+          </div>
+          <div id="chatScroll" class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            <!-- 消息由 JS 渲染；未选模型时显示空态 -->
+          </div>
+          <!-- 输入区（应用对话模式） -->
+          <div id="composer" class="border-t border-[var(--color-border)] px-5 pb-4 pt-3">
+            <div id="paramSummary" class="mb-2 flex flex-wrap items-center gap-1.5"></div>
+            <div id="composerInner" class="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] transition-colors focus-within:border-[var(--color-text-muted)]">
+              <textarea id="inputText" rows="2" placeholder="输入消息，Enter 发送，Shift + Enter 换行" class="block max-h-32 w-full resize-none bg-transparent px-3.5 pt-3 text-[13px] leading-relaxed text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none disabled:cursor-not-allowed"></textarea>
+              <div class="flex items-center justify-between px-2.5 pb-2.5">
+                <div class="flex items-center gap-1">
+                  <button id="btnAttach" class="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-secondary)]" title="上传图片（vision）" hidden>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  </button>
+                  <span id="composerHint" class="text-[11px] text-[var(--color-text-muted)]"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button id="btnStop" class="btn btn-danger btn-sm" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>停止
+                  </button>
+                  <button id="btnSend" class="btn btn-primary btn-sm">
+                    发送<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 14-7-4 7 4 7z"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p id="identityNote" class="mt-1.5 text-[11px] text-[var(--color-text-muted)]">调用身份 = 当前操作者 @ 所选应用，服务端逐次判权，不可代填他人 user_id</p>
+          </div>
+          <!-- 平台连接模式：探针面板替代输入区 -->
+          <div id="probePanel" class="border-t border-[var(--color-border)] px-5 py-4" hidden>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <p class="text-xs leading-relaxed text-[var(--color-text-secondary)]">使用服务端固定短探针分阶段验证：凭据解析 → 网络 / TLS → Provider 响应。<br />仅验证链路，不产生对话；测试请求同样可能产生 Provider 费用。</p>
+              <button id="btnProbeRun" class="btn btn-primary">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 8-6-16-3 8H2"/></svg>执行连接测试
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 诊断次列（可收起；窄屏变底部抽屉） -->
+        <aside id="diagPanel" class="card flex min-h-0 flex-col overflow-hidden max-lg:fixed max-lg:inset-x-3 max-lg:bottom-0 max-lg:z-40 max-lg:h-[68vh] max-lg:translate-y-[calc(100%_+_16px)] max-lg:rounded-b-none max-lg:shadow-[var(--shadow-lg)] max-lg:transition-transform max-lg:duration-300">
+          <div class="flex items-center justify-between border-b border-[var(--color-border)] pl-2 pr-3">
+            <div class="flex">
+              <button class="tab-item tab-active" data-diag-tab="thinking">思考过程</button>
+              <button class="tab-item" data-diag-tab="events">事件</button>
+              <button class="tab-item" data-diag-tab="usage">请求与用量</button>
+            </div>
+            <button id="btnDiagClose" class="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-secondary)]" title="收起诊断区">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg>
+            </button>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3" id="diagBody">
+            <!-- 三个 Tab 面板由 JS 渲染 -->
+          </div>
+        </aside>
+
+        <!-- 诊断收起后的重开入口（桌面右侧竖条 / 窄屏底部浮钮） -->
+        <button id="btnDiagOpen" class="fixed bottom-24 right-4 z-40 hidden h-10 items-center gap-1.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] px-4 text-xs font-medium shadow-[var(--shadow-md)] transition-colors hover:bg-[var(--color-bg-subtle)]">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4l-5 5a1.5 1.5 0 0 0 2.1 2.1l5-5a4.5 4.5 0 0 0 6.4-6.4L13.5 11 11 8.5z"/></svg>诊断
+          <span id="diagBadge" class="dot bg-[var(--color-error)]" hidden></span>
+        </button>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- ============ 调试设置抽屉 ============ -->
+<div id="drawerScrim" class="drawer-scrim hidden" hidden></div>
+<div id="debugDrawer" class="fixed inset-y-0 right-0 z-50 flex w-[420px] max-w-[92vw] translate-x-full flex-col border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-lg)] transition-transform duration-300">
+  <div class="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+    <div>
+      <h2 class="text-[15px] font-semibold">调试设置</h2>
+      <p class="mt-0.5 text-[11px] text-[var(--color-text-muted)]">参数仅作用于下一次发送；关闭抽屉未应用的修改将被重置</p>
+    </div>
+    <button id="btnDrawerClose" class="flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div id="drawerBody" class="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5"></div>
+  <div class="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-5 py-4">
+    <button id="btnResetParams" class="btn btn-sm">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v5h5"/></svg>恢复默认
+    </button>
+    <div class="flex gap-2">
+      <button id="btnCancelParams" class="btn btn-sm">取消</button>
+      <button id="btnApplyParams" class="btn btn-primary btn-sm">应用参数</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 原型演示控制条 ============ -->
+<div class="fixed bottom-4 left-4 z-40 flex items-center gap-2.5 rounded-full border border-white/10 bg-[var(--color-sider-bg)] py-1.5 pl-3 pr-1.5 text-[11px] text-white/70 shadow-[var(--shadow-lg)]">
+  <span class="flex items-center gap-1.5 font-medium tracking-wide text-white/90">
+    <span class="dot animate-pulse bg-[var(--color-warning)]"></span>原型演示
+  </span>
+  <span class="h-3 w-px bg-white/15"></span>
+  <label class="flex items-center gap-1.5">场景
+    <select id="selScenario" class="h-6 rounded-full border border-white/15 bg-white/5 px-2 text-[11px] text-white/90 focus:outline-none">
+      <option value="normal">正常流式</option>
+      <option value="rate_limited">限流 429</option>
+      <option value="timeout">连接超时</option>
+      <option value="disconnect">流中断</option>
+    </select>
+  </label>
+  <span class="h-3 w-px bg-white/15"></span>
+  <button id="btnTheme" class="flex h-7 w-7 items-center justify-center rounded-full transition-colors hover:bg-white/10" title="切换浅色 / 深色">
+    <svg id="iconSun" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"/></svg>
+    <svg id="iconMoon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="hidden"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+  </button>
+  <button id="btnResetDemo" class="flex h-7 items-center gap-1 rounded-full px-2.5 transition-colors hover:bg-white/10" title="重置原型到初始状态">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v5h5"/></svg>重置
+  </button>
+</div>
+
+<!-- 弹窗与提示根节点 -->
+<div id="modalRoot" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/30 p-4"></div>
+<div id="toastRoot" class="pointer-events-none fixed left-1/2 top-5 z-[70] flex -translate-x-1/2 flex-col items-center gap-2"></div>
+
+<script>
+'use strict'
+/* =====================================================================
+ * 模型测试台高保真原型脚本 —— 全部数据为前端模拟，不发起真实请求
+ * 交互严格对齐 docs/模型测试台设计.md：
+ *  - 四项状态分开显示（配置/授权/Provider/本次生成），未测试 ≠ 成功
+ *  - 应用对话模式按三级下发交集逐次判权，缺失层级明确指出
+ *  - 正文与可见思考是两条独立流；事件带单调 sequence
+ *  - 停止/中断不伪装成完成，未知用量显示"待核对"，不显示 0
+ * ===================================================================== */
+
+/* ---------------- 模拟数据：模型目录 / 三级下发关系 ---------------- */
+const MODELS = {
+  mdl_deepseek_r1: {
+    id: 'mdl_deepseek_r1', name: 'DeepSeek-R1', provider: 'DeepSeek 官方', deploy: 'deepseek-reasoner / prod-a',
+    enabled: true, caps: ['streaming', 'reasoning', 'thinking_output'],
+  },
+  mdl_qwen72b: {
+    id: 'mdl_qwen72b', name: 'Qwen2.5-72B-Instruct', provider: '自建 vLLM', deploy: 'qwen72b-awq / gpu-pool-02',
+    enabled: true, caps: ['streaming', 'tool_calls', 'json_output'],
+  },
+  mdl_glm4v: {
+    id: 'mdl_glm4v', name: 'GLM-4V-Plus', provider: '智谱开放平台', deploy: 'glm-4v-plus / standard',
+    enabled: true, caps: ['streaming', 'vision'],
+  },
+}
+const TENANTS = {
+  t_cloud: { id: 't_cloud', name: '云启科技' },
+  t_star: { id: 't_star', name: '星河互联' },
+}
+const APPS = {
+  app_service: { id: 'app_service', name: '智能客服', tenant: 't_cloud' },
+  app_contract: { id: 'app_contract', name: '合同审查', tenant: 't_cloud' },
+  app_kb: { id: 'app_kb', name: '知识库问答', tenant: 't_star' },
+}
+/* 租户下发与应用下发（星河互联未下发 qwen72b → 演示"租户未下发"；glm4v 未下发到智能客服 → 演示"应用未下发"） */
+const TENANT_GRANTS = { t_cloud: ['mdl_deepseek_r1', 'mdl_qwen72b', 'mdl_glm4v'], t_star: ['mdl_deepseek_r1'] }
+const APP_GRANTS = { app_service: ['mdl_deepseek_r1', 'mdl_qwen72b'], app_contract: ['mdl_qwen72b', 'mdl_glm4v'], app_kb: ['mdl_deepseek_r1'] }
+
+/* 能力标签文案与说明（区分 reasoning 与 thinking_output） */
+const CAP_META = {
+  streaming: { label: '流式', tip: '支持流式输出' },
+  reasoning: { label: '深度思考 · 可启用', tip: 'reasoning：可启用深度思考参数，仅表示可开启，不保证返回可见过程' },
+  thinking_output: { label: '思考输出 · 可见', tip: 'thinking_output：Provider 预期可能返回可见思考过程' },
+  vision: { label: '图片理解', tip: 'vision：支持图片输入' },
+  json_output: { label: 'JSON 模式', tip: 'json_output：支持 JSON 格式约束输出' },
+  tool_calls: { label: '工具调用', tip: 'tool_calls：支持工具调用调试' },
+}
+
+/* 演示对话内容：思考片段与正文分段 */
+const DEMO = {
+  question: '用一段话向新同事解释什么是三级下发，并给一条 SQL 示例。',
+  thinking: [
+    '先拆解概念：三级下发是「平台目录 → 租户下发 → 应用下发」的逐层授权链，核心是三层交集判定，任何一层缺失都不可用。',
+    '面向新同事要避免术语堆砌，用「目录管存在、下发管给谁用」的比喻，再补一条可执行的 SQL 让概念落地。',
+    'SQL 示例采用两次 JOIN 取交集的写法，列名与示例库保持一致，输出前检查不引入未定义表。',
+  ],
+  answer: [
+    { t: 'p', md: '三级下发是模型从平台到业务应用的授权链路，共三层：' },
+    { t: 'p', md: '1. **平台目录** — 管理员登记模型、凭据引用与部署，模型先要「存在且启用」；\n2. **租户下发** — 平台把模型授权给某个租户，租户内才可见；\n3. **应用下发** — 租户再把模型挂到具体应用，应用侧调用才真正生效。' },
+    { t: 'p', md: '实际判权取三层**交集**：任何一层缺失，调用都会在外呼前被拒绝。' },
+    { t: 'code', lang: 'sql', code: '-- 查看某应用当前可用的模型（三级交集示意）\nSELECT m.id, m.display_name\nFROM models m\nJOIN tenant_model_grants g\n  ON g.model_id = m.id AND g.tenant_id = :tenant_id\nJOIN app_model_grants a\n  ON a.model_id = m.id AND a.app_id = :app_id\nWHERE m.enabled = TRUE;' },
+    { t: 'p', md: '一句话记忆：目录管**能不能用**，下发管**给谁用**，交集为空则都不可用。' },
+  ],
+  toolQuestion: '知识库里有哪些关于租户配额的文档？',
+  toolCall: { name: 'search_kb', args: { query: '租户配额', top_k: 3 }, result: { hits: ['《配额 enforcement 上线门禁》', '《模型用量与配额说明》', '《tenant_access 常见问题》'] } },
+  toolAnswer: [
+    { t: 'p', md: '在知识库中检索到 3 篇与「租户配额」相关的文档：' },
+    { t: 'p', md: '1. 《**配额 enforcement 上线门禁》** — 说明配额拦截的上线前置条件；\n2. 《模型用量与配额说明》 — 用量口径与 `actual / estimated / unknown` 质量标记；\n3. 《tenant_access 常见问题》 — 租户接入期配额 FAQ。' },
+    { t: 'p', md: '其中第 1 篇与当前 `MODEL_QUOTA_ENFORCEMENT_ENABLED = false` 的平台状态直接相关，建议优先阅读。' },
+  ],
+}
+
+/* ---------------- 全局状态 ---------------- */
+const DEFAULT_PARAMS = () => ({ stream: true, thinking: true, effort: 'medium', temperature: 0.7, topP: 0.9, maxTokens: 2048, systemPrompt: '', jsonMode: false, tools: false })
+const state = {
+  mode: 'app',                 // app | platform
+  tenantId: 't_cloud',
+  appId: 'app_service',
+  modelId: '',                 // 空 = 未选择
+  messages: [],                // {id, role:'user'|'assistant'|'probe', text?, segments?, thinking?, status, requestId, ...}
+  events: [],                  // {seq, type, ts, summary, payload}
+  seq: 0,
+  sessionId: '—',
+  status: { config: 'pending', auth: 'pending', provider: 'pending', generation: 'pending' }, // pending|ok|fail|warn|na
+  authMissing: [],
+  lastTestAt: null,
+  usage: null,
+  diagTab: 'thinking',
+  diagCollapsed: false,
+  expandedEvents: new Set(),
+  params: DEFAULT_PARAMS(),    // 已提交生效参数
+  draftParams: null,           // 抽屉草稿
+  streaming: false,
+  scenario: 'normal',
+  theme: 'light',
+  editingIndex: -1,
+}
+
+/* ---------------- 工具函数 ---------------- */
+const $ = (s) => document.querySelector(s)
+const randHex = (n) => Array.from({ length: n }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('')
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+/* 极简行内 Markdown：粗体与行内代码 */
+const inlineMd = (md) => esc(md)
+  .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold">$1</strong>')
+  .replace(/`([^`]+)`/g, '<code class="rounded bg-[var(--color-bg-subtle)] px-1 py-px font-mono text-[12px] text-[var(--color-text-secondary)]">$1</code>')
+  .replace(/\n/g, '<br/>')
+const fmtClock = (ms) => {
+  const m = Math.floor(ms / 60000), s = Math.floor(ms / 1000) % 60, x = Math.floor(ms % 1000)
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(x).padStart(3, '0')}`
+}
+const now = () => new Date().toLocaleTimeString('zh-CN', { hour12: false })
+let timers = []
+const schedule = (fn, delay) => timers.push(setTimeout(fn, delay))
+const clearTimers = () => { timers.forEach(clearTimeout); timers = []; timers = [] }
+
+function toast(text) {
+  const el = document.createElement('div')
+  el.className = 'animate-fade-up rounded-full bg-[var(--color-sider-bg)] px-4 py-2 text-xs text-white shadow-[var(--shadow-lg)]'
+  el.textContent = text
+  $('#toastRoot').appendChild(el)
+  setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320) }, 2200)
+}
+/* 二次确认弹窗（危险操作必须确认） */
+function confirmModal({ title, body, confirmText = '确认', danger = false, onConfirm }) {
+  const root = $('#modalRoot')
+  root.innerHTML = `
+    <div class="animate-pop-in w-full max-w-sm rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 shadow-[var(--shadow-lg)]">
+      <h3 class="text-[15px] font-semibold">${esc(title)}</h3>
+      <p class="mt-2 text-[13px] leading-relaxed text-[var(--color-text-secondary)]">${body}</p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button data-act="cancel" class="btn btn-sm">取消</button>
+        <button data-act="ok" class="btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}">${esc(confirmText)}</button>
+      </div>
+    </div>`
+  root.classList.remove('hidden'); root.classList.add('flex')
+  root.querySelector('[data-act=cancel]').onclick = () => { root.classList.add('hidden'); root.classList.remove('flex') }
+  root.querySelector('[data-act=ok]').onclick = () => { root.classList.add('hidden'); root.classList.remove('flex'); onConfirm && onConfirm() }
+}
+function copyText(text, tip = '已复制') {
+  const done = () => toast(tip)
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done)
+  else { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done() }
+}
+
+/* ---------------- 判权：三级下发交集 ---------------- */
+function evalAuth() {
+  const m = state.modelId ? MODELS[state.modelId] : null
+  state.authMissing = []
+  if (!m) { state.status.auth = 'pending'; return }
+  if (state.mode === 'platform') { state.status.auth = 'na'; return } // 平台模式不判应用授权
+  if (!m.enabled) state.authMissing.push('模型已停用')
+  const t = TENANT_GRANTS[state.tenantId] || []
+  if (!t.includes(state.modelId)) state.authMissing.push('租户未下发该模型')
+  const app = APPS[state.appId]
+  if (app.tenant !== state.tenantId) state.authMissing.push('应用不属于所选租户')
+  const a = APP_GRANTS[state.appId] || []
+  if (!a.includes(state.modelId)) state.authMissing.push('应用未下发该模型')
+  state.status.auth = state.authMissing.length ? 'fail' : 'ok'
+}
+/* 配置判定：目录登记完整且启用即"有效"；停用模型留给授权层说明 */
+function evalConfig() {
+  const m = state.modelId ? MODELS[state.modelId] : null
+  state.status.config = m ? (m.enabled ? 'ok' : 'ok') : 'pending'
+}
+
+/* ---------------- 渲染：模型身份条 ---------------- */
+function renderIdentity() {
+  const m = state.modelId ? MODELS[state.modelId] : null
+  const host = $('#modelIdentity')
+  if (!m) {
+    host.innerHTML = `<span class="text-[13px] text-[var(--color-text-muted)]">尚未选择模型 — 请在下方「模型」中选择要测试的模型</span>`
+    return
+  }
+  const caps = m.caps.map((c) => {
+    const meta = CAP_META[c] || { label: c, tip: c }
+    const isThink = c === 'reasoning' || c === 'thinking_output'
+    return `<span class="chip cursor-help ${isThink ? 'border-[var(--color-text-secondary)]/40' : ''}" title="${esc(meta.tip)}">${esc(meta.label)}</span>`
+  }).join('')
+  host.innerHTML = `
+    <div class="flex items-center gap-2.5">
+      <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-brand-subtle)] font-mono text-[11px] font-bold text-[var(--color-text-primary)]">${esc(m.name.slice(0, 2).toUpperCase())}</span>
+      <div>
+        <p class="text-sm font-semibold leading-tight">${esc(m.name)}</p>
+        <p class="mt-0.5 font-mono text-[11px] text-[var(--color-text-muted)]">${esc(m.id)}</p>
+      </div>
+    </div>
+    <div class="hidden h-8 w-px bg-[var(--color-border)] lg:block"></div>
+    <div class="min-w-0"><p class="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Provider / 部署</p><p class="mt-0.5 truncate font-mono text-xs text-[var(--color-text-secondary)]">${esc(m.provider)} · ${esc(m.deploy)}</p></div>
+    <div class="hidden h-8 w-px bg-[var(--color-border)] lg:block"></div>
+    <div><p class="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">活动状态</p>
+      <p class="mt-1 flex items-center gap-1.5 text-xs ${m.enabled ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-error)]'}">
+        <span class="dot ${m.enabled ? 'bg-[var(--color-success)]' : 'bg-[var(--color-error)]'}"></span>${m.enabled ? '已启用' : '已停用'}
+      </p></div>
+    <div class="hidden h-8 w-px bg-[var(--color-border)] xl:block"></div>
+    <div class="flex min-w-0 flex-wrap items-center gap-1.5">${caps}</div>`
+
+  /* 能力联动的输入区：vision 才显示附件按钮 */
+  $('#btnAttach').hidden = !m.caps.includes('vision')
+}
+
+/* ---------------- 渲染：状态行 ---------------- */
+const STATUS_TEXT = {
+  config: { label: '配置', ok: '有效', fail: '失败', warn: '无法判定', pending: '未测试', na: '—' },
+  auth: { label: '授权', ok: '可用', fail: '不可用', warn: '无法判定', pending: '未测试', na: '不适用' },
+  provider: { label: 'Provider', ok: '可达', fail: '不可达', warn: '无法判定', pending: '未测试', na: '—' },
+  generation: { label: '本次生成', ok: '成功', fail: '未成功', warn: '已中止 / 未完成', pending: '未测试', na: '—' },
+}
+const DOT_TONE = { ok: 'bg-[var(--color-success)]', fail: 'bg-[var(--color-error)]', warn: 'bg-[var(--color-warning)]', pending: 'border-[1.5px] border-[var(--color-text-muted)] bg-transparent', na: 'bg-[var(--color-border-strong)]' }
+const TEXT_TONE = { ok: 'text-[var(--color-text-primary)]', fail: 'text-[var(--color-error)]', warn: 'text-[var(--color-warning)]', pending: 'text-[var(--color-text-muted)]', na: 'text-[var(--color-text-muted)]' }
+function renderStatus() {
+  const host = $('#statusStrip')
+  host.innerHTML = ['config', 'auth', 'provider', 'generation'].map((k) => {
+    const v = state.status[k]
+    const meta = STATUS_TEXT[k]
+    const tip = k === 'auth' && state.authMissing.length ? `缺失层级：${state.authMissing.join('、')}` : ''
+    return `<div class="flex flex-col justify-center gap-1 px-5 py-3 max-md:odd:border-r max-md:[&:nth-child(-n+2)]:border-b md:border-r md:last:border-r-0 border-[var(--color-border)]" title="${esc(tip)}">
+      <span class="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">${meta.label}</span>
+      <span class="flex items-center gap-2 text-[13px] font-medium ${TEXT_TONE[v]}"><span class="dot ${DOT_TONE[v]}"></span>${meta[v]}</span>
+    </div>`
+  }).join('')
+  $('#lastTestAt').textContent = state.lastTestAt || '—'
+  $('#btnProbe').disabled = !state.modelId || state.streaming
+  $('#btnClear').disabled = state.messages.length === 0 || state.streaming
+}
+
+/* ---------------- 渲染：对话区 ---------------- */
+function renderChat() {
+  const host = $('#chatScroll')
+  $('#chatTurns').textContent = `${state.messages.filter((x) => x.role === 'user').length} 轮`
+  if (!state.messages.length) { host.innerHTML = emptyStateHtml(); return }
+  host.innerHTML = state.messages.map((msg, i) => msg.role === 'user' ? userMsgHtml(msg, i) : msg.role === 'probe' ? probeMsgHtml(msg) : assistantMsgHtml(msg)).join('')
+  bindMessageActions()
+  scrollBottom(true)
+}
+function emptyStateHtml() {
+  const noModel = !state.modelId
+  if (noModel) {
+    return `<div class="flex h-full flex-col items-center justify-center gap-4 py-10 text-center animate-fade-up">
+      <div class="flex items-center gap-3 opacity-70">
+        <span class="flex h-11 w-14 items-center justify-center rounded-lg border border-dashed border-[var(--color-border-strong)] font-mono text-[10px] text-[var(--color-text-muted)]">应用</span>
+        <span class="h-px w-8 border-t border-dashed border-[var(--color-border-strong)]"></span>
+        <span class="flex h-11 w-14 items-center justify-center rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-subtle)] font-mono text-[10px] text-[var(--color-text-secondary)]">测试通道</span>
+        <span class="h-px w-8 border-t border-dashed border-[var(--color-border-strong)]"></span>
+        <span class="flex h-11 w-14 items-center justify-center rounded-lg border border-dashed border-[var(--color-border-strong)] font-mono text-[10px] text-[var(--color-text-muted)]">Provider</span>
+      </div>
+      <div><p class="text-[13px] font-medium text-[var(--color-text-secondary)]">先选择要测试的模型</p>
+      <p class="mt-1 text-xs text-[var(--color-text-muted)]">选择模型与上下文后发送消息复现问题，或先「测试连接」验证链路</p></div>
+      <p class="text-[11px] text-[var(--color-text-muted)]">测试请求可能产生 Provider 费用</p>
+    </div>`
+  }
+  return `<div class="flex h-full flex-col items-center justify-center gap-3 py-10 text-center animate-fade-up">
+    <span class="dot h-2.5 w-2.5 bg-[var(--color-success)]"></span>
+    <p class="text-[13px] font-medium text-[var(--color-text-secondary)]">就绪 — 发送消息开始复现</p>
+    <p class="max-w-sm text-xs leading-relaxed text-[var(--color-text-muted)]">会话仅存于当前浏览器内存；切换模型、租户、应用或模式将自动清空</p>
+    <div class="mt-1 flex flex-wrap justify-center gap-2">
+      <button class="btn btn-sm quick-ask" data-q="${esc(DEMO.question)}">${esc(DEMO.question.length > 14 ? DEMO.question.slice(0, 14) + '…' : DEMO.question)}</button>
+      <button class="btn btn-sm quick-ask" data-q="${esc(DEMO.toolQuestion)}">${esc(DEMO.toolQuestion)}</button>
+    </div>
+  </div>`
+}
+function userMsgHtml(msg, i) {
+  const editing = state.editingIndex === i
+  if (editing) {
+    return `<div class="mb-5 flex flex-col items-end animate-fade-up" data-idx="${i}">
+      <div class="w-full max-w-[85%] rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] p-3">
+        <textarea data-edit-input class="block w-full resize-none bg-transparent text-[13px] leading-relaxed text-[var(--color-text-primary)] focus:outline-none" rows="3">${esc(msg.text)}</textarea>
+        <p class="mb-2 mt-1 text-[11px] text-[var(--color-warning)]">重发将从该轮截断后续上下文</p>
+        <div class="flex justify-end gap-2">
+          <button data-act="edit-cancel" class="btn btn-sm">取消</button>
+          <button data-act="edit-resend" class="btn btn-primary btn-sm">重发</button>
+        </div>
+      </div>
+    </div>`
+  }
+  return `<div class="group mb-5 flex flex-col items-end animate-fade-up" data-idx="${i}">
+    <div class="relative max-w-[85%] rounded-xl rounded-br-sm bg-[var(--color-bg-subtle)] px-4 py-2.5 text-[13px] leading-relaxed text-[var(--color-text-primary)] whitespace-pre-wrap">${esc(msg.text)}</div>
+    <div class="mt-1 flex items-center gap-2.5 opacity-0 transition-opacity group-hover:opacity-100">
+      <button data-act="copy-user" class="text-[11px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)]">复制</button>
+      <button data-act="edit" class="text-[11px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)]">编辑重发</button>
+    </div>
+  </div>`
+}
+/* 助手消息：头部（模型/状态/耗时）+ 思考块 + 正文 + 底部操作 */
+function assistantMsgHtml(msg) {
+  const statusChip = {
+    streaming: '<span class="chip animate-pulse">生成中</span>',
+    done: '<span class="chip !border-[var(--tone-success-border)] !bg-[var(--tone-success-bg)] !text-[var(--color-success)]">已完成</span>',
+    aborted: '<span class="chip !border-[var(--tone-warning-border)] !bg-[var(--tone-warning-bg)] !text-[var(--color-warning)]">已中止</span>',
+    partial: '<span class="chip !border-[var(--tone-warning-border)] !bg-[var(--tone-warning-bg)] !text-[var(--color-warning)]">未完成 · 流中断</span>',
+    failed: '<span class="chip !border-[var(--tone-error-border)] !bg-[var(--tone-error-bg)] !text-[var(--color-error)]">失败</span>',
+  }[msg.status] || ''
+  const m = MODELS[msg.modelId] || {}
+  const thinkingHtml = renderThinking(msg)
+  const bodyHtml = renderSegments(msg)
+  const errHtml = renderErrorBanner(msg)
+  return `<div class="mb-6 animate-fade-up" data-msg="${msg.id}">
+    <div class="mb-2 flex flex-wrap items-center gap-2">
+      <span class="chip-mono rounded bg-[var(--color-brand-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--color-text-primary)]">${esc(m.name || '')}</span>
+      ${statusChip}
+      ${msg.elapsed ? `<span class="font-mono text-[11px] text-[var(--color-text-muted)]">${msg.elapsed}</span>` : ''}
+      ${msg.finishReason ? `<span class="text-[11px] text-[var(--color-text-muted)]">finish_reason: <span class="font-mono">${esc(msg.finishReason)}</span></span>` : ''}
+    </div>
+    ${thinkingHtml}
+    ${errHtml}
+    <div class="space-y-3 text-[13px] leading-relaxed text-[var(--color-text-primary)]">${bodyHtml}</div>
+    <div class="mt-2 flex flex-wrap items-center gap-3">
+      ${msg.status === 'done' || msg.status === 'aborted' || msg.status === 'partial' ? `<button data-act="copy-answer" data-msg="${msg.id}" class="text-[11px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)]">复制正文</button>` : ''}
+      ${msg.requestId ? `<button data-act="copy-req" data-req="${esc(msg.requestId)}" class="font-mono text-[11px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)]" title="点击复制请求 ID">req: ${esc(msg.requestId)}</button>` : ''}
+    </div>
+  </div>`
+}
+/* 思考块：与正文两条独立流，标明来源与顺序 */
+function renderThinking(msg) {
+  if (!msg.thinking || !msg.thinking.length) return ''
+  const m = MODELS[msg.modelId]
+  const streamingLast = msg.status === 'streaming' && msg._thinkingStreaming
+  const segs = msg.thinking.map((seg, i) => `<p class="whitespace-pre-wrap">${esc(seg)}${streamingLast && i === msg.thinking.length - 1 ? '<span class="ml-0.5 inline-block h-3.5 w-[7px] translate-y-0.5 animate-caret bg-[var(--color-text-secondary)]"></span>' : ''}</p>`).join('')
+  const collapsed = msg._thinkCollapsed
+  return `<div class="mb-3 overflow-hidden rounded-lg border-l-2 border-[var(--color-border-strong)] bg-[var(--color-bg-subtle)]">
+    <button data-act="toggle-think" data-msg="${msg.id}" class="flex w-full items-center gap-2 px-3.5 py-2 text-left">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-[var(--color-text-muted)] transition-transform ${collapsed ? '' : 'rotate-90'}"><path d="m9 6 6 6-6 6"/></svg>
+      <span class="text-[11px] font-medium text-[var(--color-text-secondary)]">可见思考</span>
+      <span class="chip-mono text-[10px] text-[var(--color-text-muted)]">${esc(m ? m.provider : '')} · ${msg.thinking.length} 段</span>
+      <span class="ml-auto text-[10px] text-[var(--color-text-muted)]">仅 Provider 实际返回且允许展示的内容</span>
+    </button>
+    ${collapsed ? '' : `<div class="space-y-2 px-3.5 pb-3 text-xs leading-relaxed text-[var(--color-text-secondary)]">${segs}</div>`}
+  </div>`
+}
+/* 正文分段渲染：段落 + 代码块 */
+function renderSegments(msg) {
+  if (!msg.segments) return ''
+  const lastStream = msg.status === 'streaming' && msg._bodyStreaming
+  return msg.segments.map((seg, i) => {
+    if (seg.t === 'code') {
+      return `<div class="overflow-hidden rounded-lg border border-[var(--color-border)]">
+        <div class="flex items-center justify-between bg-[var(--color-bg-subtle)] px-3 py-1.5">
+          <span class="font-mono text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">${esc(seg.lang || 'code')}</span>
+          <button data-act="copy-code" data-msg="${msg.id}" data-seg="${i}" class="text-[10px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text-primary)]">复制</button>
+        </div>
+        <pre class="overflow-x-auto bg-[#0c0c0e] p-3.5 font-mono text-[12px] leading-relaxed text-zinc-200">${esc(seg.visible ?? seg.code)}${lastStream && i === msg.segments.length - 1 ? '<span class="ml-0.5 inline-block h-3 w-[7px] animate-caret bg-zinc-400"></span>' : ''}</pre>
+      </div>`
+    }
+    return `<p class="whitespace-pre-wrap">${inlineMd(seg.visible ?? seg.md)}${lastStream && i === msg.segments.length - 1 ? '<span class="ml-0.5 inline-block h-3.5 w-[7px] translate-y-0.5 animate-caret bg-[var(--color-text-secondary)]"></span>' : ''}</p>`
+  }).join('')
+}
+/* 错误横幅：分类显示，429 展示重试等待 */
+function renderErrorBanner(msg) {
+  if (!msg.error) return ''
+  const e = msg.error
+  const cat = { upstream_rate_limited: '上游限流 (429)', connect_timeout: '连接超时', stream_disconnected: '流式传输中断', auth_rejected: '凭据拒绝 (401)', upstream_error: '上游故障 (5xx)' }[e.code] || e.code
+  return `<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--tone-error-border)] bg-[var(--tone-error-bg-soft)] px-3.5 py-2.5 text-xs">
+    <span class="flex items-center gap-1.5 font-medium text-[var(--color-error)]">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>${esc(cat)}</span>
+    <span class="text-[var(--color-text-secondary)]">${esc(e.message || '')}</span>
+    ${e.retryAfter ? `<span class="chip !border-[var(--tone-warning-border)] !text-[var(--color-warning)]">建议 ${e.retryAfter}s 后重试</span>` : ''}
+    <button data-act="copy-req" data-req="${esc(msg.requestId)}" class="font-mono text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]">req: ${esc(msg.requestId)}</button>
+  </div>`
+}
+/* 探针报告卡片 */
+function probeMsgHtml(msg) {
+  const verdict = msg.verdict === 'ok'
+    ? '<span class="chip !border-[var(--tone-success-border)] !bg-[var(--tone-success-bg)] !text-[var(--color-success)]">连接可用</span>'
+    : '<span class="chip !border-[var(--tone-error-border)] !bg-[var(--tone-error-bg)] !text-[var(--color-error)]">连接不可用</span>'
+  const rows = msg.stages.map((s, i) => `<tr class="border-b border-[var(--color-border)] last:border-0">
+      <td class="py-1.5 pr-3 text-xs text-[var(--color-text-secondary)]">${i + 1}. ${esc(s.name)}</td>
+      <td class="py-1.5 pr-3"><span class="flex items-center gap-1.5 text-xs ${s.ok ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}"><span class="dot ${s.ok ? 'bg-[var(--color-success)]' : 'bg-[var(--color-error)]'}"></span>${esc(s.state)}</span></td>
+      <td class="py-1.5 text-right font-mono text-[11px] text-[var(--color-text-muted)]">${esc(s.ms)}</td>
+    </tr>`).join('')
+  return `<div class="mb-6 animate-fade-up rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4" data-msg="${msg.id}">
+    <div class="mb-2.5 flex items-center gap-2">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="text-[var(--color-text-secondary)]"><path d="M22 12h-4l-3 8-6-16-3 8H2"/></svg>
+      <span class="text-[13px] font-semibold">连接探针报告</span>${verdict}
+      ${msg.pending ? '<span class="chip animate-pulse">测试中</span>' : ''}
+    </div>
+    <table class="w-full"><tbody>${rows}</tbody></table>
+    <div class="mt-2.5 flex flex-wrap items-center gap-3 text-[11px] text-[var(--color-text-muted)]">
+      <span class="font-mono">test_id: ${esc(msg.testId)}</span>
+      <button data-act="copy-req" data-req="${esc(msg.requestId)}" class="font-mono hover:text-[var(--color-text-primary)]">req: ${esc(msg.requestId)}</button>
+      ${msg.note ? `<span>${esc(msg.note)}</span>` : ''}
+    </div>
+  </div>`
+}
+function scrollBottom(force) {
+  const el = $('#chatScroll')
+  const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  if (force || near) el.scrollTop = el.scrollHeight
+}
+/* 消息区事件委托：复制 / 编辑重发 / 折叠思考 */
+function bindMessageActions() {
+  const host = $('#chatScroll')
+  host.querySelectorAll('[data-act]').forEach((btn) => {
+    btn.onclick = (e) => {
+      const act = btn.dataset.act
+      const idx = Number(btn.closest('[data-idx]')?.dataset.idx ?? -1)
+      const msg = state.messages.find((x) => x.id === btn.dataset.msg)
+      if (act === 'copy-user') copyText(state.messages[idx].text)
+      if (act === 'edit') { state.editingIndex = idx; renderChat(); host.querySelector('[data-edit-input]')?.focus() }
+      if (act === 'edit-cancel') { state.editingIndex = -1; renderChat() }
+      if (act === 'edit-resend') {
+        const ta = host.querySelector('[data-edit-input]')
+        const text = ta.value.trim(); if (!text) return
+        /* 重发：从该轮截断后续上下文，界面已先提示 */
+        state.editingIndex = -1
+        state.messages = state.messages.slice(0, idx)
+        renderChat()
+        sendMessage(text)
+      }
+      if (act === 'toggle-think' && msg) { msg._thinkCollapsed = !msg._thinkCollapsed; renderChat() }
+      if (act === 'copy-answer' && msg) copyText(segmentsPlain(msg), '正文已复制')
+      if (act === 'copy-code' && msg) copyText(msg.segments[Number(btn.dataset.seg)].code, '代码已复制')
+      if (act === 'copy-req') copyText(btn.dataset.req, '请求 ID 已复制')
+    }
+  })
+  host.querySelectorAll('.quick-ask').forEach((b) => { b.onclick = () => { $('#inputText').value = b.dataset.q; sendMessage() } })
+}
+const segmentsPlain = (msg) => (msg.segments || []).map((s) => s.t === 'code' ? s.code : s.md).join('\n\n')
+
+/* ---------------- 渲染：诊断区 ---------------- */
+function renderDiag() {
+  document.querySelectorAll('[data-diag-tab]').forEach((t) => {
+    const active = t.dataset.diagTab === state.diagTab
+    t.classList.toggle('tab-active', active)
+  })
+  const host = $('#diagBody')
+  if (state.diagTab === 'thinking') host.innerHTML = diagThinkingHtml()
+  else if (state.diagTab === 'events') host.innerHTML = diagEventsHtml()
+  else host.innerHTML = diagUsageHtml()
+  /* 事件行展开 */
+  host.querySelectorAll('[data-ev]').forEach((row) => {
+    row.onclick = () => {
+      const seq = Number(row.dataset.ev)
+      state.expandedEvents.has(seq) ? state.expandedEvents.delete(seq) : state.expandedEvents.add(seq)
+      renderDiag()
+    }
+  })
+}
+function diagThinkingHtml() {
+  const asst = [...state.messages].reverse().find((x) => x.role === 'assistant')
+  if (!asst || !asst.requestId || (asst.status === 'streaming' && !(asst.thinking || []).length)) {
+    return `<p class="px-1 py-8 text-center text-xs text-[var(--color-text-muted)]">尚未执行调用</p>`
+  }
+  const m = MODELS[asst.modelId]
+  /* 未返回可见思考时区分四类原因，不根据答案编造步骤 */
+  if (!(asst.thinking || []).length) {
+    const reason = !m.caps.includes('thinking_output') ? ['模型不支持', '模型目录未声明 thinking_output，预期就不会返回可见过程']
+      : !state.params.thinking ? ['当前参数关闭', '深度思考开关处于关闭状态，可在调试设置中开启']
+      : ['Provider 未提供', '本次调用 Provider 未返回可见思考内容，也不得根据最终答案猜测步骤']
+    return `<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 text-center animate-fade-up">
+      <p class="text-xs font-medium text-[var(--color-text-secondary)]">本次调用未返回可见思考过程</p>
+      <p class="mt-1.5 text-[11px] text-[var(--color-text-muted)]">原因判定：<span class="font-medium text-[var(--color-text-secondary)]">${esc(reason[0])}</span> — ${esc(reason[1])}</p>
+      <p class="mt-2 border-t border-[var(--color-border)] pt-2 text-[10px] leading-relaxed text-[var(--color-text-muted)]">reasoning 仅表示可启用深度思考；thinking_output 才表示预期可能返回可见过程，两者不等同</p>
+    </div>`
+  }
+  return `<div class="space-y-2.5 animate-fade-up">${asst.thinking.map((seg, i) => `
+    <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
+      <div class="mb-1.5 flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
+        <span class="rounded bg-[var(--color-bg-subtle)] px-1.5 py-px font-mono">reasoning_visible · #${i + 1}</span>
+        <span>Provider 实际返回</span>
+      </div>
+      <p class="whitespace-pre-wrap text-xs leading-relaxed text-[var(--color-text-secondary)]">${esc(seg)}</p>
+    </div>`).join('')}
+  <p class="px-1 pt-1 text-[10px] leading-relaxed text-[var(--color-text-muted)]">仅展示 Provider 允许公开的 reasoning 摘要，不代表模型内部完整推理；正文与思考不串流。</p></div>`
+}
+const EV_META = {
+  status: { label: 'status', cls: 'text-[var(--color-text-secondary)]' },
+  reasoning_visible: { label: 'reasoning', cls: 'text-[var(--color-text-secondary)]' },
+  answer_delta: { label: 'answer', cls: 'text-[var(--color-text-secondary)]' },
+  tool_call: { label: 'tool_call', cls: 'text-[var(--color-info)]' },
+  usage: { label: 'usage', cls: 'text-[var(--color-info)]' },
+  error: { label: 'error', cls: 'text-[var(--color-error)]' },
+  done: { label: 'done', cls: 'text-[var(--color-success)]' },
+}
+function diagEventsHtml() {
+  if (!state.events.length) return `<p class="px-1 py-8 text-center text-xs text-[var(--color-text-muted)]">暂无事件 — 事件按服务端单调 sequence 展示</p>`
+  const rows = state.events.map((ev) => {
+    const meta = EV_META[ev.type] || EV_META.status
+    const open = state.expandedEvents.has(ev.seq)
+    const dotTone = ev.type === 'error' ? 'bg-[var(--color-error)]' : ev.type === 'done' ? 'bg-[var(--color-success)]' : ev.type === 'usage' ? 'bg-[var(--color-info)]' : 'bg-[var(--color-border-strong)]'
+    return `<div class="relative pb-3 pl-5 last:pb-0">
+      <span class="absolute left-0 top-1.5 h-2 w-2 rounded-full ${dotTone} ring-4 ring-[var(--color-bg-elevated)]"></span>
+      <span class="absolute left-[3.5px] top-4 bottom-0 w-px bg-[var(--color-border)] last:hidden"></span>
+      <div data-ev="${ev.seq}" class="cursor-pointer rounded-md p-1 transition-colors hover:bg-[var(--color-bg-subtle)]">
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span class="font-mono text-[10px] text-[var(--color-text-muted)]">#${String(ev.seq).padStart(2, '0')}</span>
+          <span class="font-mono text-[10px] text-[var(--color-text-muted)]">${ev.clock}</span>
+          <span class="font-mono text-[10px] font-medium ${meta.cls}">${meta.label}</span>
+          <span class="min-w-0 flex-1 truncate text-[11px] text-[var(--color-text-secondary)]">${esc(ev.summary)}</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? 'rotate-90' : ''}"><path d="m9 6 6 6-6 6"/></svg>
+        </div>
+        ${open ? `<pre class="ev-payload">${esc(JSON.stringify(ev.payload, null, 2))}</pre>` : ''}
+      </div>
+    </div>`
+  }).join('')
+  return `<div class="animate-fade-up">${rows}
+    <p class="mt-3 border-t border-[var(--color-border)] pt-2.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">answer_delta 已聚合展示（实际按服务端序号逐条下发）；断线重连按最后 sequence 去重，不会重复插入。</p></div>`
+}
+function diagUsageHtml() {
+  const asst = [...state.messages].reverse().find((x) => x.role === 'assistant')
+  if (!state.usage && !asst) return `<p class="px-1 py-8 text-center text-xs text-[var(--color-text-muted)]">尚未执行调用</p>`
+  const u = state.usage
+  const stat = (label, val, warn) => `<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3">
+      <p class="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">${label}</p>
+      <p class="mt-1 font-mono text-[15px] font-medium ${warn ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-primary)]'}">${val}</p></div>`
+  const qualityChip = !u ? '' : {
+    actual: '<span class="chip !border-[var(--tone-success-border)] !text-[var(--color-success)]">actual · 可信</span>',
+    estimated: '<span class="chip !border-[var(--tone-info-border)] !text-[var(--color-info)]">estimated · 估算</span>',
+    unknown: '<span class="chip !border-[var(--tone-warning-border)] !text-[var(--color-warning)]">unknown · 待核对</span>',
+  }[u.quality]
+  const params = state.params
+  return `<div class="space-y-3 animate-fade-up">
+    <div class="grid grid-cols-3 gap-2">
+      ${stat('首字耗时', u ? (u.ttft != null ? u.ttft + ' ms' : '未知') : '—', u && u.ttft == null)}
+      ${stat('总耗时', u ? (u.total != null ? u.total + ' ms' : '未知') : '—', u && u.total == null)}
+      ${stat('费用估算', u ? (u.cost != null ? '¥' + u.cost : '未知') : '—', u && u.cost == null)}
+      ${stat('输入 token', u ? (u.input != null ? u.input : '未知') : '—', u && u.input == null)}
+      ${stat('输出 token', u ? (u.output != null ? u.output : '未知') : '—', u && u.output == null)}
+      ${stat('推理 token', u ? (u.reasoning != null ? u.reasoning : '未返回') : '—', false)}
+    </div>
+    <div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-1">
+      <div class="kv-row"><span class="kv-key">请求 ID</span><button data-act="copy-req" data-req="${esc((asst && asst.requestId) || '—')}" class="font-mono text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">${esc((asst && asst.requestId) || '—')}</button></div>
+      <div class="kv-row"><span class="kv-key">部署版本</span><span class="font-mono text-xs text-[var(--color-text-secondary)]">${esc(state.modelId ? MODELS[state.modelId].deploy : '—')}</span></div>
+      <div class="kv-row"><span class="kv-key">HTTP 状态类别</span><span class="font-mono text-xs text-[var(--color-text-secondary)]">${u ? u.http : '—'}</span></div>
+      <div class="kv-row"><span class="kv-key">用量质量</span>${u ? qualityChip : '<span class="text-xs text-[var(--color-text-muted)]">—</span>'}</div>
+      <div class="kv-row"><span class="kv-key">生效参数</span><span class="text-right text-[11px] leading-relaxed text-[var(--color-text-secondary)]">stream ${params.stream ? 'on' : 'off'} · thinking ${params.thinking ? params.effort : 'off'} · T ${params.temperature} · top_p ${params.topP} · ≤${params.maxTokens}${params.jsonMode ? ' · JSON' : ''}${params.tools ? ' · tools' : ''}</span></div>
+      <div class="kv-row"><span class="kv-key">脱敏原始响应</span><span class="text-[11px] text-[var(--color-text-muted)]">仅允许字段 · 不含凭据与内部令牌</span></div>
+    </div>
+    ${u && u.quality === 'unknown' ? '<p class="rounded-lg border border-[var(--tone-warning-border)] bg-[var(--tone-warning-bg)] px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--color-warning)]">本次调用未正常完成，用量进入「待核对」：中断后的消耗以 Provider 账目为准，此处不显示 0。</p>' : ''}
+  </div>`
+}
+
+/* ---------------- 渲染：参数摘要（对话区显示本轮生效参数） ---------------- */
+function renderParamSummary() {
+  const p = state.params
+  const chips = [
+    `流式 ${p.stream ? 'on' : 'off'}`, p.thinking ? `深度思考 ${p.effort}` : '深度思考 off',
+    `T ${p.temperature}`, `top_p ${p.topP}`, `≤${p.maxTokens} tok`,
+    p.jsonMode ? 'JSON on' : null, p.tools ? '工具 on' : null,
+  ].filter(Boolean)
+  $('#paramSummary').innerHTML = chips.map((c) => `<span class="chip font-mono !text-[10px]">${esc(c)}</span>`).join('')
+    + `<button id="paramEditLink" class="text-[11px] text-[var(--color-text-muted)] underline-offset-2 transition-colors hover:text-[var(--color-text-primary)] hover:underline">调试设置</button>`
+  $('#paramEditLink').onclick = openDrawer
+}
+
+/* ---------------- 调试设置抽屉 ---------------- */
+function modelSupports(cap) { return state.modelId && MODELS[state.modelId].caps.includes(cap) }
+function switchHtml(id, on, disabled, reason) {
+  return `<button role="switch" aria-checked="${on}" data-switch="${id}" ${disabled ? 'disabled' : ''}
+    class="relative h-[22px] w-10 shrink-0 rounded-full transition-colors ${on ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-border-strong)]'} ${disabled ? 'cursor-not-allowed opacity-40' : ''}">
+    <span class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}"></span>
+  </button>${disabled ? `<span class="flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>${esc(reason)}</span>` : ''}`
+}
+function rowHtml(label, control, hint) {
+  return `<div class="flex items-center justify-between gap-4 py-2.5">
+    <div class="min-w-0"><p class="text-[13px]">${label}</p>${hint ? `<p class="mt-0.5 text-[11px] text-[var(--color-text-muted)]">${hint}</p>` : ''}</div>
+    <div class="flex shrink-0 items-center gap-2">${control}</div></div>`
+}
+function renderDrawer() {
+  const d = state.draftParams
+  const thinkOk = modelSupports('reasoning')
+  const jsonOk = modelSupports('json_output')
+  const toolsOk = modelSupports('tool_calls')
+  $('#drawerBody').innerHTML = `
+    <section>
+      <h3 class="mb-1 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">生成参数</h3>
+      <div class="divide-y divide-[var(--color-border)]">
+        ${rowHtml('流式输出', switchHtml('stream', d.stream, false))}
+        ${rowHtml('深度思考', switchHtml('thinking', d.thinking, !thinkOk, '模型目录未声明 reasoning，无法启用'),
+          thinkOk ? '开启后预期可能返回可见思考过程' : '')}
+        ${d.thinking && thinkOk ? rowHtml('思考力度', `<select data-drawer="effort" class="select-box !h-8 !w-24 text-xs">
+            ${['low', 'medium', 'high'].map((v) => `<option value="${v}" ${d.effort === v ? 'selected' : ''}>${v}</option>`).join('')}</select>`) : ''}
+        ${rowHtml('Temperature', `<input type="range" data-drawer="temperature" min="0" max="2" step="0.1" value="${d.temperature}" class="w-28"><span class="w-8 text-right font-mono text-xs">${d.temperature}</span>`)}
+        ${rowHtml('Top P', `<input type="range" data-drawer="topP" min="0" max="1" step="0.05" value="${d.topP}" class="w-28"><span class="w-8 text-right font-mono text-xs">${d.topP}</span>`)}
+        ${rowHtml('最大输出 token', `<input type="number" data-drawer="maxTokens" min="64" max="8192" step="64" value="${d.maxTokens}" class="h-8 w-24 rounded-md border border-[var(--color-border-strong)] bg-transparent px-2 text-right font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-text-muted)]">`)}
+      </div>
+    </section>
+    <section>
+      <h3 class="mb-1 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">提示与格式</h3>
+      <div class="divide-y divide-[var(--color-border)]">
+        ${rowHtml('JSON 格式约束', switchHtml('jsonMode', d.jsonMode, !jsonOk, jsonOk ? '' : '模型目录未声明 json_output；以普通文本返回'))}
+        ${rowHtml('工具调用', switchHtml('tools', d.tools, !toolsOk, toolsOk ? '' : '模型目录未声明 tool_calls'))}
+        <div class="py-3">
+          <label class="mb-1.5 block text-[13px]" for="sysPrompt">系统提示词</label>
+          <textarea id="sysPrompt" data-drawer="systemPrompt" rows="3" placeholder="留空则不注入系统提示词"
+            class="block w-full resize-none rounded-md border border-[var(--color-border-strong)] bg-transparent px-3 py-2 text-[13px] leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-text-muted)]">${esc(d.systemPrompt)}</textarea>
+        </div>
+      </div>
+    </section>
+    <p class="rounded-lg bg-[var(--color-bg-subtle)] px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+      不被 Provider 支持的参数将禁用并说明原因，不会静默忽略；应用后的参数在对话区显示为生效摘要。</p>`
+  /* 开关与输入绑定草稿 */
+  $('#drawerBody').querySelectorAll('[data-switch]').forEach((sw) => {
+    sw.onclick = () => { d[sw.dataset.switch] = !d[sw.dataset.switch]; renderDrawer() }
+  })
+  $('#drawerBody').querySelectorAll('[data-drawer]').forEach((input) => {
+    input.oninput = () => {
+      const key = input.dataset.drawer
+      d[key] = input.type === 'range' || input.type === 'number' ? Number(input.value) : input.value
+      if (input.type === 'range') { const span = input.parentElement.querySelector('span'); if (span) span.textContent = input.value }
+    }
+  })
+}
+function openDrawer() {
+  state.draftParams = { ...state.params }
+  renderDrawer()
+  $('#drawerScrim').hidden = false
+  $('#drawerScrim').classList.remove('hidden')
+  $('#debugDrawer').classList.remove('translate-x-full')
+}
+function closeDrawer() {
+  /* 关闭即丢弃未提交修改（设计文档 §3.3） */
+  $('#debugDrawer').classList.add('translate-x-full')
+  $('#drawerScrim').classList.add('hidden')
+  setTimeout(() => { $('#drawerScrim').hidden = true }, 300)
+  state.draftParams = null
+}
+
+/* ---------------- 事件与计时 ---------------- */
+function pushEvent(type, summary, payload) {
+  const t = Date.now() - state.reqStart
+  state.events.push({ seq: ++state.seq, type, clock: fmtClock(t), summary, payload: payload || {} })
+  renderDiag()
+}
+function setStatus(k, v) { state.status[k] = v; renderStatus() }
+
+/* ---------------- 发送（应用对话模拟） ---------------- */
+function sendMessage(forcedText) {
+  const input = $('#inputText')
+  const text = (forcedText ?? input.value).trim()
+  if (!text || state.streaming) return
+  /* 前端先拦一道；真实系统以后端逐请求判权为准 */
+  if (state.status.auth === 'fail') { toast('授权不可用：' + state.authMissing.join('、')); return }
+  input.value = ''; autoGrow()
+  state.messages.push({ id: 'u' + randHex(6), role: 'user', text })
+  const asst = {
+    id: 'a' + randHex(6), role: 'assistant', modelId: state.modelId, status: 'streaming',
+    requestId: 'req_' + randHex(10), segments: [], thinking: [], _thinkingStreaming: false, _bodyStreaming: false,
+  }
+  state.messages.push(asst)
+  state.usage = null
+  renderChat(); renderStatus()
+  simulateExchange(asst, text)
+}
+function simulateExchange(asst, text) {
+  state.streaming = true
+  state.reqStart = Date.now()
+  state.sessionId = state.sessionId === '—' ? 'sess_' + randHex(6) : state.sessionId
+  $('#sessionId').textContent = state.sessionId
+  updateComposer()
+  renderStatus()
+  const p = state.params
+  const m = MODELS[state.modelId]
+  const scen = state.scenario
+  const toolsFlow = p.tools && modelSupports('tool_calls')
+  const useToolDemo = toolsFlow && /知识库|文档|查/.test(text)
+  const content = useToolDemo ? DEMO.toolAnswer : DEMO.answer
+  const question = useToolDemo ? DEMO.toolQuestion : DEMO.question
+  pushEvent('status', '请求创建', { mode: state.mode, model: state.modelId, params: { stream: p.stream, thinking: p.thinking ? p.effort : false, temperature: p.temperature, max_tokens: p.maxTokens } })
+  schedule(() => {
+    pushEvent('status', '授权判定通过（三级下发交集有效）', { intersection: ['platform:目录有效', `tenant:${TENANTS[state.tenantId].name}`, `app:${APPS[state.appId].name}`], operator: '当前操作者' })
+  }, 90)
+  schedule(() => { pushEvent('status', '用量预留 source=model_test', { reservation: 'rsrv_' + randHex(4) }) }, 170)
+  if (scen === 'timeout') {
+    schedule(() => {
+      pushEvent('error', 'Provider 连接超时', { stage: 'provider_connect', code: 'connect_timeout', waited_ms: 5000 })
+      asst.status = 'failed'
+      asst.error = { code: 'connect_timeout', message: 'TLS 握手阶段 5s 未响应，已按超时终止' }
+      setStatus('provider', 'fail'); setStatus('generation', 'fail')
+      state.usage = { quality: 'unknown', http: '—', ttft: null, total: 5000, input: null, output: null, reasoning: null, cost: null }
+      finishStream(asst)
+    }, 2400)
+    return
+  }
+  schedule(() => {
+    pushEvent('status', 'Provider 连接建立', { endpoint: 'https://api.example-llm.com/v1', tls: 'TLS 1.3', ms: 82 })
+    setStatus('provider', 'ok')
+  }, 300)
+  if (scen === 'rate_limited') {
+    schedule(() => {
+      pushEvent('error', '上游返回 429（限流）', { code: 'upstream_rate_limited', http_status: 429, retry_after_seconds: 12, stage: 'provider_response' })
+      asst.status = 'failed'
+      asst.error = { code: 'upstream_rate_limited', message: 'Provider 限流中，请求未进入生成', retryAfter: 12 }
+      setStatus('generation', 'fail')
+      state.usage = { quality: 'actual', http: '4xx', ttft: null, total: 640, input: 0, output: 0, reasoning: null, cost: '0.0000' }
+      finishStream(asst)
+    }, 700)
+    return
+  }
+  /* 首个 token */
+  schedule(() => { pushEvent('status', '首个 token 到达', { ttft_ms: 412 }) }, 780)
+  asst.segments = content.map((s) => s.t === 'code' ? { ...s, visible: '' } : { ...s, visible: '' })
+  /* 可见思考流（独立于正文流） */
+  const thinkOn = p.thinking && m.caps.includes('thinking_output')
+  if (thinkOn && p.stream) {
+    schedule(() => { asst._thinkingStreaming = true; renderChat() }, 820)
+    DEMO.thinking.forEach((seg, i) => {
+      schedule(() => {
+        asst.thinking.push(seg)
+        pushEvent('reasoning_visible', `思考片段 #${i + 1}（${seg.length} 字）`, { seg: i + 1, chars: seg.length, source: 'provider.mapped' })
+        renderChat(); renderDiag()
+      }, 900 + i * 520)
+    })
+  }
+  const bodyStart = thinkOn && p.stream ? 900 + DEMO.thinking.length * 520 + 300 : 900
+  /* 工具调用演示 */
+  if (useToolDemo) {
+    schedule(() => {
+      pushEvent('tool_call', `search_kb(${JSON.stringify(DEMO.toolCall.args)})`, { tool: DEMO.toolCall.name, args: DEMO.toolCall.args, result: DEMO.toolCall.result })
+    }, bodyStart - 150)
+  }
+  /* 正文流式逐字输出 */
+  schedule(() => {
+    asst._thinkingStreaming = false
+    asst._bodyStreaming = true
+    streamSegments(asst, content, p.stream, () => {
+      /* 正文完成 → 用量与收尾 */
+      const totalMs = Date.now() - state.reqStart
+      if (scen === 'disconnect') {
+        pushEvent('error', '流式传输中断', { code: 'stream_disconnected', stage: 'answer_stream', received_ratio: '42%' })
+        asst.status = 'partial'
+        asst.finishReason = 'disconnected'
+        setStatus('generation', 'warn')
+        state.usage = { quality: 'unknown', http: '2xx(中断)', ttft: 412, total: totalMs, input: 214, output: null, reasoning: thinkOn ? 173 : null, cost: null }
+      } else {
+        pushEvent('usage', `输入 ${question.length * 3} · 输出 ${content.length * 87} · 质量 actual`, { input: question.length * 3, output: content.length * 87, reasoning: thinkOn ? 173 : null, quality: 'actual', cost_cny: '0.0031' })
+        pushEvent('done', '生成完成 finish_reason=stop', { finish_reason: 'stop' })
+        asst.status = 'done'
+        asst.finishReason = 'stop'
+        setStatus('generation', 'ok')
+        state.usage = { quality: 'actual', http: '2xx', ttft: 412, total: totalMs, input: question.length * 3, output: content.length * 87, reasoning: thinkOn ? 173 : null, cost: '0.0031' }
+      }
+      finishStream(asst)
+    }, scen === 'disconnect' ? 0.42 : 1)
+  }, bodyStart)
+}
+/* 逐字揭示正文分段 */
+function streamSegments(asst, content, streaming, onDone, ratio) {
+  const flat = []
+  content.forEach((s, i) => {
+    const text = s.t === 'code' ? s.code : s.md
+    for (let j = 0; j < text.length; j += 3) flat.push({ i, chunk: text.slice(j, j + 3) })
+    flat.push({ i, end: true })
+  })
+  const cutoff = Math.floor(flat.length * (ratio ?? 1))
+  let k = 0
+  const tick = () => {
+    const step = streaming ? 3 : flat.length
+    for (let n = 0; n < step && k < cutoff; n++, k++) {
+      const f = flat[k]
+      if (f.end) continue
+      asst.segments[f.i].visible = (asst.segments[f.i].visible || '') + f.chunk
+    }
+    renderChat()
+    if (k >= cutoff) { onDone(); return }
+    schedule(tick, streaming ? 34 : 0)
+  }
+  if (!streaming) {
+    /* 非流式：一次性返回 */
+    content.forEach((s, i) => { asst.segments[i].visible = s.t === 'code' ? s.code : s.md })
+    pushEvent('answer_delta', '非流式返回，正文整体到达', { mode: 'non_stream' })
+    renderChat(); onDone(); return
+  }
+  tick()
+}
+function finishStream(asst) {
+  asst.elapsed = fmtClock(Date.now() - state.reqStart)
+  asst._bodyStreaming = false; asst._thinkingStreaming = false
+  state.streaming = false
+  state.lastTestAt = now()
+  renderChat(); renderStatus(); renderDiag(); updateComposer()
+}
+/* 停止生成：答案标为"已中止"，不伪装成完成 */
+function stopStream() {
+  if (!state.streaming) return
+  clearTimers()
+  const asst = [...state.messages].reverse().find((x) => x.role === 'assistant' && x.status === 'streaming')
+  if (!asst) return
+  pushEvent('status', '用户停止，已向 Provider 发送取消', { cancel: 'requested', reached_provider: true, billing: '部分消耗待核对' })
+  asst.status = 'aborted'
+  asst.finishReason = 'aborted'
+  setStatus('generation', 'warn')
+  state.usage = { quality: 'unknown', http: '2xx(中止)', ttft: 412, total: Date.now() - state.reqStart, input: 214, output: null, reasoning: asst.thinking.length ? 173 : null, cost: null }
+  finishStream(asst)
+  toast('已停止 — 答案标记为「已中止」，用量待核对')
+}
+
+/* ---------------- 连接探针（固定短探针，分阶段结果） ---------------- */
+function runProbe() {
+  if (!state.modelId || state.streaming) return
+  const scen = state.scenario
+  state.streaming = true
+  state.reqStart = Date.now()
+  state.sessionId = state.sessionId === '—' ? 'sess_' + randHex(6) : state.sessionId
+  $('#sessionId').textContent = state.sessionId
+  updateComposer(); renderStatus()
+  const probe = { id: 'p' + randHex(6), role: 'probe', testId: 'tst_' + randHex(8), requestId: 'req_' + randHex(10), stages: [], verdict: 'ok', pending: true }
+  state.messages.push(probe)
+  state.usage = null
+  renderChat()
+  pushEvent('status', '连接探针发起 source=model_test', { test_id: probe.testId, model: state.modelId })
+  const stage = (name, ok, stateTxt, ms) => { probe.stages.push({ name, ok, state: stateTxt, ms }) }
+  schedule(() => {
+    stage('凭据解析（受控引用，不回显原文）', true, '已解析', '12ms')
+    pushEvent('status', '凭据引用解析成功', { ref: 'cred_ref:***', resolved: true })
+    renderChat()
+  }, 350)
+  schedule(() => {
+    if (scen === 'timeout') {
+      stage('网络 / TLS', false, '超时（5s）', '5000ms')
+      pushEvent('error', '探针连接超时', { stage: 'network_tls', code: 'connect_timeout' })
+      probe.verdict = 'fail'; probe.note = '阶段 2 失败：网络 / TLS 超时'
+      finishProbe(probe, 'fail', { quality: 'unknown', http: '—', ttft: null, total: 5000, input: null, output: null, reasoning: null, cost: null })
+      return
+    }
+    stage('网络 / TLS', true, 'TLS 1.3 握手', '41ms')
+    pushEvent('status', '网络与 TLS 握手成功', { tls: 'TLS 1.3', ms: 41 })
+    renderChat()
+  }, 750)
+  schedule(() => {
+    if (scen === 'rate_limited') {
+      stage('Provider 响应', false, 'HTTP 429 · 限流', '96ms')
+      pushEvent('error', '探针收到 429', { http_status: 429, retry_after_seconds: 12 })
+      probe.verdict = 'fail'; probe.note = '凭据有效但被限流，建议 12s 后重试'
+      finishProbe(probe, 'fail', { quality: 'actual', http: '4xx', ttft: 96, total: 149, input: 0, output: 0, reasoning: null, cost: '0.0000' })
+      return
+    }
+    stage('Provider 响应', true, 'HTTP 200 · 首字节', '132ms')
+    pushEvent('status', 'Provider 返回有效响应', { http_status: 200, first_byte_ms: 132 })
+    renderChat()
+    finishProbe(probe, 'ok', { quality: 'actual', http: '2xx', ttft: 132, total: 185, input: 9, output: 1, reasoning: null, cost: '0.0001' })
+  }, 1150)
+}
+function finishProbe(probe, providerStatus, usage) {
+  probe.pending = false
+  state.streaming = false
+  state.lastTestAt = now()
+  setStatus('provider', providerStatus)
+  if (state.status.generation === 'pending') setStatus('generation', 'pending') // 探针成功 ≠ 本次生成成功
+  state.usage = usage
+  renderChat(); renderStatus(); renderDiag(); updateComposer()
+}
+
+/* ---------------- 输入区状态 ---------------- */
+function updateComposer() {
+  const input = $('#inputText')
+  const send = $('#btnSend')
+  const stop = $('#btnStop')
+  const inner = $('#composerInner')
+  const hint = $('#composerHint')
+  const platformMode = state.mode === 'platform'
+  $('#composer').hidden = platformMode
+  $('#probePanel').hidden = !platformMode
+  if (platformMode) { $('#btnProbeRun').disabled = !state.modelId || state.streaming; return }
+  const noModel = !state.modelId
+  const authFail = state.status.auth === 'fail'
+  input.disabled = noModel || authFail || state.streaming
+  send.disabled = noModel || authFail || state.streaming
+  stop.hidden = !state.streaming
+  inner.classList.toggle('opacity-50', authFail)
+  if (noModel) input.placeholder = '请先选择模型'
+  else if (authFail) input.placeholder = '授权不可用：' + state.authMissing.join('、')
+  else input.placeholder = '输入消息，Enter 发送，Shift + Enter 换行'
+  hint.textContent = state.streaming ? '正在生成，可点击停止；停止后的答案标记为「已中止」' : ''
+}
+
+/* ---------------- 上下文切换 / 会话清理 ---------------- */
+function resetSession(keepStatus) {
+  clearTimers()
+  state.streaming = false
+  state.messages = []
+  state.events = []
+  state.seq = 0
+  state.usage = null
+  state.sessionId = '—'
+  state.editingIndex = -1
+  if (!keepStatus) {
+    state.status = { config: 'pending', auth: 'pending', provider: 'pending', generation: 'pending' }
+    state.lastTestAt = null
+  }
+  $('#sessionId').textContent = '—'
+  renderChat(); renderStatus(); renderDiag(); updateComposer()
+}
+function onContextChange(cleared) {
+  evalConfig(); evalAuth()
+  /* 授权状态变化立即停止后续外呼（设计文档 §5） */
+  if (state.streaming && state.status.auth === 'fail') stopStream()
+  if (cleared) toast('上下文已切换，会话与上次结果已清空')
+  /* 参数按新模型能力回归默认（不被支持的能力不保留） */
+  state.params = DEFAULT_PARAMS()
+  renderIdentity(); renderStatus(); renderParamSummary(); updateComposer()
+}
+
+/* ---------------- 渲染：选择器 ---------------- */
+function renderSelectors() {
+  $('#selTenant').innerHTML = Object.values(TENANTS).map((t) => `<option value="${t.id}" ${state.tenantId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')
+  $('#selApp').innerHTML = Object.values(APPS).filter((a) => a.tenant === state.tenantId).map((a) => `<option value="${a.id}" ${state.appId === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')
+  $('#selModel').innerHTML = `<option value="" ${!state.modelId ? 'selected' : ''} disabled>选择模型…</option>` +
+    Object.values(MODELS).map((m) => `<option value="${m.id}" ${state.modelId === m.id ? 'selected' : ''}>${esc(m.name)}${m.enabled ? '' : '（已停用）'}</option>`).join('')
+  const platformMode = state.mode === 'platform'
+  $('#fieldTenant').hidden = platformMode
+  $('#fieldApp').hidden = platformMode
+  $('#selTenant').disabled = platformMode
+  $('#selApp').disabled = platformMode
+  $('#platformNote').hidden = !platformMode
+}
+
+/* ---------------- 模式切换 ---------------- */
+function setMode(mode) {
+  if (state.mode === mode) return
+  state.mode = mode
+  $('#modeApp').classList.toggle('seg-item-active', mode === 'app')
+  $('#modeApp').setAttribute('aria-selected', String(mode === 'app'))
+  $('#modePlatform').classList.toggle('seg-item-active', mode === 'platform')
+  $('#modePlatform').setAttribute('aria-selected', String(mode === 'platform'))
+  renderSelectors()
+  resetSession()
+  onContextChange(true)
+  toast(mode === 'platform' ? '已切换到平台连接模式 — 仅验证链路，不代表应用已授权' : '已切换到应用对话模式 — 按所选应用逐次判权')
+}
+
+/* ---------------- 输入框自动增高 ---------------- */
+function autoGrow() {
+  const ta = $('#inputText')
+  ta.style.height = 'auto'
+  ta.style.height = Math.min(ta.scrollHeight, 128) + 'px'
+}
+
+/* ---------------- 主题切换 ---------------- */
+function setTheme(theme) {
+  state.theme = theme
+  document.documentElement.dataset.theme = theme
+  $('#iconSun').classList.toggle('hidden', theme === 'dark')
+  $('#iconMoon').classList.toggle('hidden', theme !== 'dark')
+}
+
+/* ---------------- 初始化与全局绑定 ---------------- */
+function bindGlobal() {
+  $('#selTenant').onchange = (e) => { state.tenantId = e.target.value; const first = Object.values(APPS).find((a) => a.tenant === state.tenantId); state.appId = first ? first.id : ''; renderSelectors(); resetSession(); onContextChange(true) }
+  $('#selApp').onchange = (e) => { state.appId = e.target.value; resetSession(); onContextChange(true) }
+  $('#selModel').onchange = (e) => {
+    state.modelId = e.target.value
+    if (state.modelId) setStatus('config', 'ok') // 目录登记可判定：存在且登记完整
+    else state.status.config = 'pending'
+    resetSession()
+    onContextChange(false)
+  }
+  $('#modeApp').onclick = () => setMode('app')
+  $('#modePlatform').onclick = () => setMode('platform')
+  $('#btnSend').onclick = () => sendMessage()
+  $('#btnStop').onclick = stopStream
+  $('#btnProbe').onclick = () => (state.mode === 'platform' ? runProbe() : runProbe())
+  $('#btnProbeRun').onclick = runProbe
+  $('#btnClear').onclick = () => confirmModal({
+    title: '清空会话',
+    body: '当前会话仅存于浏览器内存，清空后不可恢复。诊断事件与用量结果将一并清除。',
+    confirmText: '清空',
+    danger: true,
+    onConfirm: () => { resetSession(); toast('会话已清空') },
+  })
+  $('#btnDebug').onclick = openDrawer
+  $('#btnDrawerClose').onclick = closeDrawer
+  $('#btnCancelParams').onclick = closeDrawer
+  $('#drawerScrim').onclick = closeDrawer
+  $('#btnApplyParams').onclick = () => { state.params = { ...state.draftParams }; renderParamSummary(); closeDrawer(); toast('参数已应用 — 作用于下一次发送') }
+  $('#btnResetParams').onclick = () => { state.draftParams = DEFAULT_PARAMS(); renderDrawer() }
+  document.querySelectorAll('[data-diag-tab]').forEach((t) => { t.onclick = () => { state.diagTab = t.dataset.diagTab; renderDiag() } })
+  /* 诊断区收起与重开：窄屏走底部抽屉位移，桌面走隐藏/显示 */
+  const mqMobile = window.matchMedia('(max-width: 1023px)')
+  const DIAG_OFF = 'max-lg:translate-y-[calc(100%_+_16px)]'
+  $('#btnDiagClose').onclick = () => {
+    $('#diagPanel').classList.add(mqMobile.matches ? DIAG_OFF : 'lg:hidden')
+    $('#btnDiagOpen').classList.remove('hidden'); $('#btnDiagOpen').classList.add('flex')
+  }
+  $('#btnDiagOpen').onclick = () => {
+    $('#diagPanel').classList.remove('lg:hidden')
+    $('#diagPanel').classList.remove(DIAG_OFF)
+    $('#btnDiagOpen').classList.add('hidden'); $('#btnDiagOpen').classList.remove('flex')
+  }
+  /* 窄屏初始即收起诊断区并显示浮钮；跨越断点时重置状态 */
+  const updateDiagVisibility = () => {
+    if (mqMobile.matches) {
+      $('#diagPanel').classList.add(DIAG_OFF)
+      $('#btnDiagOpen').classList.remove('hidden'); $('#btnDiagOpen').classList.add('flex')
+    } else {
+      $('#diagPanel').classList.remove('lg:hidden'); $('#diagPanel').classList.remove(DIAG_OFF)
+      $('#btnDiagOpen').classList.add('hidden'); $('#btnDiagOpen').classList.remove('flex')
+    }
+  }
+  mqMobile.addEventListener('change', updateDiagVisibility)
+  updateDiagVisibility()
+  $('#inputText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } })
+  $('#inputText').addEventListener('input', autoGrow)
+  $('#selScenario').onchange = (e) => { state.scenario = e.target.value; toast('演示场景：' + e.target.selectedOptions[0].textContent) }
+  $('#btnTheme').onclick = () => setTheme(state.theme === 'light' ? 'dark' : 'light')
+  $('#btnResetDemo').onclick = () => {
+    Object.assign(state, {
+      mode: 'app', tenantId: 't_cloud', appId: 'app_service', modelId: '', scenario: 'normal',
+    })
+    $('#selScenario').value = 'normal'
+    $('#modeApp').classList.add('seg-item-active'); $('#modePlatform').classList.remove('seg-item-active')
+    renderSelectors(); resetSession(); onContextChange(false)
+    toast('原型已重置')
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDrawer(); const root = $('#modalRoot'); root.classList.add('hidden'); root.classList.remove('flex') } })
+}
+function init() {
+  renderSelectors()
+  renderIdentity()
+  renderStatus()
+  renderParamSummary()
+  renderDiag()
+  updateComposer()
+  renderChat()
+  bindGlobal()
+}
+init()
+</script>
+</body>
+</html>

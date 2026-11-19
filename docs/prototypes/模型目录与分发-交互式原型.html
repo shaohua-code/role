@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模型目录与分发 · 交互式 PRD 原型（基于产品需求 §6.4）</title>
+<style>
+/* ========== 设计令牌：B2B IAM 控制台气质，中性色主导、品牌色点缀 ========== */
+:root{
+  --bg:#f4f5f7; --card:#ffffff; --line:#e4e7ec; --line-strong:#d0d5dd;
+  --txt:#1f2329; --sub:#667085; --faint:#98a2b3;
+  --brand:#2f54eb; --brand-weak:#eef2ff; --brand-line:#c7d2fe;
+  --side:#17191e; --side-2:#20232a; --side-txt:#9aa0ab; --side-txt-active:#f4f5f7;
+  --ok:#15803d; --ok-bg:#ecfdf3; --ok-line:#bbf7d0;
+  --warn:#b45309; --warn-bg:#fffbeb; --warn-line:#fde68a;
+  --err:#b42318; --err-bg:#fef3f2; --err-line:#fecdca;
+  --info:#1d4ed8; --info-bg:#eff6ff; --info-line:#bfdbfe;
+  --topbar:#14161b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;font-size:14px;color:var(--txt);background:#e9eaee;overflow:hidden}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,a:focus-visible,[tabindex]:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+table{border-collapse:collapse;width:100%}
+/* ========== 顶栏 ========== */
+.topbar{height:52px;background:var(--topbar);color:#fff;display:flex;align-items:center;gap:16px;padding:0 20px;position:relative;z-index:30}
+.topbar .t{font-size:15px;font-weight:600;letter-spacing:.2px}
+.topbar .meta{font-size:12px;color:#8b90a0}
+.topbar .spacer{flex:1}
+.mode-btns{display:flex;gap:6px}
+.mode-btns button{background:#262a35;border:1px solid #363b49;color:#c6cad6;font-size:12px;padding:5px 14px;border-radius:6px}
+.mode-btns button.on{background:#fff;color:#1f2329;border-color:#fff;font-weight:600}
+/* ========== 分屏布局 ========== */
+.split{display:flex;height:calc(100vh - 52px)}
+.proto-pane{width:56%;min-width:640px;display:flex;flex-direction:column;border-right:1px solid var(--line-strong);background:#dfe1e6}
+.doc-pane{flex:1;display:flex;flex-direction:column;background:#fbfbfc;min-width:0}
+/* 原型演示控制条（非产品 UI） */
+.proto-chrome{display:flex;align-items:center;gap:14px;padding:8px 14px;background:#e3e5ea;border-bottom:1px solid var(--line-strong);font-size:12px;color:#4b5563;flex-wrap:wrap}
+.proto-chrome .grp{display:flex;align-items:center;gap:6px}
+.proto-chrome .grp b{font-weight:600;color:#374151}
+.chip{border:1px solid var(--line-strong);background:#fff;color:#475467;border-radius:14px;padding:3px 10px;font-size:12px}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.chip:hover{border-color:var(--brand)}
+.proto-hint{color:#98a2b3}
+/* ========== 浏览器框 ========== */
+.browser-wrap{flex:1;padding:14px;min-height:0;display:flex}
+.browser{flex:1;display:flex;flex-direction:column;background:var(--bg);border-radius:10px;box-shadow:0 8px 30px rgba(16,24,40,.18);overflow:hidden;min-height:0}
+.browser-bar{height:36px;background:#e8eaee;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 14px;flex:none}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;background:#cfd4dc}
+.addr{flex:1;background:#fff;border:1px solid var(--line);border-radius:6px;font-size:12px;color:var(--sub);padding:4px 12px}
+.console{flex:1;display:flex;min-height:0}
+/* ========== 管理台：深色侧栏 ========== */
+.sidebar{width:196px;flex:none;background:var(--side);color:var(--side-txt);display:flex;flex-direction:column;overflow-y:auto;padding:10px 0 16px}
+.side-logo{display:flex;align-items:center;gap:8px;padding:8px 16px 14px;color:#fff;font-weight:600;font-size:14px;letter-spacing:.5px}
+.side-logo .mark{width:22px;height:22px;border-radius:6px;background:var(--brand);display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff}
+.side-group{font-size:11px;color:#5d626e;padding:12px 16px 4px;letter-spacing:1px}
+.side-item{display:block;width:100%;text-align:left;background:none;border:none;color:var(--side-txt);font-size:13px;padding:7px 16px 7px 24px;position:relative}
+.side-item:hover{color:#d6d9e0;background:var(--side-2)}
+.side-item.on{color:var(--side-txt-active);background:var(--side-2)}
+.side-item.on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 2px 2px 0;background:#e7eaee}
+/* ========== 管理台：内容区 ========== */
+.content{flex:1;overflow-y:auto;padding:20px 22px;min-width:0}
+.page-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.page-head h1{font-size:18px;font-weight:600}
+.page-head .desc{font-size:12.5px;color:var(--sub);margin-top:4px;max-width:640px}
+.page-head .acts{margin-left:auto;display:flex;gap:8px;flex:none}
+.btn{border-radius:6px;border:1px solid var(--line-strong);background:#fff;color:#344054;font-size:13px;padding:6px 14px}
+.btn:hover{border-color:var(--brand);color:var(--brand)}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn.primary:hover{background:#2543cf}
+.btn.danger{color:var(--err)}
+.btn.danger:hover{border-color:var(--err)}
+.btn.sm{padding:3px 10px;font-size:12px}
+.btn.link{border:none;background:none;color:var(--brand);padding:3px 6px}
+.btn.link:hover{text-decoration:underline}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+/* 卡片与表格 */
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.card-scroll{overflow-x:auto}
+.tbl th{background:#f9fafb;font-size:12px;font-weight:600;color:var(--sub);text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{font-size:13px;padding:9px 12px;border-bottom:1px solid #f0f1f4;vertical-align:middle;white-space:nowrap}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:#fafbfc}
+.cell-main{font-weight:500}
+.cell-sub{font-size:11.5px;color:var(--faint)}
+.ops{display:flex;gap:2px;flex-wrap:wrap}
+/* 标签 */
+.tag{display:inline-block;font-size:11.5px;line-height:1;padding:4px 8px;border-radius:4px;border:1px solid;white-space:nowrap}
+.tag.gray{color:#475467;background:#f2f4f7;border-color:#e4e7ec}
+.tag.ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line)}
+.tag.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-line)}
+.tag.err{color:var(--err);background:var(--err-bg);border-color:var(--err-line)}
+.tag.info{color:var(--info);background:var(--info-bg);border-color:var(--info-line)}
+.tag.brand{color:var(--brand);background:var(--brand-weak);border-color:var(--brand-line)}
+.tag-row{display:flex;gap:4px;flex-wrap:wrap;max-width:260px}
+/* 提示条 */
+.banner{display:flex;gap:10px;align-items:flex-start;border:1px solid;border-radius:8px;padding:10px 14px;font-size:12.5px;margin-bottom:14px;line-height:1.6}
+.banner.info{background:var(--info-bg);border-color:var(--info-line);color:#1e3a8a}
+.banner.warn{background:var(--warn-bg);border-color:var(--warn-line);color:#78350f}
+.banner .ic{font-style:normal;flex:none}
+/* 空态 / 错误态 */
+.state-panel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:56px 20px;text-align:center}
+.state-panel .emo{font-size:34px;margin-bottom:12px}
+.state-panel h3{font-size:15px;font-weight:600;margin-bottom:6px}
+.state-panel p{font-size:12.5px;color:var(--sub);margin-bottom:16px;line-height:1.7}
+/* 统计小卡（下发关系计数） */
+.count-link{color:var(--brand);font-weight:600;background:none;border:none;font-size:13px;padding:0}
+.count-link:hover{text-decoration:underline}
+/* ========== 右侧文档 ========== */
+.tabs{display:flex;gap:2px;background:#fff;border-bottom:1px solid var(--line);padding:0 16px;flex:none}
+.tabs button{background:none;border:none;font-size:13.5px;color:var(--sub);padding:12px 16px;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--brand);font-weight:600;border-bottom-color:var(--brand)}
+.doc-scroll{flex:1;overflow-y:auto;padding:20px 22px 60px;min-width:0}
+.doc-scroll h2{font-size:16px;margin:0 0 6px}
+.doc-meta{font-size:12px;color:var(--faint);margin-bottom:18px;line-height:1.8}
+.doc-scroll h3{font-size:14.5px;margin:26px 0 8px;padding-top:14px;border-top:1px dashed var(--line)}
+.tab-page:first-child h3{border-top:none}
+.doc-scroll p{font-size:13px;color:#3a4150;line-height:1.85;margin:6px 0}
+.doc-scroll .lead{color:var(--sub)}
+.doc-scroll table{font-size:12.5px;margin:8px 0 4px;background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.doc-scroll th{background:#f9fafb;text-align:left;padding:7px 10px;font-weight:600;color:var(--sub);border-bottom:1px solid var(--line)}
+.doc-scroll td{padding:7px 10px;border-bottom:1px solid #f2f3f6;vertical-align:top;line-height:1.7}
+.doc-scroll tr:last-child td{border-bottom:none}
+.tbl-wrap{overflow-x:auto}
+.doc-scroll ul,.doc-scroll ol{margin:6px 0 8px 20px;font-size:13px;color:#3a4150;line-height:1.85}
+.formula{background:var(--side);color:#dbe1f2;font-family:Consolas,Menlo,monospace;font-size:12.5px;border-radius:8px;padding:10px 14px;margin:8px 0;line-height:1.9}
+.formula b{color:#9db4ff;font-weight:600}
+.mark-assump{color:var(--warn);font-weight:600;font-size:12px}
+/* 功能章节与联动 */
+.feature-section{scroll-margin-top:12px;border-radius:8px;padding:2px 8px;margin:0 -8px}
+.feature-section.flash{outline:2px solid var(--brand);background:var(--brand-weak)}
+.proto-entries{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 2px}
+.proto-entries .lbl{font-size:12px;color:var(--faint)}
+.goto-chip{border:1px solid var(--brand-line);background:var(--brand-weak);color:var(--brand);border-radius:6px;font-size:12px;padding:4px 10px}
+.goto-chip:hover{background:#dfe6ff}
+/* ========== 弹窗 ========== */
+.modal-mask{position:fixed;inset:0;background:rgba(16,24,40,.5);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal{background:#fff;border-radius:10px;width:520px;max-width:100%;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(16,24,40,.3)}
+.modal.wide{width:600px}
+.modal-head{display:flex;align-items:center;padding:16px 20px 12px;border-bottom:1px solid var(--line)}
+.modal-head h3{font-size:15px;flex:1}
+.modal-x{background:none;border:none;font-size:18px;color:var(--faint);line-height:1;padding:4px}
+.modal-body{padding:16px 20px;overflow-y:auto}
+.modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--line)}
+/* 表单 */
+.fld{margin-bottom:14px}
+.fld label{display:block;font-size:12.5px;font-weight:600;color:#344054;margin-bottom:6px}
+.fld label .req{color:var(--err);margin-left:2px}
+.fld input[type=text],.fld input[type=number],.fld select{width:100%;border:1px solid var(--line-strong);border-radius:6px;padding:7px 10px;font-size:13px;color:var(--txt);background:#fff}
+.fld input::placeholder{color:var(--faint)}
+.fld .hint{font-size:11.5px;color:var(--faint);margin-top:4px;line-height:1.6}
+.fld .err-msg{font-size:11.5px;color:var(--err);margin-top:4px}
+.fld input.invalid{border-color:var(--err)}
+.caps-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.cap-item{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:12.5px;color:#344054;cursor:pointer}
+.cap-item:has(input:checked){border-color:var(--brand-line);background:var(--brand-weak)}
+.cap-item input{accent-color:var(--brand)}
+.fld-row{display:flex;gap:12px}
+.fld-row .fld{flex:1}
+/* 勾选列表（下发关系） */
+.pick-list{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.pick-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #f0f1f4;font-size:13px}
+.pick-row:last-child{border-bottom:none}
+.pick-row .grow{flex:1}
+.pick-row .sub{font-size:11.5px;color:var(--faint)}
+.pick-row input{width:15px;height:15px;accent-color:var(--brand)}
+.revoke-note{background:var(--warn-bg);border:1px solid var(--warn-line);color:#78350f;font-size:12px;border-radius:6px;padding:8px 12px;margin-top:10px;line-height:1.7}
+/* Toast */
+#toastRoot{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{background:#1f2329;color:#fff;font-size:13px;border-radius:8px;padding:10px 18px;box-shadow:0 8px 24px rgba(16,24,40,.35);display:flex;gap:8px;align-items:center;animation:tin .2s ease}
+.toast.ok::before{content:"✓";color:#4ade80;font-weight:700}
+.toast.warn::before{content:"!";color:#fbbf24;font-weight:700}
+@keyframes tin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+/* ========== 文本模式 ========== */
+.textdoc{display:none;position:fixed;inset:52px 0 0 0;overflow-y:auto;background:#fff;z-index:20;padding:32px max(24px,calc((100% - 860px)/2))}
+body.mode-text .split{display:none}
+body.mode-text .textdoc{display:block}
+.textdoc h1{font-size:20px;margin-bottom:4px}
+.textdoc .doc-meta{border-bottom:1px solid var(--line);padding-bottom:14px}
+.textdoc h2{font-size:17px;margin:34px 0 10px;padding-top:18px;border-top:1px solid var(--line)}
+.textdoc h3{font-size:14.5px;margin:24px 0 8px}
+.proto-embed{border:1px solid var(--line-strong);border-radius:10px;overflow:hidden;margin:12px 0;box-shadow:0 4px 16px rgba(16,24,40,.08)}
+.proto-embed .browser{height:520px;box-shadow:none;border-radius:0}
+.proto-embed .cap{background:#f2f4f7;font-size:12px;color:var(--sub);padding:6px 12px;border-bottom:1px solid var(--line)}
+/* ========== 响应式：窄屏折叠为单列 ========== */
+@media (max-width:1100px){
+  body{overflow:auto}
+  .split{flex-direction:column;height:auto}
+  .proto-pane{width:100%;min-width:0;border-right:none;border-bottom:1px solid var(--line-strong)}
+  .browser-wrap{height:72vh}
+  .doc-pane{min-height:60vh}
+  .doc-scroll{overflow:visible}
+}
+/* ========== 打印 ========== */
+@media print{
+  body{overflow:visible;background:#fff}
+  .topbar,.proto-pane,.tabs,#toastRoot,.modal-mask{display:none!important}
+  .split{display:block;height:auto}
+  .doc-pane .doc-scroll{overflow:visible;padding:0}
+  .tab-page{display:block!important}
+  .feature-section{break-inside:avoid-page}
+}
+</style>
+</head>
+<body>
+
+<!-- 顶栏：标题 / 版本 / 模式切换 -->
+<header class="topbar">
+  <span class="t">模型目录与分发 · 交互式 PRD 原型</span>
+  <span class="meta">基于《产品需求》§6.4 · 原型评审稿 v1.0 · 2026-11-17</span>
+  <span class="spacer"></span>
+  <div class="mode-btns" role="tablist" aria-label="查看模式">
+    <button id="modeSplit" class="on" onclick="setMode('split')">分屏</button>
+    <button id="modeText" onclick="setMode('text')">文本全文</button>
+  </div>
+</header>
+
+<!-- 分屏主体 -->
+<main class="split">
+  <!-- 左：可点击原型 -->
+  <section class="proto-pane" aria-label="交互原型">
+    <div class="proto-chrome">
+      <div class="grp"><b>角色视角</b>
+        <button class="chip on" data-role-chip="super" data-act="role" data-role="super">超级管理员</button>
+        <button class="chip" data-role-chip="tenant" data-act="role" data-role="tenant">租户管理员</button>
+        <button class="chip" data-role-chip="app" data-act="role" data-role="app">应用管理员</button>
+      </div>
+      <div class="grp"><b>状态演示</b>
+        <button class="chip on" data-demo-chip="normal" data-act="demo" data-demo="normal">正常</button>
+        <button class="chip" data-demo-chip="empty" data-act="demo" data-demo="empty">空态</button>
+        <button class="chip" data-demo-chip="error" data-act="demo" data-demo="error">读取失败</button>
+      </div>
+      <span class="proto-hint">示例数据，仅供评审</span>
+    </div>
+    <div class="browser-wrap">
+      <div class="browser" id="browserFrame">
+        <div class="browser-bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="addr" id="addrBar">https://iam.example.com/admin/models</span>
+        </div>
+        <div class="console">
+          <aside class="sidebar" id="sideNav" aria-label="管理台侧栏"></aside>
+          <div class="content" id="pageContent"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 右：PRD 文档 -->
+  <section class="doc-pane" aria-label="需求文档">
+    <nav class="tabs" role="tablist">
+      <button id="tabbtn-overview" class="on" onclick="switchTab('overview')">概述</button>
+      <button id="tabbtn-detail" onclick="switchTab('detail')">功能需求</button>
+      <button id="tabbtn-rules" onclick="switchTab('rules')">规则</button>
+    </nav>
+    <div class="doc-scroll" id="docScroll">
+
+      <!-- ===== 概述 ===== -->
+      <div class="tab-page" id="tab-overview">
+        <h2>模型目录与分发 · 概述</h2>
+        <p class="doc-meta">来源：《产品需求》§6.4 模型目录与分发、§3.2 节点收口、§7 页面关键状态 · 范围：模型治理 / 模型用量两个管理台页面 ·
+          配额拦截（MODEL_QUOTA_ENFORCEMENT_ENABLED）默认关闭 · §6.4.1 模型统一接入与用量控制为后续专项，<b>不在本原型范围</b>。</p>
+
+        <h3>背景与问题</h3>
+        <p>业务应用的模型能力由平台统一供给：平台维护模型目录，按「平台 → 租户 → 应用」三级下发决定谁能看到、调用哪些模型。没有统一目录时，各应用自行维护模型清单与密钥，无法回收、无法审计、无法计量。本模块把目录维护、三级分发与用量账本收进管理台两个页面，并以审计保证每次下发与回收可追溯。</p>
+
+        <h3>主用户与核心任务</h3>
+        <div class="tbl-wrap"><table>
+          <tr><th>角色</th><th>授权范围</th><th>在模型治理 / 用量中做什么</th><th>不能做什么</th></tr>
+          <tr><td>平台超级管理员</td><td>超管</td><td>维护平台模型目录（新建 / 编辑 / 停用 / 删除）；将模型下发给租户并撤回；查看全域用量</td><td>删除存在用量账目的模型；下发或回读凭证明文</td></tr>
+          <tr><td>租户管理员</td><td>租户级</td><td>将<b>本租户已收到</b>的模型下发给应用并回收；查看本租户用量</td><td>新建或修改平台目录；下发本租户未收到的模型</td></tr>
+          <tr><td>应用管理员</td><td>应用级</td><td>查看本应用可见模型清单（只读）；查看本应用用量</td><td>任何写操作</td></tr>
+        </table></div>
+
+        <h3>核心链路（P0）</h3>
+        <ol>
+          <li>超管在「模型治理」新建平台模型（标识、供应商、显示名、能力标签、单价、限流、凭证引用）。</li>
+          <li>超管将模型<b>下发</b>给租户；租户进入「已收到」范围。</li>
+          <li>租户管理员将已收到的模型<b>下发</b>给本租户应用；应用管理员在应用侧看到只读清单。</li>
+          <li>业务应用经 <code>GET /api/v1/authorization/my-models</code> 消费三级交集清单（契约见《应用对接》§9）。</li>
+          <li>受信网关上报用量，「模型用量」账本按租户 + 应用归属记账、估算费用、标记计量质量。</li>
+          <li>回收（软失效）或平台停用后，下游<b>立即不可见</b>；每次下发 / 回收 / 状态变更记审计。</li>
+        </ol>
+
+        <h3>完成条件</h3>
+        <p>一个模型从建目 → 下发租户 → 下发应用 → 应用可见 → 产生用量 → 回收 / 停用不可见，全程在两个页面内完成且有审计可查；期间读取失败、空目录、空账本、待核对等状态均有明确呈现。</p>
+
+        <h3>关键状态清单（§7 收口）</h3>
+        <div class="tbl-wrap"><table>
+          <tr><th>状态</th><th>位置</th><th>呈现要求</th></tr>
+          <tr><td>空目录 / 未收到模型 / 应用未下发</td><td>模型治理（三视角各自空态）</td><td>引导下一步动作，不显示空表格</td></tr>
+          <tr><td>空账本</td><td>模型用量</td><td>明确「暂无上报记录」</td></tr>
+          <tr><td>读取失败</td><td>两页通用</td><td>显式报错 + 重试，<b>不得伪装成成功空态</b></td></tr>
+          <tr><td>待核对</td><td>模型用量</td><td>预留到期进入人工核对队列，核对前保守占额</td></tr>
+          <tr><td>下发关系计数与回收确认</td><td>模型治理</td><td>计数可点开关系弹窗；回收需确认且说明软失效语义</td></tr>
+        </table></div>
+
+        <h3>边界与假设</h3>
+        <ul>
+          <li>配额拦截默认关闭：平台只记录与估算用量，不拦截调用；无币种字段、无失败原因字段。</li>
+          <li>凭证只存外部引用（如 vault 地址），不回读、不下发；真实调用凭证由业务应用自持。</li>
+          <li>IAM 只管目录与授权，不做模型代理网关、供应商账单结算（§6.4.1 M01–M07 后续专项）。</li>
+          <li>侧栏其余页面不在本原型范围，点击给出明确不可用提示。</li>
+          <li><span class="mark-assump">[假设]</span> 模型编辑时不回显凭证引用原文，占位提示「已保存（不回显）」，重新填写则覆盖。</li>
+          <li><span class="mark-assump">[假设]</span> 删除仅校验「存在用量账目」阻塞；下发关系存在但无用量时允许删除并级联清理关系（正式验收前需与后端确认）。</li>
+        </ul>
+      </div>
+
+      <!-- ===== 功能需求 ===== -->
+      <div class="tab-page" id="tab-detail" hidden>
+        <h2>功能需求</h2>
+        <p class="doc-meta">按业务能力组织；每个章节右侧「原型入口」可直接驱动左侧原型到对应画面。</p>
+
+        <section class="feature-section" id="feature-catalog">
+          <h3>F1 · 平台模型目录（超管维护）</h3>
+          <p>平台支持的模型全集由超管统一维护，是三级下发的唯一源头。目录行统一归属平台租户（slug=platform），所有按 ID 的目录 / 下发操作强制校验该归属，非平台目录行与不存在同样按 404 处理。</p>
+          <div class="tbl-wrap"><table>
+            <tr><th>列</th><th>说明</th></tr>
+            <tr><td>模型</td><td>显示名 + 模型标识（key，全局唯一）</td></tr>
+            <tr><td>供应商 / 能力标签 / 单价 / 限流</td><td>能力标签为 7 项标准集；单价未维护显示「未知」；限流为目录级 RPM / TPM</td></tr>
+            <tr><td>凭证引用</td><td>仅存外部引用，不回读、不下发（列表中不展示原文）</td></tr>
+            <tr><td>状态</td><td>启用 / 停用；停用 = 全链路立即不可见</td></tr>
+            <tr><td>下发租户</td><td>关系计数，点击打开「下发租户」弹窗（F3）</td></tr>
+            <tr><td>操作</td><td>编辑 / 下发租户 / 停用（启用）/ 删除，全部由 <code>button.models.manage</code>（仅超管）收口</td></tr>
+          </table></div>
+          <p><b>边界：</b>目录为空显示引导空态；读取失败显示错误面板与重试，不得伪装成成功空态。</p>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"page":"governance"}'>超管视角目录</button>
+            <button class="goto-chip" data-goto='{"page":"governance","demo":"empty"}'>空目录空态</button>
+            <button class="goto-chip" data-goto='{"page":"governance","demo":"error"}'>读取失败</button>
+          </div>
+        </section>
+
+        <section class="feature-section" id="feature-model-form">
+          <h3>F2 · 新建与编辑模型（能力标签标准集 · 凭证引用）</h3>
+          <p>新建与编辑共用同一表单抽屉；提交成功后刷新列表并记审计。后端对能力标签做白名单强制校验，前端只允许勾选标准集。</p>
+          <div class="tbl-wrap"><table>
+            <tr><th>字段</th><th>必填</th><th>规则</th></tr>
+            <tr><td>模型标识（key）</td><td>是</td><td>全局唯一；重复提交返回 409 冲突提示</td></tr>
+            <tr><td>供应商</td><td>是</td><td>下拉选择</td></tr>
+            <tr><td>显示名</td><td>是</td><td>列表与 my-models 清单中的展示名</td></tr>
+            <tr><td>能力标签</td><td>勾选配置</td><td>标准集 7 项：chat 对话 / reasoning 深度思考 / thinking_output 思考过程输出 / tool_calls 工具调用 / json_output JSON 输出 / vision 视觉 / embedding 向量嵌入</td></tr>
+            <tr><td>单价</td><td>否</td><td>留空 = 费用记「未知」；当前无币种字段，费用仅作平台估算</td></tr>
+            <tr><td>RPM / TPM</td><td>否</td><td>目录级限流参考值</td></tr>
+            <tr><td>凭证引用</td><td>建议填写</td><td>仅保存外部引用；编辑时不回显原文，重新填写则覆盖；明文永不进入界面与响应</td></tr>
+          </table></div>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"page":"governance","modal":"modelForm"}'>新建模型</button>
+            <button class="goto-chip" data-goto='{"page":"governance","modal":"modelForm","modalId":"m1"}'>编辑（凭证不回显）</button>
+          </div>
+        </section>
+
+        <section class="feature-section" id="feature-tenant-grant">
+          <h3>F3 · 平台 → 租户下发与撤回</h3>
+          <p>超管在目录行打开「下发租户」弹窗，勾选目标租户保存，差异更新下发关系。租户可见范围 = 平台目录 ∩ 租户下发，下发关系即授权唯一依据。</p>
+          <ul>
+            <li><b>撤回 = 软失效：</b>保留下发关系供恢复与审计，租户侧立即不可见；再次勾选即恢复。</li>
+            <li>保存后目录行「下发租户」计数即时刷新；下发 / 撤回记审计，与写操作同事务。</li>
+            <li>存在将被回收的关系时，确认按钮变为「确认回收并记审计」，弹窗内给出软失效说明。</li>
+          </ul>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"page":"governance","modal":"tenantGrant","modalId":"m1"}'>下发租户（含回收确认）</button>
+          </div>
+        </section>
+
+        <section class="feature-section" id="feature-app-grant">
+          <h3>F4 · 租户 → 应用下发与回收（软失效）</h3>
+          <p>租户管理员（持 <code>button.models.distribute</code>，节点下限租户级）在「本租户收到的模型」列表行打开「下发应用」弹窗，勾选本租户应用保存。</p>
+          <ul>
+            <li>只能下发<b>本租户已收到</b>且平台侧仍启用的模型；只能选择<b>本租户</b>的应用（范围只能向下）。</li>
+            <li>回收为软失效：保留关系供恢复与审计，应用侧立即不可见；恢复 = 再次勾选保存。</li>
+            <li>下发 / 回收记审计，与写操作同事务。</li>
+            <li>本租户未收到任何模型时显示「租户未收到模型」空态（对应 §7 模型 Tab 空态）。</li>
+          </ul>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"role":"tenant","page":"governance"}'>租户管理员视角</button>
+            <button class="goto-chip" data-goto='{"role":"tenant","page":"governance","modal":"appGrant","modalId":"m1"}'>下发应用 / 回收确认</button>
+          </div>
+        </section>
+
+        <section class="feature-section" id="feature-visibility">
+          <h3>F5 · 三级交集可见性与应用只读清单</h3>
+          <p>可见性唯一口径为三级交集，下发关系即授权唯一依据；业务码 / 应用资源树不参与模型判权。</p>
+          <div class="formula">应用可见模型 = <b>平台目录（启用）</b> ∩ <b>租户下发（active）</b> ∩ <b>应用下发（active）</b><br>租户可见模型 = <b>平台目录（启用）</b> ∩ <b>租户下发（active）</b></div>
+          <ul>
+            <li>应用管理员对本应用模型清单<b>只读</b>，无任何写入口。</li>
+            <li>回收或平台停用后立即不可见（验收标准 15）。</li>
+            <li>业务应用以用户 token 调 <code>GET /api/v1/authorization/my-models?client_id=</code> 获取本应用可见模型；清单范围绑定服务端验签的 token 应用身份，<code>client_id</code> 仅作一致性校验，跨应用查询拒绝。<code>/authorization/check</code> 的 <code>model.invoke</code> 调用前检查按同一口径判定。</li>
+          </ul>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"role":"app","page":"governance"}'>应用管理员只读清单</button>
+          </div>
+        </section>
+
+        <section class="feature-section" id="feature-lifecycle">
+          <h3>F6 · 停用与删除阻塞</h3>
+          <p><b>停用：</b>需确认（「停用后该模型全链路立即不可见，含已下发租户与应用；历史用量保留」）；停用后可重新启用，状态变更记审计。</p>
+          <p><b>删除：</b>存在用量账目记录的模型<b>禁止删除</b>，弹窗明确提示改用「停用」，避免误删审计与账目；无用量账目的模型删除前需确认，删除后下发关系级联清理。删除操作同样校验目录行的平台租户归属。</p>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"page":"governance","modal":"deleteBlocked","modalId":"m1"}'>删除阻塞（有账目）</button>
+            <button class="goto-chip" data-goto='{"page":"governance","modal":"deleteConfirm","modalId":"m3"}'>删除确认（无账目）</button>
+            <button class="goto-chip" data-goto='{"page":"governance","modal":"disableConfirm","modalId":"m2"}'>停用确认</button>
+          </div>
+        </section>
+
+        <section class="feature-section" id="feature-usage-ledger">
+          <h3>F7 · 用量账本与数据边界</h3>
+          <p>受信网关使用专用上报密钥（≥32 字符）写入用量事件；平台<b>不存 Prompt 与模型响应正文</b>。账本按租户 + 应用归属，列表按操作者数据边界过滤：超管全域、租户级限本租户、应用级限本应用。</p>
+          <div class="tbl-wrap"><table>
+            <tr><th>字段</th><th>说明</th></tr>
+            <tr><td>时间 / 租户 / 应用 / 模型</td><td>归属三元组 + 目录模型引用</td></tr>
+            <tr><td>输入 / 输出 tokens</td><td>按 Provider 可信 usage 记录</td></tr>
+            <tr><td>费用估算</td><td>按目录单价估算；未维护价格记「未知」；当前无币种字段、无失败原因字段</td></tr>
+            <tr><td>计量质量</td><td><code>actual</code> 实际 / <code>estimated</code> 估算 / <code>unknown</code> 未知</td></tr>
+            <tr><td>状态</td><td>已结算 / 待核对（F8）</td></tr>
+          </table></div>
+          <p><b>边界：</b>支持按租户 / 应用 / 模型筛选；空账本明确「暂无上报记录」；读取失败显式报错并提供重试，不得伪装成成功空态。</p>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"page":"usage"}'>用量账本</button>
+            <button class="goto-chip" data-goto='{"page":"usage","demo":"empty"}'>空账本</button>
+            <button class="goto-chip" data-goto='{"page":"usage","demo":"error"}'>读取失败</button>
+            <button class="goto-chip" data-goto='{"role":"app","page":"usage"}'>应用级数据边界</button>
+          </div>
+        </section>
+
+        <section class="feature-section" id="feature-reconciliation">
+          <h3>F8 · 待核对队列与配额拦截关闭口径</h3>
+          <p>页面常驻提示：配额拦截默认关闭，平台仅记录与估算用量，不拦截模型调用。</p>
+          <ul>
+            <li>预留（保守占额）到期后进入<b>人工核对队列</b>，不自动收费、不自动释放；核对前继续保守占额。</li>
+            <li>「待核对」标签页单独列出未决预留；行内「人工核对」入口展示队列语义说明（完整的对账、更正与证据链能力属 §6.4.1 M06 后续专项，本期内不实施）。</li>
+            <li>配额 enforcement 上线须满足《产品需求》验收标准 10 的产品与运维门槛并获明确授权，本原型不提供开关。</li>
+          </ul>
+          <div class="proto-entries"><span class="lbl">原型入口</span>
+            <button class="goto-chip" data-goto='{"page":"usage","usageTab":"pending"}'>待核对队列</button>
+            <button class="goto-chip" data-goto='{"page":"usage","usageTab":"pending","modal":"reviewQueue","modalId":"u4"}'>人工核对入口</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- ===== 规则 ===== -->
+      <div class="tab-page" id="tab-rules" hidden>
+        <h2>共享规则</h2>
+        <p class="doc-meta">本页集中定义权限、可见性、状态与审计口径；功能章节不再重复。</p>
+
+        <h3>权限与节点收口</h3>
+        <div class="tbl-wrap"><table>
+          <tr><th>能力</th><th>节点 / 范围</th><th>超管</th><th>租户管理员</th><th>应用管理员</th></tr>
+          <tr><td>目录写（新建 / 编辑 / 停用 / 删除）</td><td><code>button.models.manage</code>（仅超管）</td><td>可</td><td>不可</td><td>不可</td></tr>
+          <tr><td>租户下发 / 撤回</td><td><code>button.models.manage</code></td><td>可</td><td>不可</td><td>不可</td></tr>
+          <tr><td>应用下发 / 回收</td><td><code>button.models.distribute</code>（节点下限租户级）</td><td>可</td><td>可（仅本租户收到的模型 × 本租户应用）</td><td>不可</td></tr>
+          <tr><td>本应用模型清单</td><td>—</td><td>可见全域</td><td>可见本租户收到范围</td><td>只读本应用交集</td></tr>
+          <tr><td>用量账本查询</td><td><code>menu.models-usage</code></td><td>全域</td><td>本租户</td><td>本应用</td></tr>
+        </table></div>
+
+        <h3>可见性与失效口径</h3>
+        <ul>
+          <li>可见性 = 三级交集（见 F5 公式）；下发关系是<b>授权唯一依据</b>。</li>
+          <li>回收 = 软失效：关系保留（可恢复、可审计），下游立即不可见。</li>
+          <li>平台停用 = 全链路立即不可见；重新启用后按既有下发关系恢复可见。</li>
+          <li>平台目录行归属平台租户（slug=platform）；跨归属或不存在一律 404，不泄露存在性。</li>
+        </ul>
+
+        <h3>状态定义</h3>
+        <div class="tbl-wrap"><table>
+          <tr><th>对象</th><th>状态</th><th>含义</th></tr>
+          <tr><td rowspan="2">模型</td><td>启用</td><td>可被下发与消费</td></tr>
+          <tr><td>停用</td><td>全链路立即不可见；历史用量保留；可重新启用</td></tr>
+          <tr><td rowspan="2">下发关系</td><td>active</td><td>可见性成立</td></tr>
+          <tr><td>revoked（软失效）</td><td>不可见但保留，可恢复</td></tr>
+          <tr><td rowspan="2">用量事件</td><td>已结算</td><td>按可信 usage 入账</td></tr>
+          <tr><td>待核对</td><td>预留到期未决，保守占额，进入人工核对队列</td></tr>
+          <tr><td>计量质量</td><td>actual / estimated / unknown</td><td>实际 / 估算 / 未知；unknown 通常因未维护单价</td></tr>
+        </table></div>
+
+        <h3>审计事件</h3>
+        <p>以下事件与写操作<b>同事务</b>记录，审计只读、不可修改删除：</p>
+        <div class="tbl-wrap"><table>
+          <tr><th>事件</th><th>触发</th></tr>
+          <tr><td>模型创建 / 编辑</td><td>表单提交成功；不记凭证明文</td></tr>
+          <tr><td>下发租户 / 撤回租户</td><td>租户下发弹窗保存（含差异项）</td></tr>
+          <tr><td>下发应用 / 回收应用</td><td>应用下发弹窗保存（含差异项）</td></tr>
+          <tr><td>模型停用 / 启用 / 删除</td><td>确认弹窗提交</td></tr>
+        </table></div>
+
+        <h3>边界与异常</h3>
+        <div class="tbl-wrap"><table>
+          <tr><th>场景</th><th>处理</th></tr>
+          <tr><td>删除存在用量账目的模型</td><td>阻塞并提示改用「停用」</td></tr>
+          <tr><td>模型标识重复</td><td>409 冲突提示，保留已填内容</td></tr>
+          <tr><td>租户未收到模型</td><td>模型治理显示「租户未收到模型」空态</td></tr>
+          <tr><td>应用未下发模型</td><td>应用视角显示「应用未下发模型」空态</td></tr>
+          <tr><td>读取失败</td><td>错误面板 + 重试，不得伪装成成功空态</td></tr>
+          <tr><td>越权访问（跨租户 / 跨应用 / 非平台目录行）</td><td>按 404 或拒绝处理，不返回目标数据字段</td></tr>
+        </table></div>
+      </div>
+
+    </div>
+  </section>
+</main>
+
+<!-- 文本全文模式 -->
+<div class="textdoc" id="textdoc" aria-label="全文模式">
+  <h1>模型目录与分发 · 交互式 PRD（全文）</h1>
+  <p class="doc-meta">基于《产品需求》§6.4 · 原型评审稿 v1.0 · 2026-11-17 · 本模式为可打印长文档；交互原型请切换回「分屏」。</p>
+  <div id="textOverview"></div>
+  <h2 style="font-size:17px">原型画面快照</h2>
+  <p class="doc-meta">以下为当前角色与页面状态的原型快照（分屏模式中为可交互）。</p>
+  <div class="proto-embed" id="protoEmbed"><div class="cap" id="protoEmbedCap"></div></div>
+  <div id="textDetail"></div>
+  <div id="textRules"></div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot" aria-live="polite"></div>
+
+<script>
+/* ================= 示例数据 ================= */
+// 能力标签标准集（§6.4：前端勾选配置、后端白名单强制校验）
+const CAPS = [
+  ['chat','对话'],['reasoning','深度思考'],['thinking_output','思考过程输出'],
+  ['tool_calls','工具调用'],['json_output','JSON 输出'],['vision','视觉'],['embedding','向量嵌入'],
+];
+const TENANTS = [{ id:'t1', name:'云启科技' }, { id:'t2', name:'蓝湖数科' }];
+const APPS = [
+  { id:'a1', name:'简历助手', tid:'t1' },
+  { id:'a2', name:'智能知识库', tid:'t1' },
+  { id:'a3', name:'客服机器人', tid:'t2' },
+];
+// 平台模型目录：tenantGrants 平台→租户关系；appGrants 租户→应用关系；hasUsage 表示存在用量账目（删除阻塞演示）
+let models = [
+  { id:'m1', key:'gpt-4o', provider:'OpenAI', name:'GPT-4o', caps:['chat','tool_calls','json_output','vision'], price:'0.015', rpm:500, tpm:'200K', cred:'vault://openai/prod', status:'active', tenantGrants:{ t1:'active', t2:'active' }, appGrants:{ a1:'active' }, hasUsage:true },
+  { id:'m2', key:'deepseek-chat', provider:'DeepSeek', name:'DeepSeek Chat', caps:['chat','reasoning','json_output'], price:'0.002', rpm:300, tpm:'150K', cred:'vault://deepseek/main', status:'active', tenantGrants:{ t1:'active' }, appGrants:{}, hasUsage:false },
+  { id:'m3', key:'qwen-max', provider:'阿里云', name:'通义千问 Max', caps:['chat','reasoning','thinking_output','tool_calls'], price:null, rpm:200, tpm:'100K', cred:'vault://aliyun/qwen', status:'active', tenantGrants:{}, appGrants:{}, hasUsage:false },
+  { id:'m4', key:'text-embedding-3', provider:'OpenAI', name:'Embedding v3', caps:['embedding'], price:null, rpm:1000, tpm:'—', cred:'vault://openai/embed', status:'active', tenantGrants:{ t1:'active' }, appGrants:{ a2:'active' }, hasUsage:true },
+  { id:'m5', key:'legacy-bert', provider:'自建', name:'旧版语义模型', caps:['embedding'], price:'0.0001', rpm:100, tpm:'50K', cred:'vault://internal/bert', status:'disabled', tenantGrants:{ t1:'revoked' }, appGrants:{}, hasUsage:true },
+];
+// 用量事件：quality = actual|estimated|unknown；status = settled|pending（待核对）
+let usageEvents = [
+  { id:'u1', time:'11-17 10:42', tid:'t1', aid:'a1', mid:'m1', tin:'18,420', tout:'5,210', cost:'2.86', quality:'actual', status:'settled' },
+  { id:'u2', time:'11-17 10:31', tid:'t1', aid:'a2', mid:'m4', tin:'66,400', tout:'0', cost:'未知', quality:'unknown', status:'settled' },
+  { id:'u3', time:'11-17 09:58', tid:'t2', aid:'a3', mid:'m1', tin:'9,020', tout:'1,430', cost:'1.02', quality:'estimated', status:'settled' },
+  { id:'u4', time:'11-17 09:47', tid:'t1', aid:'a1', mid:'m1', tin:'—', tout:'—', cost:'0.34（保守占额）', quality:'estimated', status:'pending', note:'流式中断，预留未结算' },
+];
+/* ================= 全局状态 ================= */
+const state = {
+  role:'super',      // super | tenant | app
+  page:'governance', // governance | usage
+  demo:'normal',     // normal | empty | error
+  usageTab:'all',    // all | pending
+  usageFilter:{ tenant:'', app:'', model:'' },
+};
+const ROLES = {
+  super:{ label:'平台超级管理员', scope:'全域' },
+  tenant:{ label:'租户管理员 · 云启科技', tid:'t1' },
+  app:{ label:'应用管理员 · 简历助手', tid:'t1', aid:'a1' },
+};
+const tName = id => (TENANTS.find(t=>t.id===id)||{}).name || id;
+const aName = id => (APPS.find(a=>a.id===id)||{}).name || id;
+const mName = id => (models.find(m=>m.id===id)||{}).name || id;
+const capLabel = k => (CAPS.find(c=>c[0]===k)||[k,k])[1];
+// 租户管理员视角：本租户已收到且平台侧启用的模型
+const receivedModels = tid => models.filter(m=>m.status==='active' && m.tenantGrants[tid]==='active');
+// 应用管理员视角：三级交集
+const appVisibleModels = aid => {
+  const app = APPS.find(a=>a.id===aid);
+  return models.filter(m=>m.status==='active' && m.tenantGrants[app.tid]==='active' && m.appGrants[aid]==='active');
+};
+/* ================= 工具函数 ================= */
+const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tag = (cls,txt) => `<span class="tag ${cls}">${esc(txt)}</span>`;
+const statusTag = s => s==='active' ? tag('ok','启用') : tag('gray','停用');
+const relTag = s => s==='active' ? tag('ok','已下发') : tag('warn','已回收（软失效）');
+const qTag = q => ({ actual:tag('ok','actual 实际'), estimated:tag('info','estimated 估算'), unknown:tag('gray','unknown 未知') })[q];
+const capsHtml = caps => `<div class="tag-row">${caps.map(c=>`<span class="tag brand" title="${esc(capLabel(c))}">${esc(c)}</span>`).join('')}</div>`;
+function toast(msg, type='ok'){
+  const root = document.getElementById('toastRoot');
+  const el = document.createElement('div');
+  el.className = 'toast '+type; el.textContent = msg;
+  root.appendChild(el);
+  setTimeout(()=>el.remove(), 2600);
+}
+/* ================= 侧栏 ================= */
+const SIDE = [
+  { g:'', items:[['overview','运营总览']] },
+  { g:'工作台', items:[['app-ws','应用工作台'],['org-ws','组织工作台']] },
+  { g:'身份与组织', items:[['users','用户管理'],['invites','成员邀请']] },
+  { g:'高级管理', items:[['roles','平台角色'],['groups','用户组']] },
+  { g:'平台治理', items:[['tenants','租户'],['themes','登录主题'],['governance','模型治理'],['usage','模型用量']] },
+  { g:'审计验证', items:[['audit','审计日志'],['sim','鉴权模拟']] },
+];
+function renderSidebar(){
+  document.getElementById('sideNav').innerHTML =
+    `<div class="side-logo"><span class="mark">IAM</span>统一身份平台</div>` +
+    SIDE.map(grp => `<div class="side-group">${esc(grp.g)}</div>` + grp.items.map(([k,label]) =>
+      `<button class="side-item ${state.page===k?'on':''}" data-act="nav" data-page="${k}">${esc(label)}</button>`).join('')
+    ).join('');
+}
+/* ================= 模型治理页 ================= */
+function renderGovernance(){
+  if (state.demo==='error') return errPanel('模型治理','目录读取失败，请检查网络或稍后重试。','governance');
+  if (state.role==='super') return govSuper();
+  if (state.role==='tenant') return govTenant();
+  return govApp();
+}
+function govSuper(){
+  const head = `<div class="page-head">
+    <div><h1>模型治理 · 平台模型目录</h1>
+      <div class="desc">平台支持的模型全集（归属平台租户）。下发给租户后，租户管理员方可向应用下发；下发关系即授权唯一依据。</div></div>
+    <div class="acts"><button class="btn primary" data-act="open-form" data-link="feature-model-form">＋ 新建模型</button></div>
+  </div>`;
+  if (state.demo==='empty') return head + emptyPanel('📦','平台目录为空','尚未登记任何平台模型。新建模型后，可将其下发给租户。','open-form','＋ 新建模型');
+  const rows = models.map(m=>{
+    const grants = Object.entries(m.tenantGrants).filter(([,s])=>s==='active').length;
+    const soft = Object.values(m.tenantGrants).includes('revoked');
+    return `<tr>
+      <td><div class="cell-main">${esc(m.name)}</div><div class="cell-sub">${esc(m.key)}</div></td>
+      <td>${esc(m.provider)}</td>
+      <td>${capsHtml(m.caps)}</td>
+      <td>${m.price==null?tag('gray','未知'):esc(m.price)}</td>
+      <td><div class="cell-sub">RPM ${m.rpm} · TPM ${m.tpm}</div></td>
+      <td>${statusTag(m.status)}</td>
+      <td><button class="count-link" data-act="tenant-grant" data-id="${m.id}" data-link="feature-tenant-grant" title="查看并调整下发关系">${grants} 个租户${soft?'（含已回收）':''}</button></td>
+      <td><div class="ops">
+        <button class="btn sm" data-act="open-form" data-id="${m.id}" data-link="feature-model-form">编辑</button>
+        <button class="btn sm" data-act="tenant-grant" data-id="${m.id}" data-link="feature-tenant-grant">下发租户</button>
+        ${m.status==='active'
+          ? `<button class="btn sm" data-act="disable" data-id="${m.id}" data-link="feature-lifecycle">停用</button>`
+          : `<button class="btn sm" data-act="enable" data-id="${m.id}" data-link="feature-lifecycle">启用</button>`}
+        <button class="btn sm danger" data-act="delete" data-id="${m.id}" data-link="feature-lifecycle">删除</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  return head + `<div class="card"><div class="card-scroll"><table class="tbl">
+    <tr><th>模型</th><th>供应商</th><th>能力标签</th><th>单价</th><th>限流</th><th>状态</th><th>下发租户</th><th>操作</th></tr>
+    ${rows}</table></div></div>
+  <p class="desc" style="margin-top:10px;color:var(--faint)">单价仅用于平台费用估算；未维护价格记「未知」，当前无币种字段。凭证引用仅存外部引用，不回读、不下发。</p>`;
+}
+function govTenant(){
+  const tid = ROLES.tenant.tid;
+  const head = `<div class="page-head">
+    <div><h1>模型治理 · 本租户收到的模型</h1>
+      <div class="desc">由平台超级管理员下发。仅可在已收到范围内向本租户应用下发或回收（软失效）；平台目录维护不在本视角权限内。</div></div>
+  </div>
+  <div class="banner info"><i class="ic">ℹ</i><span>当前身份：租户管理员（云启科技）· 需要 <code>button.models.distribute</code> 节点（下限租户级）· 下发 / 回收均记审计。</span></div>`;
+  if (state.demo==='empty') return head + emptyPanel('📭','租户未收到模型','平台尚未向本租户下发任何模型，请联系平台超级管理员。',null,null);
+  const list = receivedModels(tid);
+  const rows = list.map(m=>{
+    const apps = Object.entries(m.appGrants).filter(([aid,s])=>s==='active' && APPS.find(a=>a.id===aid)?.tid===tid);
+    return `<tr>
+      <td><div class="cell-main">${esc(m.name)}</div><div class="cell-sub">${esc(m.key)}</div></td>
+      <td>${esc(m.provider)}</td>
+      <td>${capsHtml(m.caps)}</td>
+      <td>${relTag('active')}</td>
+      <td><button class="count-link" data-act="app-grant" data-id="${m.id}" data-link="feature-app-grant">${apps.length} 个应用</button></td>
+      <td><div class="ops"><button class="btn sm" data-act="app-grant" data-id="${m.id}" data-link="feature-app-grant">下发应用</button></div></td>
+    </tr>`;
+  }).join('');
+  return head + `<div class="card"><div class="card-scroll"><table class="tbl">
+    <tr><th>模型</th><th>供应商</th><th>能力标签</th><th>平台下发状态</th><th>已下发应用</th><th>操作</th></tr>
+    ${rows}</table></div></div>
+  <p class="desc" style="margin-top:10px;color:var(--faint)">回收为软失效：保留下发关系供恢复与审计，应用侧立即不可见。</p>`;
+}
+function govApp(){
+  const aid = ROLES.app.aid;
+  const head = `<div class="page-head">
+    <div><h1>模型治理 · 本应用可见模型</h1>
+      <div class="desc">应用管理员对本应用模型清单只读；可见 = 平台目录 ∩ 租户下发 ∩ 应用下发。</div></div>
+  </div>
+  <div class="banner info"><i class="ic">🔒</i><span>只读视角：任何下发、回收与目录变更均由上级角色完成；回收或平台停用后，清单立即不可见。</span></div>`;
+  if (state.demo==='empty') return head + emptyPanel('🤖','应用未下发模型','租户管理员尚未向本应用下发任何模型。',null,null);
+  const list = appVisibleModels(aid);
+  const rows = list.map(m=>`<tr>
+      <td><div class="cell-main">${esc(m.name)}</div><div class="cell-sub">${esc(m.key)}</div></td>
+      <td>${esc(m.provider)}</td>
+      <td>${capsHtml(m.caps)}</td>
+      <td>${tag('ok','可用')}</td>
+    </tr>`).join('');
+  return head + `<div class="card"><div class="card-scroll"><table class="tbl">
+    <tr><th>模型</th><th>供应商</th><th>能力标签</th><th>状态</th></tr>
+    ${rows}</table></div></div>
+  <p class="desc" style="margin-top:10px;color:var(--faint)">业务应用经 GET /api/v1/authorization/my-models 消费同一份清单（契约见《应用对接》§9）。</p>`;
+}
+/* ================= 模型用量页 ================= */
+function renderUsage(){
+  const head = `<div class="page-head">
+    <div><h1>模型用量</h1>
+      <div class="desc">受信网关上报的用量账本，按租户 + 应用归属；不存 Prompt 与模型响应正文。</div></div>
+  </div>
+  <div class="banner warn"><i class="ic">⏸</i><span><b>配额拦截：未启用（默认关闭）。</b>平台仅记录与估算用量，不拦截模型调用；预留到期后进入人工核对队列，不自动收费或释放。</span></div>`;
+  if (state.demo==='error') return head + errPanel('模型用量','账本读取失败，为避免误读不会显示为空态。','usage');
+  // 数据边界过滤：超管全域 / 租户级本租户 / 应用级本应用
+  let list = usageEvents.slice();
+  if (state.role==='tenant') list = list.filter(u=>u.tid===ROLES.tenant.tid);
+  if (state.role==='app') list = list.filter(u=>u.aid===ROLES.app.aid);
+  const f = state.usageFilter;
+  if (f.tenant) list = list.filter(u=>u.tid===f.tenant);
+  if (f.app) list = list.filter(u=>u.aid===f.app);
+  if (f.model) list = list.filter(u=>u.mid===f.model);
+  if (state.usageTab==='pending') list = list.filter(u=>u.status==='pending');
+  if (state.demo==='empty' || list.length===0){
+    const msg = state.usageTab==='pending' ? '暂无待核对记录，预留均在正常结算中。' : '暂无上报记录。受信网关上报后，用量将按租户与应用归属入账。';
+    return head + filterBar() + emptyPanel('📒', state.usageTab==='pending'?'无待核对记录':'空账本', msg, null, null);
+  }
+  const rows = list.map(u=>`<tr>
+    <td><div class="cell-sub">${esc(u.time)}</div></td>
+    <td>${esc(tName(u.tid))}</td>
+    <td>${esc(aName(u.aid))}</td>
+    <td>${esc(mName(u.mid))}</td>
+    <td>${esc(u.tin)}</td>
+    <td>${esc(u.tout)}</td>
+    <td>${esc(u.cost)}${u.cost==='未知'?'':''}</td>
+    <td>${qTag(u.quality)}</td>
+    <td>${u.status==='pending' ? `${tag('warn','待核对')} <button class="btn sm" data-act="review" data-id="${u.id}" data-link="feature-reconciliation">人工核对</button>` : tag('ok','已结算')}</td>
+  </tr>`).join('');
+  const tabs = `<div style="display:flex;gap:2px;margin-bottom:12px;border-bottom:1px solid var(--line)">
+    <button class="btn link" style="border-bottom:2px solid ${state.usageTab==='all'?'var(--brand)':'transparent'};border-radius:0;font-weight:${state.usageTab==='all'?600:400}" data-act="usage-tab" data-tab="all">全部记录</button>
+    <button class="btn link" style="border-bottom:2px solid ${state.usageTab==='pending'?'var(--brand)':'transparent'};border-radius:0;font-weight:${state.usageTab==='pending'?600:400}" data-act="usage-tab" data-tab="pending">待核对</button>
+  </div>`;
+  return head + tabs + filterBar() + `<div class="card"><div class="card-scroll"><table class="tbl">
+    <tr><th>时间</th><th>租户</th><th>应用</th><th>模型</th><th>输入 tokens</th><th>输出 tokens</th><th>费用估算</th><th>计量质量</th><th>状态</th></tr>
+    ${rows}</table></div></div>
+  <p class="desc" style="margin-top:10px;color:var(--faint)">费用按目录单价估算，未维护价格记「未知」；当前无币种字段、无失败原因字段。</p>`;
+}
+function filterBar(){
+  const f = state.usageFilter;
+  const opt = (val,label,cur)=>`<option value="${val}" ${cur===val?'selected':''}>${esc(label)}</option>`;
+  return `<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <select class="btn" data-filter="tenant" style="min-width:130px" aria-label="按租户筛选">
+      ${opt('','全部租户',f.tenant)}${TENANTS.map(t=>opt(t.id,t.name,f.tenant)).join('')}
+    </select>
+    <select class="btn" data-filter="app" style="min-width:130px" aria-label="按应用筛选">
+      ${opt('','全部应用',f.app)}${APPS.map(a=>opt(a.id,a.name,f.app)).join('')}
+    </select>
+    <select class="btn" data-filter="model" style="min-width:150px" aria-label="按模型筛选">
+      ${opt('','全部模型',f.model)}${models.map(m=>opt(m.id,m.name,f.model)).join('')}
+    </select>
+  </div>`;
+}
+/* ================= 空态 / 错误态面板 ================= */
+function emptyPanel(emo,title,desc,act,id){
+  return `<div class="state-panel"><div class="emo">${emo}</div><h3>${esc(title)}</h3><p>${esc(desc)}</p>
+    ${act?`<button class="btn primary" data-act="${act}" ${id?`data-id="${id}"`:''}>${esc(act==='open-form'?'＋ 新建模型':act)}</button>`:''}</div>`;
+}
+function errPanel(page,msg){
+  return `<div class="state-panel"><div class="emo">⚠️</div><h3>读取失败</h3><p>${esc(msg)}</p>
+    <button class="btn primary" data-act="retry">重试</button></div>`;
+}
+/* ================= 弹窗 ================= */
+let modalState = null; // {type, modelId, form:{}}
+function closeModal(){ modalState=null; document.getElementById('modalRoot').innerHTML=''; }
+function openModal(html){ document.getElementById('modalRoot').innerHTML = `<div class="modal-mask" data-act="mask">${html}</div>`; }
+function modalShell(title, body, foot, wide){
+  return `<div class="modal ${wide?'wide':''}" role="dialog" aria-modal="true" aria-label="${esc(title)}" onclick="event.stopPropagation()">
+    <div class="modal-head"><h3>${esc(title)}</h3><button class="modal-x" data-act="close-modal" aria-label="关闭">✕</button></div>
+    <div class="modal-body">${body}</div><div class="modal-foot">${foot}</div></div>`;
+}
+// F2：新建 / 编辑模型
+function openModelForm(id){
+  const m = id ? models.find(x=>x.id===id) : null;
+  modalState = { type:'modelForm', modelId:id, form:{ caps: m?m.caps.slice():[] } };
+  const body = `
+    <div class="fld-row">
+      <div class="fld"><label>模型标识（key）<span class="req">*</span></label>
+        <input type="text" id="f-key" value="${esc(m?.key||'')}" placeholder="如 gpt-4o" class="">
+        <div class="hint">全局唯一，重复将返回冲突提示</div></div>
+      <div class="fld"><label>供应商<span class="req">*</span></label>
+        <select id="f-provider">${['OpenAI','DeepSeek','阿里云','自建'].map(p=>`<option ${m?.provider===p?'selected':''}>${p}</option>`).join('')}</select></div>
+    </div>
+    <div class="fld"><label>显示名<span class="req">*</span></label>
+      <input type="text" id="f-name" value="${esc(m?.name||'')}" placeholder="如 GPT-4o"></div>
+    <div class="fld"><label>能力标签（标准集，后端白名单强制校验）</label>
+      <div class="caps-grid">${CAPS.map(([k,label])=>`
+        <label class="cap-item"><input type="checkbox" data-cap="${k}" ${m?.caps?.includes(k)?'checked':''}> ${label} <span class="cell-sub">${k}</span></label>`).join('')}</div></div>
+    <div class="fld-row">
+      <div class="fld"><label>单价（费用估算用，可留空）</label><input type="text" id="f-price" value="${esc(m?.price??'')}" placeholder="留空记为「未知」"></div>
+      <div class="fld"><label>RPM</label><input type="number" id="f-rpm" value="${esc(m?.rpm??'')}" placeholder="如 500"></div>
+      <div class="fld"><label>TPM</label><input type="text" id="f-tpm" value="${esc(m?.tpm??'')}" placeholder="如 200K"></div>
+    </div>
+    <div class="fld"><label>凭证引用（外部引用）</label>
+      <input type="text" id="f-cred" value="" placeholder="${m?'已保存（不回显）':'如 vault://provider/prod'}" ${m?'autocomplete="off"':''}>
+      <div class="hint">${m?'编辑时不回显原文；重新填写将覆盖旧引用。':'仅保存外部引用，不回读、不下发；明文永不进入界面与响应。'}</div></div>`;
+  const foot = `<button class="btn" data-act="close-modal">取消</button>
+    <button class="btn primary" data-act="save-model">${m?'保存修改':'创建模型'}</button>`;
+  openModal(modalShell(m?'编辑模型':'新建模型', body, foot, true));
+}
+// F3：下发租户（超管）
+function openTenantGrant(id){
+  const m = models.find(x=>x.id===id); if(!m) return;
+  modalState = { type:'tenantGrant', modelId:id };
+  const willRevoke = TENANTS.some(t=>m.tenantGrants[t.id]==='active' && !modalChecked(id,t.id));
+  const body = `
+    <p style="margin-bottom:10px;color:var(--sub)">为 <b>${esc(m.name)}</b> 选择可见的租户。租户可见 = 平台目录 ∩ 租户下发；下发关系即授权唯一依据。</p>
+    <div class="pick-list">${TENANTS.map(t=>{
+      const st = m.tenantGrants[t.id]||'none';
+      return `<div class="pick-row">
+        <input type="checkbox" data-grant-tenant="${t.id}" ${st==='active'?'checked':''} id="tg-${t.id}">
+        <div class="grow"><div>${esc(t.name)}</div><div class="sub">${esc(t.id)}</div></div>
+        ${st==='active'?relTag('active'):st==='revoked'?relTag('revoked'):tag('gray','未下发')}
+      </div>`;}).join('')}</div>
+    <div class="revoke-note">♻ 回收为<b>软失效</b>：保留下发关系供恢复与审计，租户侧立即不可见；再次勾选并保存即恢复。保存后本行「下发租户」计数即时刷新。</div>`;
+  const foot = `<button class="btn" data-act="close-modal">取消</button>
+    <button class="btn primary" data-act="save-tenant-grant" id="tgSaveBtn">${willRevoke?'确认回收并记审计':'保存并记审计'}</button>`;
+  openModal(modalShell('下发租户 · '+m.name, body, foot));
+}
+function modalChecked(modelId, tenantId){
+  const el = document.querySelector(`input[data-grant-tenant="${tenantId}"]`);
+  return el ? el.checked : (models.find(m=>m.id===modelId)?.tenantGrants[tenantId]==='active');
+}
+// F4：下发应用（租户管理员）
+function openAppGrant(id){
+  const m = models.find(x=>x.id===id); if(!m) return;
+  modalState = { type:'appGrant', modelId:id };
+  const myApps = APPS.filter(a=>a.tid===ROLES.tenant.tid);
+  const body = `
+    <p style="margin-bottom:10px;color:var(--sub)">将本租户已收到的 <b>${esc(m.name)}</b> 下发给本租户应用。应用可见 = 平台目录 ∩ 租户下发 ∩ 应用下发。</p>
+    <div class="pick-list">${myApps.map(a=>{
+      const st = m.appGrants[a.id]||'none';
+      return `<div class="pick-row">
+        <input type="checkbox" data-grant-app="${a.id}" ${st==='active'?'checked':''}>
+        <div class="grow"><div>${esc(a.name)}</div><div class="sub">${esc(a.id)}</div></div>
+        ${st==='active'?relTag('active'):st==='revoked'?relTag('revoked'):tag('gray','未下发')}
+      </div>`;}).join('')}</div>
+    <div class="revoke-note">♻ 回收为<b>软失效</b>：保留下发关系供恢复与审计，应用侧与 my-models 清单<b>立即不可见</b>。</div>`;
+  const foot = `<button class="btn" data-act="close-modal">取消</button>
+    <button class="btn primary" data-act="save-app-grant">保存并记审计</button>`;
+  openModal(modalShell('下发应用 · '+m.name, body, foot));
+}
+// F6：停用 / 删除
+function openDisableConfirm(id){
+  const m = models.find(x=>x.id===id); if(!m) return;
+  modalState = { type:'disableConfirm', modelId:id };
+  const body = `<p>停用后，<b>${esc(m.name)}</b> 将<b>全链路立即不可见</b>（含已下发租户与应用、my-models 清单），历史用量保留。</p>
+    <p style="margin-top:8px">确定停用该模型吗？</p>`;
+  openModal(modalShell('停用模型', body,
+    `<button class="btn" data-act="close-modal">取消</button><button class="btn primary" style="background:var(--err);border-color:var(--err)" data-act="confirm-disable">确认停用</button>`));
+}
+function openDelete(id){
+  const m = models.find(x=>x.id===id); if(!m) return;
+  if (m.hasUsage){
+    // 删除阻塞：存在用量账目，提示走停用
+    modalState = { type:'deleteBlocked', modelId:id };
+    const body = `<div class="banner warn" style="margin-bottom:12px"><i class="ic">⛔</i><span><b>无法删除。</b>该模型存在用量账目记录，删除将破坏账目与审计完整性。</span></div>
+      <p>请改用「<b>停用</b>」：停用后全链路立即不可见，历史用量与审计保留。</p>`;
+    openModal(modalShell('删除受阻 · '+m.name, body, `<button class="btn" data-act="close-modal">知道了</button><button class="btn primary" data-act="goto-disable">改为停用</button>`));
+  } else {
+    modalState = { type:'deleteConfirm', modelId:id };
+    const body = `<p>将从平台目录删除 <b>${esc(m.name)}</b>，其下发关系将级联清理。此操作记审计且不可恢复。</p>
+      <p style="margin-top:8px">确定删除吗？</p>`;
+    openModal(modalShell('删除模型', body,
+      `<button class="btn" data-act="close-modal">取消</button><button class="btn primary" style="background:var(--err);border-color:var(--err)" data-act="confirm-delete">确认删除</button>`));
+  }
+}
+// F8：人工核对队列说明
+function openReviewQueue(id){
+  const u = usageEvents.find(x=>x.id===id);
+  modalState = { type:'reviewQueue', modelId:id };
+  const body = `
+    <div class="banner warn" style="margin-bottom:12px"><i class="ic">🕓</i><span>该预留已进入<b>人工核对队列</b>；核对完成前继续保守占额，不自动收费、不自动释放。</span></div>
+    <div class="tbl-wrap"><table>
+      <tr><th>项</th><th>值</th></tr>
+      <tr><td>事件</td><td>${esc(u?u.time:'')} · ${esc(u?tName(u.tid):'')} / ${esc(u?aName(u.aid):'')}</td></tr>
+      <tr><td>模型</td><td>${esc(u?mName(u.mid):'')}</td></tr>
+      <tr><td>原因（队列标记）</td><td>${esc(u?.note||'预留未决')}</td></tr>
+      <tr><td>当前占额</td><td>${esc(u?.cost||'—')}</td></tr>
+    </table></div>
+    <p style="margin-top:10px;color:var(--sub);font-size:12.5px">完整的对账证据链、更正与前后值留痕属《产品需求》§6.4.1（M06）后续专项，本期内仅提供队列与占额可见性。</p>`;
+  openModal(modalShell('人工核对 · 待核对预留', body, `<button class="btn" data-act="close-modal">关闭</button>`));
+}
+/* ================= 主渲染 ================= */
+function render(){
+  renderSidebar();
+  const c = document.getElementById('pageContent');
+  c.innerHTML = state.page==='governance' ? renderGovernance() : renderUsage();
+  document.getElementById('addrBar').textContent =
+    'https://iam.example.com/admin/' + (state.page==='governance'?'models':'model-usage');
+  // 同步演示控制条选中态
+  document.querySelectorAll('[data-role-chip]').forEach(b=>b.classList.toggle('on', b.dataset.role===state.role));
+  document.querySelectorAll('[data-demo-chip]').forEach(b=>b.classList.toggle('on', b.dataset.demo===state.demo));
+  // 关闭超出当前上下文的弹窗（如角色切换）
+  if (modalState){
+    const t = modalState.type;
+    const okByRole = (t==='modelForm'||t==='tenantGrant'||t==='deleteBlocked'||t==='deleteConfirm'||t==='disableConfirm') ? state.role==='super'
+      : (t==='appGrant') ? state.role==='tenant' : true;
+    if(!okByRole) closeModal();
+  }
+}
+/* ================= 事件委托 ================= */
+document.addEventListener('click', e=>{
+  const el = e.target.closest('[data-act]');
+  // 侧栏未包含页面 → 明确不可用提示
+  if (!el && e.target.closest('.side-item')) return;
+  if (el){
+    const act = el.dataset.act, id = el.dataset.id;
+    switch(act){
+      case 'nav': {
+        const p = el.dataset.page;
+        if (p==='governance'||p==='usage'){ state.page=p; render(); }
+        else toast('本原型仅覆盖「模型治理 / 模型用量」（§6.4），该页面未包含','warn');
+        break; }
+      case 'role': state.role = el.dataset.role; state.demo='normal'; render(); break;
+      case 'demo': state.demo = el.dataset.demo; render(); break;
+      case 'retry': state.demo='normal'; render(); toast('已重新读取'); break;
+      case 'open-form': openModelForm(id||null); break;
+      case 'tenant-grant': openTenantGrant(id); break;
+      case 'app-grant': openAppGrant(id); break;
+      case 'disable': openDisableConfirm(id); break;
+      case 'enable': { const m=models.find(x=>x.id===id); m.status='active'; render(); toast('已启用，全链路按既有下发关系恢复可见，已记录审计'); break; }
+      case 'delete': openDelete(id); break;
+      case 'review': openReviewQueue(id); break;
+      case 'goto-disable': { const mid=modalState?.modelId; closeModal(); if(mid) openDisableConfirm(mid); break; }
+      case 'close-modal': closeModal(); break;
+      case 'mask': if (e.target===el) closeModal(); break;
+      case 'usage-tab': state.usageTab = el.dataset.tab; render(); break;
+      case 'save-model': saveModelForm(); break;
+      case 'save-tenant-grant': saveTenantGrant(); break;
+      case 'save-app-grant': saveAppGrant(); break;
+      case 'confirm-disable': { const m=models.find(x=>x.id===modalState.modelId); m.status='disabled'; closeModal(); render(); toast('已停用：全链路立即不可见，已记录审计'); break; }
+      case 'confirm-delete': { const mid=modalState.modelId; models = models.filter(x=>x.id!==mid); closeModal(); render(); toast('模型已删除，下发关系级联清理，已记录审计'); break; }
+    }
+    // 原型 → 文档联动：点击带 data-link 的原型控件，右侧跳到对应需求章节
+    const linker = e.target.closest('[data-link]');
+    if (linker && !['close-modal','mask','usage-tab'].includes(act)) activateFeature(linker.dataset.link);
+  }
+});
+// 下发弹窗内勾选变化 → 更新确认按钮文案（回收确认）
+document.addEventListener('change', e=>{
+  if (e.target.matches('[data-grant-tenant]') && modalState?.type==='tenantGrant'){
+    const m = models.find(x=>x.id===modalState.modelId);
+    const willRevoke = TENANTS.some(t=>m.tenantGrants[t.id]==='active' && !e.target.closest('.pick-list').querySelector(`input[data-grant-tenant="${t.id}"]`).checked);
+    const btn = document.getElementById('tgSaveBtn');
+    if (btn) btn.textContent = willRevoke ? '确认回收并记审计' : '保存并记审计';
+  }
+  if (e.target.matches('[data-filter]')){
+    state.usageFilter[e.target.dataset.filter] = e.target.value; render();
+  }
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+/* ================= 表单与保存逻辑 ================= */
+function saveModelForm(){
+  const key = document.getElementById('f-key').value.trim();
+  const name = document.getElementById('f-name').value.trim();
+  const provider = document.getElementById('f-provider').value;
+  // 校验：key / 显示名必填，key 全局唯一
+  let valid = true;
+  const mark=(id,bad)=>{ const i=document.getElementById(id); i.classList.toggle('invalid',bad); if(bad) valid=false; };
+  mark('f-key', !key); mark('f-name', !name);
+  const dup = models.some(m=>m.key===key && m.id!==modalState.modelId);
+  if (dup){ mark('f-key', true); toast('模型标识已存在（409 冲突），请更换 key','warn'); return; }
+  if (!valid){ toast('请完整填写必填项','warn'); return; }
+  const caps = [...document.querySelectorAll('input[data-cap]:checked')].map(i=>i.dataset.cap);
+  const cred = document.getElementById('f-cred').value.trim();
+  if (modalState.modelId){
+    const m = models.find(x=>x.id===modalState.modelId);
+    Object.assign(m,{ key, name, provider, caps,
+      price: document.getElementById('f-price').value.trim()||null,
+      rpm: document.getElementById('f-rpm').value||m.rpm,
+      tpm: document.getElementById('f-tpm').value.trim()||m.tpm,
+      cred: cred||m.cred });
+    closeModal(); render(); toast('模型已更新，操作已记录审计');
+  } else {
+    models.unshift({ id:'m'+Date.now(), key, name, provider, caps,
+      price: document.getElementById('f-price').value.trim()||null,
+      rpm: document.getElementById('f-rpm').value||'—',
+      tpm: document.getElementById('f-tpm').value.trim()||'—',
+      cred: cred||'（未设置）', status:'active', tenantGrants:{}, appGrants:{}, hasUsage:false });
+    closeModal(); render(); toast('模型已创建，操作已记录审计；可开始下发租户');
+  }
+}
+function saveTenantGrant(){
+  const m = models.find(x=>x.id===modalState.modelId);
+  let revoked=0, granted=0;
+  TENANTS.forEach(t=>{
+    const checked = document.querySelector(`input[data-grant-tenant="${t.id}"]`).checked;
+    const cur = m.tenantGrants[t.id];
+    if (checked && cur!=='active'){ m.tenantGrants[t.id]='active'; granted++; }
+    if (!checked && cur==='active'){ m.tenantGrants[t.id]='revoked'; revoked++; } // 软失效：保留关系
+  });
+  closeModal(); render();
+  toast(revoked?`已保存：新增下发 ${granted}，回收（软失效）${revoked}，已记录审计`:`下发关系已更新，已记录审计`);
+}
+function saveAppGrant(){
+  const m = models.find(x=>x.id===modalState.modelId);
+  let revoked=0, granted=0;
+  APPS.filter(a=>a.tid===ROLES.tenant.tid).forEach(a=>{
+    const checked = document.querySelector(`input[data-grant-app="${a.id}"]`).checked;
+    const cur = m.appGrants[a.id];
+    if (checked && cur!=='active'){ m.appGrants[a.id]='active'; granted++; }
+    if (!checked && cur==='active'){ m.appGrants[a.id]='revoked'; revoked++; }
+  });
+  closeModal(); render();
+  toast(revoked?`已保存：新增下发 ${granted}，回收（软失效）${revoked}，应用侧立即不可见，已记录审计`:`下发关系已更新，已记录审计`);
+}
+/* ================= 文档联动 ================= */
+function switchTab(name){
+  ['overview','detail','rules'].forEach(t=>{
+    document.getElementById('tab-'+t).hidden = t!==name;
+    document.getElementById('tabbtn-'+t).classList.toggle('on', t===name);
+  });
+}
+function activateFeature(fid){
+  if (document.body.classList.contains('mode-text')){
+    const sec = document.getElementById(fid);
+    if (sec){ sec.scrollIntoView({behavior:'smooth'}); sec.classList.add('flash'); setTimeout(()=>sec.classList.remove('flash'),1600); }
+    return;
+  }
+  switchTab('detail');
+  const sec = document.getElementById(fid);
+  if (sec){
+    sec.scrollIntoView({behavior:'smooth', block:'start'});
+    sec.classList.add('flash'); setTimeout(()=>sec.classList.remove('flash'),1600);
+  }
+}
+// 文档 → 原型：需求章节内「原型入口」驱动左侧画面
+document.addEventListener('click', e=>{
+  const g = e.target.closest('[data-goto]');
+  if (!g) return;
+  const cfg = JSON.parse(g.dataset.goto);
+  if (cfg.role) state.role = cfg.role;
+  if (cfg.demo!==undefined) state.demo = cfg.demo; else state.demo='normal';
+  if (cfg.usageTab) state.usageTab = cfg.usageTab;
+  state.page = cfg.page || state.page;
+  render();
+  if (cfg.modal){
+    const fn = { modelForm:()=>openModelForm(cfg.modalId||null), tenantGrant:()=>openTenantGrant(cfg.modalId),
+      appGrant:()=>openAppGrant(cfg.modalId), deleteBlocked:()=>openDelete(cfg.modalId),
+      deleteConfirm:()=>openDelete(cfg.modalId), disableConfirm:()=>openDisableConfirm(cfg.modalId),
+      reviewQueue:()=>openReviewQueue(cfg.modalId) }[cfg.modal];
+    if (fn) setTimeout(fn, 60);
+  }
+  document.getElementById('browserFrame').scrollIntoView({behavior:'smooth', block:'nearest'});
+});
+/* ================= 模式切换（分屏 / 文本全文） ================= */
+function setMode(mode){
+  const text = mode==='text';
+  document.body.classList.toggle('mode-text', text);
+  document.getElementById('modeSplit').classList.toggle('on', !text);
+  document.getElementById('modeText').classList.toggle('on', text);
+  if (text){
+    // 组装全文：概述 + 原型快照 + 功能需求 + 规则（各章仅出现一次）
+    document.getElementById('textOverview').innerHTML = document.getElementById('tab-overview').innerHTML;
+    document.getElementById('textDetail').innerHTML = '<h2>功能需求</h2>' + document.getElementById('tab-detail').innerHTML.replace(/^<h2>[\s\S]*?<\/h2>/,'');
+    document.getElementById('textRules').innerHTML = '<h2>共享规则</h2>' + document.getElementById('tab-rules').innerHTML.replace(/^<h2>[\s\S]*?<\/h2>/,'');
+    const cap = state.page==='governance'
+      ? `模型治理 · ${ROLES[state.role].label}${state.demo!=='normal'?` · ${ {empty:'空态',error:'读取失败'}[state.demo] }`:''}`
+      : `模型用量 · ${ROLES[state.role].label}`;
+    document.getElementById('protoEmbedCap').textContent = cap;
+    const embed = document.getElementById('protoEmbed');
+    embed.querySelectorAll('.browser').forEach(n=>n.remove());
+    embed.appendChild(document.getElementById('browserFrame').cloneNode(true));
+    window.scrollTo(0,0);
+  } else {
+    document.getElementById('protoEmbed').querySelectorAll('.browser').forEach(n=>n.remove());
+  }
+}
+/* ================= 初始渲染 ================= */
+render();
+</script>
+</body>
+</html>

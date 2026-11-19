@@ -82,5 +82,3 @@ export function useReadinessPoll() {
     READINESS_POLL_DEGRADED_MS,
   }
 }
-
-export type ReadinessPoll = ReturnType<typeof useReadinessPoll>

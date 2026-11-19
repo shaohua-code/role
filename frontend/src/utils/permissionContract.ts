@@ -51,13 +51,3 @@ export async function ensurePermissionContract(force = false): Promise<Permissio
   })
   return inflight
 }
-
-/** 同步读取已缓存的契约；未加载时返回 null（调用方需先 await ensurePermissionContract）。 */
-export function getCachedPermissionContract(): PermissionContractSnapshot | null {
-  return snapshot
-}
-
-/** 同步读取已缓存的 tree meta；未加载时返回 null。 */
-export function getCachedPermissionMeta(): PermissionTreeMeta | null {
-  return snapshot?.meta ?? null
-}

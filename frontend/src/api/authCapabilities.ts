@@ -1,6 +1,6 @@
 /** 公开认证页能力：邮件找回与管理台绑定的 ToC 注册 client（不含密钥）。 */
 
-export type PublicRegistrationCapabilities = {
+type PublicRegistrationCapabilities = {
   available: boolean
   resend_cooldown_seconds: number
   terms_url: string
@@ -9,7 +9,7 @@ export type PublicRegistrationCapabilities = {
   privacy_version: string
 }
 
-export type ConsoleRegistrationContext = {
+type ConsoleRegistrationContext = {
   client_id: string
   application_name: string
   registration: PublicRegistrationCapabilities

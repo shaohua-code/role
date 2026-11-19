@@ -4,7 +4,7 @@
 // 本文件只保留纯函数——树组装与映射查询均以传入的 meta 为准，零硬编码。
 export type PermissionKind = 'menu' | 'button' | 'data' | 'api'
 
-export interface PermissionLeaf {
+interface PermissionLeaf {
   id: string
   code: string
   description?: string | null
@@ -35,7 +35,7 @@ export interface PermissionTreeNode {
  * 菜单契约：单个菜单映射的按钮码与授权下限（与后端 MENU_CATALOG / MENU_BUTTONS 同源）。
  * 管理面接口码已从契约删除：apis 仅作旧快照兼容保留（新响应不再下发）。
  */
-export interface PermissionMenuMeta {
+interface PermissionMenuMeta {
   code: string
   name: string
   /** 节点授权下限（super/tenant/app）：低于该范围的角色不可被授予本节点。 */
@@ -47,7 +47,7 @@ export interface PermissionMenuMeta {
 }
 
 /** 层级可见码集：三管理员模板各级持有的管理面节点码全集（节点=菜单/按钮）。 */
-export interface PermissionLevelScopes {
+interface PermissionLevelScopes {
   platform_admin: string[]
   tenant_admin: string[]
   app_admin: string[]
@@ -111,7 +111,7 @@ export interface PermissionTreeApiNode {
 }
 
 /** 单个 API 节点归一化为前端树节点（递归处理子级）。 */
-export function normalizeTreeApiNode(node: PermissionTreeApiNode): PermissionTreeNode {
+function normalizeTreeApiNode(node: PermissionTreeApiNode): PermissionTreeNode {
   const children = (node.children || []).map(normalizeTreeApiNode)
   return {
     key: node.key,
@@ -149,27 +149,12 @@ export const KIND_LABELS: Record<PermissionKind, string> = {
   api: '接口',
 }
 
-export const CREATE_KIND_OPTIONS: Array<{ value: PermissionKind; label: string }> = [
-  { value: 'menu', label: '子菜单' },
-  { value: 'button', label: '按钮' },
-  { value: 'api', label: '接口' },
-  { value: 'data', label: '数据' },
-]
-
-export const DOMAIN_CHIPS: Array<{ key: string; label: string }> = [
-  { key: 'platform', label: '平台' },
-  { key: 'rbac', label: '角色与授权' },
-  { key: 'org', label: '组织与成员' },
-  { key: 'app', label: '应用' },
-  { key: 'ops', label: '资源与运营' },
-]
-
 /**
  * 码 → 相关接口清单（纯函数，映射完全来自传入的 meta.menus）：
  * 新契约管理面已无接口码（menus 不再下发 apis），菜单/按钮码返回空清单；
  * 数据范围叶子码仍回溯父码，接口码仍反查所属菜单（业务面兼容保留）。
  */
-export function relatedApiCodes(code: string, menus: PermissionMenuMeta[] = []): string[] {
+function relatedApiCodes(code: string, menus: PermissionMenuMeta[] = []): string[] {
   const menu = menus.find(item => item.code === code)
   if (menu) return menu.apis || []
   const buttonOwner = menus.find(item => item.buttons.includes(code))
@@ -187,7 +172,7 @@ export function kindIconType(kind: PermissionKind): 'menu' | 'button' | 'data_ru
   return 'menu'
 }
 
-export function inferPermissionKind(code: string): PermissionKind {
+function inferPermissionKind(code: string): PermissionKind {
   if (code.startsWith('menu.')) return 'menu'
   if (code.startsWith('button.')) return 'button'
   const split = splitDataScopeCode(code)
@@ -195,7 +180,7 @@ export function inferPermissionKind(code: string): PermissionKind {
   return 'api'
 }
 
-export function splitDataScopeCode(code: string): { parent: string; scopeType: string } | null {
+function splitDataScopeCode(code: string): { parent: string; scopeType: string } | null {
   const marker = '.scope.'
   const at = code.lastIndexOf(marker)
   if (at < 0) return null
@@ -256,12 +241,6 @@ function group(key: string, title: string, kind: PermissionKind, children: Permi
     parentCode: null,
     parentTitle: null,
   }
-}
-
-export function createPrefixForNode(node: PermissionTreeNode): string {
-  if (node.code) return `${node.code}.`
-  if (node.prefix) return node.prefix
-  return ''
 }
 
 function longestMenuParent(code: string, menuCodes: Set<string>): string | null {
@@ -373,10 +352,6 @@ export function buildPermissionTrees(items: PermissionLeaf[], meta: PermissionTr
   return { resource, data: buildDataTree(dataItems, byCode) }
 }
 
-export function buildPermissionTree(items: PermissionLeaf[], meta: PermissionTreeMeta): PermissionTreeNode[] {
-  return buildPermissionTrees(items, meta).resource
-}
-
 export function flattenGrantable(nodes: PermissionTreeNode[]): PermissionTreeNode[] {
   const grantable: PermissionTreeNode[] = []
   const walk = (list: PermissionTreeNode[]) => {
@@ -387,10 +362,6 @@ export function flattenGrantable(nodes: PermissionTreeNode[]): PermissionTreeNod
   }
   walk(nodes)
   return grantable
-}
-
-export function flattenLeaves(nodes: PermissionTreeNode[]): PermissionTreeNode[] {
-  return flattenGrantable(nodes)
 }
 
 function nodeMatchesDomain(node: PermissionTreeNode, domains: string[], menus: PermissionMenuMeta[]): boolean {

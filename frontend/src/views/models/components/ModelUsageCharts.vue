@@ -21,11 +21,11 @@ export interface UsageModelAggregate {
 /** 模型用量图表区：02 用量趋势（每日 Token 堆叠柱）+ 03 模型分布（Top N 横向柱）。
  *  复用概览图表基建：CSS token 取色、data-theme 观察重绘、动效压到 200ms。 */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import * as echarts from 'echarts/core'
-import { graphic } from 'echarts/core'
-import { BarChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+import * as echarts from 'echarts/lib/export/core'
+import { graphic } from 'echarts/lib/export/core'
+import { BarChart } from 'echarts/lib/export/charts'
+import { GridComponent, TooltipComponent } from 'echarts/lib/export/components'
+import { CanvasRenderer } from 'echarts/lib/export/renderers'
 import AdminEmpty from '@/components/AdminEmpty.vue'
 
 echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])

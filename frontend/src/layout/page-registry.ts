@@ -13,6 +13,7 @@ import {
   InvitationManagement,
   LoginThemeManagement,
   ModelGovernancePage,
+  ModelTestPage,
   OrganizationWorkspace,
   OverviewPage,
   RoleManagement,
@@ -36,11 +37,8 @@ export const PAGE_COMPONENTS: Partial<Record<PageKey, Component>> = {
   tenant_access: TenantAccessManagement,
   themes: LoginThemeManagement,
   models: ModelGovernancePage,
+  model_test: ModelTestPage,
   model_usage: ModelGovernancePage,
   audit: AuditLogPage,
   authorization_simulation: AuthorizationSimulator,
-}
-
-export function createVisitedPages(initial?: PageKey): Set<PageKey> {
-  return new Set<PageKey>(initial ? [initial] : [])
 }

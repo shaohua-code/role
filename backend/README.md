@@ -2,6 +2,10 @@
 
 活文档：[产品需求](../docs/产品需求.md) · [应用对接](../docs/应用对接.md) · [部署与运维](../docs/部署与运维.md) · [项目启动](../docs/项目启动.md)。历史见 [CHANGELOG.md](../CHANGELOG.md)。
 
+**后续模型接入需求（未实现）：** 产品需求 §6.4.1 规划模型/部署/凭据版本、统一调用网关、共享原子预留与对账。现有模型目录、三级下发、`/internal/model-usage/*` 与默认关闭的 quota enforcement 不因该文档改变；真实 Provider、多实例和故障链路验收是启用强制额度的前提。
+
+[模型测试台设计](../docs/模型测试台设计.md)中的管理员受控测试通道已实现连接探针、文本对话流和停止接口，凭据引用仅在服务端解析；面向业务应用的统一模型代理接口仍未实现。
+
 **2026-10-30 三管理员 + 授权范围（重大重构）：** 五级角色收敛为四模板——`platform.admin`(super) / `tenant.admin`(tenant) / `app.admin`(app) / `app.member`(member)，`apps.admin` 并入 `app.admin`（管 N 个应用=绑 N 个应用）。`roles` 新增 `scope` 列（迁移 `0006_role_scope_nodes`，含 apps.admin 合并与管理面接口码清理）。管理面删除 27 个五域接口码与数据码目录，唯一权限目录=「菜单→按钮」树（`permission_kinds.py`，节点带 `min_scope`）；后端接口按节点判权（`ensure_codes`）+ 授权范围闸门（`ensure_scope`/`operator_scope`，只能向下）；列表数据按操作者绑定租户/应用过滤。「权限编码」登记/启停接口仅存业务码路径（管理面节点由种子固定）。创建用户改为 `tenant_ids`(≥1)/`organization_ids`/`application_ids` 多选绑定（绑应用自动补 `app.member`）。「权限编码」页面下线，权限配置收进平台角色（菜单→按钮树 + 授权范围下拉）。应用工作台业务面（业务码/资源树/数据叶子）保持不变。
 
 **2026-10-30 资源权限树：** `GET /admin/permissions/tree` 返回 `{resource, data}`；菜单下挂映射的按钮/接口；`permissions.kind` 写入 ORM；非 L1 路由 `ensure_codes`。验证见根 CHANGELOG。
@@ -345,6 +349,10 @@ AI 简历 Express 是首个接入服务：已显式绑定 IAM 的账户在简历
 - `/api/v1/admin/invitations`：创建、列出、撤销租户成员邀请；创建响应含原始一次性 bearer 链接，设置 `Cache-Control: no-store` 与 `Pragma: no-cache`，数据库只存 token SHA-256 摘要；`/api/v1/auth/invitations/inspect` 和 `/accept` 为公开预览/一次性接受接口。迁移 `0006_user_invitations` 存储邀请生命周期；默认由管理员手动复制交付；可通过 `INVITATION_EMAIL_ENABLED`（Compose 中为 `IAM_INVITATION_EMAIL_ENABLED`）启用现有 SMTP 投递，邮件失败时仍返回一次性备用链接。
 - `/api/v1/admin/models`：平台模型目录（三级分发第一级）。目录行统一归属平台租户（slug=platform），支持新建、启停、编辑提供方/端点/能力/价格/外部凭证引用/RPM/TPM；列表按操作者范围返回（超管=全集+下发租户计数，租户级=收到的模型，应用级=本应用收到的）。写操作需超管范围 + `button.models.manage`。PATCH 不允许修改模型标识，响应及审计摘要均不含凭证引用原文。
 - `/api/v1/admin/models/{id}/tenant-grants`（GET/POST/DELETE）：平台模型 → 租户下发关系（三级分发第二级）。下发幂等（回收后重发复活同一行）；回收为软失效并级联软失效该租户全部应用下发；行不存在时回收返回 404。下发/回收与审计同事务（`model.distribute.tenant` / `model.revoke.tenant`）。
+- `GET /api/v1/admin/models/{id}/test-context`（模型测试台判定，2026-11-18）：目录配置 + 三级下发交集 + 操作者应用访问的权威判定；需超管范围 + `button.models.manage`。应用下发状态在操作者无目标应用访问关系时返回 hidden（防枚举，与 AdminAccessGuard 口径一致）。
+- `/api/v1/admin/models/{id}/test-connection`、`/test-conversations`（POST）+ `/test-conversations/{id}/events`（SSE）+ `/cancel`（模型测试台受控出口，2026-11-18）：固定短探针（凭据解析→网络/TLS→GET /models，不产生计费 token）；对话会话外呼前逐请求重验三级下发交集（403 authz_denied），后台任务经 OpenAI 兼容流式出口外呼，事件单调 sequence、last_sequence 断线重连去重，cancel 中断并按已收用量如实落账。凭据引用仅支持 `secret://env/<变量名>`（`vault://` 未接入返回明确分类错误）；错误统一稳定分类不透传上游正文；会话仅存进程内存（正文不落库不进日志），审计只记操作者/模型/动作/结果/请求 ID。用量账目 `source='model_test'` 需迁移 **0010_model_test_usage_source**（受保护备份 + 授权后 `alembic upgrade head`）。
+
+- `POST /test-conversations` 的 `history` 为可选的完整 user/assistant 轮次，最多 20 条、历史正文合计最多 32000 字；服务端校验交替顺序和非空内容，再按「系统提示词 → 历史轮次 → 当前消息」转发 Provider。当前出口只转发 temperature、top_p、max_tokens 和 system_prompt；不支持的调试字段返回 422，避免静默忽略。
 - `/api/v1/tenant-admin/applications/{id}/models`（GET/POST/DELETE）：应用工作台「模型」Tab（三级分发第三级）。读返回本租户收到的模型清单 + 本应用已下发集合；写需 `button.models.distribute`（min_scope=tenant，应用级只读），下发/回收与审计同事务（`model.distribute.application` / `model.revoke.application`）。
 - `GET /api/v1/authorization/my-models?client_id=`：业务应用按用户 token 拉取本应用可见模型，返回三级交集（平台目录 active ∩ 租户下发 active ∩ 应用下发 active）；下发关系即授权唯一依据，用量上报的 model_id 必须来自本清单。清单范围绑定服务端验签的 OIDC 应用身份（`client_id` 仅作一致性校验，与登录应用不一致 403；管理会话不可调用）。凭证与端点永不回读。
 - 模型状态 PATCH 使用 JSON `expected_status` + `status`；服务端在行锁下校验旧状态，陈旧页面得到 409，只有成功状态转换才在同一事务记录审计。停用平台模型 = 三级清单全链路立即不可见。

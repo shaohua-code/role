@@ -36,7 +36,7 @@ export const router = createRouter({
       meta: { requiresCapability: false },
     },
     ...adminRoutes,
-    // 旧向导地址改到只读对接指南；向导本身仍留在归档目录。
+    // 旧向导地址改到只读对接指南（向导视图已删除，不可恢复）。
     { path: '/project-integration', redirect: PAGE_PATHS.integration_guide },
     // 权限编码页已下线（menu.permissions 已删除）：旧深链重定向到平台角色页。
     { path: '/permissions', redirect: PAGE_PATHS.roles },
@@ -71,6 +71,8 @@ router.beforeEach(to => {
   const held = allCodes(capabilities)
   const hasVisible = NAV_ITEMS.some(item => hasAnyCode(held, item.requiredPermissions))
   if (!hasVisible) return '/no-access'
+  // 模型测试台不占侧栏（入口在模型治理行操作）：可达性与模型治理同码（menu.models）。
+  if (to.name === 'model_test') return hasAnyCode(held, ['menu.models']) ? true : firstVisiblePath()
   const permitted = NAV_ITEMS.some(item => item.key === to.name && hasAnyCode(held, item.requiredPermissions))
   if (permitted) return true
   return firstVisiblePath()

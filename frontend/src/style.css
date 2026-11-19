@@ -570,6 +570,19 @@ html[data-theme='dark'] .ant-menu-dark.mgmt-sider-menu .ant-menu-submenu-arrow {
   flex: 1 0 auto;
   padding-bottom: var(--space-6);
 }
+/* 视口锁定页（模型测试台）：覆盖 flex:1 0 auto 的不收缩语义，让受限高度下传至
+   页面内部的独立滚动区（对话消息区 / 诊断面板），外壳不再产生整页滚动。 */
+.mgmt-shell-content > div.mgmt-shell-child-lock {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+@media (max-width: 1023px) {
+  /* 窄屏降级：恢复页面级滚动，面板以固定高度纵向堆叠。 */
+  .mgmt-shell-content > div.mgmt-shell-child-lock {
+    overflow: visible;
+  }
+}
 /* 直接子卡片（AdminListPage 列表页）与 section 型页面（模型治理/工作台）吃掉剩余高度。 */
 .mgmt-shell-content > div > .data-card,
 .mgmt-shell-content > div > section {

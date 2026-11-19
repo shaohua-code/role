@@ -8,3 +8,5 @@ pwdlib[argon2]>=0.2,<1.0
 PyJWT>=2.10,<3.0
 cryptography>=44,<48
 email-validator>=2.2,<3.0
+# 模型测试台受控出口：Provider 探针与对话外呼（OpenAI 兼容流式）。
+httpx>=0.27,<1.0

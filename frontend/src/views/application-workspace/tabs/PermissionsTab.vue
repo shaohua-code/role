@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// 工作台「权限编码」Tab：直接复用应用域抽出的 ApplicationPermissionPanel（列表/登记/启停），
+// 工作台「权限编码」Tab：复用本模块 components 下的 ApplicationPermissionPanel（列表/登记/启停），
 // 与应用管理抽屉共享同一实现，避免重复造轮子。
-import ApplicationPermissionPanel from '@/views/applications/ApplicationPermissionPanel.vue'
+import ApplicationPermissionPanel from '../components/ApplicationPermissionPanel.vue'
 
 interface ApplicationRef {
   id: string

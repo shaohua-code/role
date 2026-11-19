@@ -6,7 +6,6 @@ import vueParser from 'vue-eslint-parser'
 
 /**
  * 可维护基线：关掉大规模格式类规则，保留真实问题。
- * 归档页不参与 lint。
  */
 export default tseslint.config(
   {
@@ -14,7 +13,6 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       'coverage/**',
-      'src/views/_archive/**',
     ],
   },
   js.configs.recommended,

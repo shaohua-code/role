@@ -93,6 +93,17 @@ class AuditQueryTests(unittest.TestCase):
                 details={},
                 created_at=datetime(2026, 10, 5, 11, 55, tzinfo=timezone.utc),
             ),
+            AuditEvent(
+                id=UUID("20000000-0000-0000-0000-000000000007"),
+                actor_user_id=self.actor_id,
+                tenant_id=self.tenant_id,
+                action="oidc.token.exchange",
+                target_type="application",
+                target_id="app-7",
+                outcome="success",
+                details={},
+                created_at=datetime(2026, 10, 5, 11, 58, tzinfo=timezone.utc),
+            ),
         ])
         self.db.commit()
 
@@ -115,6 +126,7 @@ class AuditQueryTests(unittest.TestCase):
             "end_at": None,
             # 直调 handler 时 FastAPI 的 Query 默认值不是 None，须显式传 action_prefix=None。
             "action_prefix": None,
+            "action_category": None,
             # 绿场规则：平台权限只认角色绑定；单元测试直接假定 actor 持 L1。
             "actor": Mock(),
             "db": self.db,
@@ -157,7 +169,7 @@ class AuditQueryTests(unittest.TestCase):
         self.assertTrue(all(item.action == "role.update" for item in result))
 
     def test_action_prefix_aggregates_category_and_literals_wildcards(self) -> None:
-        # Wave 3 审计拆 Tab：auth. 前缀命中全部登录/认证事件。
+        # Wave 3 审计拆 Tab：auth. 前缀命中全部登录/认证事件（oidc.* 不在该前缀内）。
         auth_result = self.query(action_prefix="auth.")
         self.assertEqual(auth_result.total, 2)
         self.assertEqual({item.action for item in auth_result.items}, {"auth.login", "auth.logout"})
@@ -165,6 +177,28 @@ class AuditQueryTests(unittest.TestCase):
         # 前缀里的通配符按字面匹配，不扩大结果集。
         self.assertEqual(self.query(action_prefix="role.%").total, 0)
         self.assertEqual(self.query(action_prefix="role_").total, 0)
+
+    def test_action_category_splits_auth_and_management_with_same_total(self) -> None:
+        """P2 收口：两 Tab 的类别谓词在列表与 count 同源应用，互不混入。"""
+        # 认证类 = auth.* ∪ oidc.*（与前端 Tab 分组同口径）。
+        auth_result = self.query(action_category="auth")
+        self.assertEqual(auth_result.total, 3)
+        self.assertEqual({item.action for item in auth_result.items},
+                         {"auth.login", "auth.logout", "oidc.token.exchange"})
+        # 管理操作 = 其余事件；分页计数不再包含登录/刷新/认证签发。
+        management_result = self.query(action_category="management")
+        self.assertEqual(management_result.total, 4)
+        self.assertTrue(all(not item.action.startswith(("auth.", "oidc."))
+                            for item in management_result.items))
+        # 两类合计等于全量（无事件遗漏或重复计入）。
+        self.assertEqual(auth_result.total + management_result.total, self.query().total)
+        # 类别可与精确 action 过滤叠加。
+        narrowed = self.query(action_category="management", action="role.update")
+        self.assertEqual(narrowed.total, 3)
+        # 非法类别值显式 422，不静默当全量查询。
+        with self.assertRaises(HTTPException) as invalid:
+            self.query(action_category="everything")
+        self.assertEqual(invalid.exception.status_code, 422)
 
     def test_date_filter_requires_timezone_and_valid_range(self) -> None:
         with self.assertRaises(HTTPException) as missing_timezone:

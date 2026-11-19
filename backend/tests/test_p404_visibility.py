@@ -225,7 +225,7 @@ class P404VisibilityTests(unittest.TestCase):
         payload = search_audit(
             limit=50, offset=0, action=None, target_type=None, target_id=None,
             outcome=None, actor_user_id=None, tenant_id=None, start_at=None,
-            end_at=None, action_prefix=None, actor=self.l2, db=self.db,
+            end_at=None, action_prefix=None, action_category=None, actor=self.l2, db=self.db,
         )
         self.assertEqual(payload.total, 1)
         self.assertEqual(payload.items[0].target_id, str(self.app_a.id))

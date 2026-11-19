@@ -9,7 +9,6 @@ import { api } from '@/api'
 import { hasButton, TENANT_ADMIN_API_PREFIX } from '@/api/capabilities'
 import { formatCapabilities } from '@/utils/modelCapabilities'
 import AdminTable from '@/components/AdminTable.vue'
-import AdminEmpty from '@/components/AdminEmpty.vue'
 
 interface ApplicationRef {
   id: string

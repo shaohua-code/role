@@ -31,6 +31,15 @@
      这里给等效的不透明混合色，浅色随 ColorPicker 覆盖的 --color-brand 联动 */
   --color-row-hover: color-mix(in srgb, var(--color-brand) 6%, var(--color-bg-elevated));
 
+  /* TECH 极简浅色科技（模型测试台 /models/test 专属；spec: redesign-model-test-minimal-tech）。
+     电光蓝单点强调，承载「活性 / 进行中 / 交互焦点」；成功/失败/警告仍走语义色。
+     组件只引用 var()，不新增裸 hex；深色主题在下方 html[data-theme=dark] 覆盖。 */
+  --color-tech-accent: #2563eb;                         /* 电光蓝（与 --color-info 同值） */
+  --color-tech-accent-subtle: rgba(37, 99, 235, 0.08); /* 蓝 8% 底：高亮 chip / 选中态 */
+  /* 极淡点阵背景：配 [background-image:var(--tech-dot-image)] [background-size:20px_20px] 使用 */
+  --tech-dot-image: radial-gradient(circle, rgba(24, 24, 27, 0.05) 1px, transparent 1px);
+
+
   /* Semantic — 唯一的高饱和点缀 */
   --color-success: #059669;
   --color-warning: #d97706;
@@ -91,11 +100,27 @@ html[data-theme="dark"] {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.45), 0 24px 48px rgba(0, 0, 0, 0.55);
+  /* 深色主题下电光蓝提亮保证对比；点阵换白低透明。 */
+  --color-tech-accent: #60a5fa;
+  --color-tech-accent-subtle: rgba(96, 165, 250, 0.12);
+  --tech-dot-image: radial-gradient(circle, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
 }
 
 @media (max-width: 650px) {
   :root {
     --content-padding-x: 16px;
+  }
+}
+
+/* TECH 光标闪烁（spec: redesign-model-test-minimal-tech）：组件内以任意值工具类引用——
+   animate-[tech-blink_1.1s_steps(1)_infinite]。仅用于流式光标，不做呼吸辉光类重动效。
+   prefers-reduced-motion 的全局降级（下方）同样作用于该动画。 */
+@keyframes tech-blink {
+  0%, 45% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0;
   }
 }
 

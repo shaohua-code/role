@@ -177,8 +177,9 @@ async function loadEvents(): Promise<void> {
   errorText.value = ''
   try {
     const query = new URLSearchParams({ limit: String(pageSize.value), offset: String((page.value - 1) * pageSize.value) })
-    // 登录 Tab 固定按 auth. 前缀聚合；操作 Tab 不加前缀即全量管理事件。
-    if (auditTab.value === 'auth') query.set('action_prefix', 'auth.')
+    // 两 Tab 都显式按类别过滤（auth = auth.* ∪ oidc.*，management = 其余）；
+    // 服务端在 count 与列表同源应用该谓词，分页计数不再混入另一类事件。
+    query.set('action_category', auditTab.value === 'auth' ? 'auth' : 'management')
     const exactFilters: Array<[string, string | undefined]> = [
       ['action', filters.value.action],
       ['outcome', filters.value.outcome],

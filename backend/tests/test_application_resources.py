@@ -77,6 +77,13 @@ class ApplicationResourceApiTests(unittest.TestCase):
             application_id=self.application.id,
         )
 
+    @staticmethod
+    def _oidc(user: User, application: Application) -> User:
+        """模拟 current_user 验签后的 OIDC 上下文：应用身份取自 token，不由调用方传入。"""
+        user._auth_protocol = "oidc"
+        user._oidc_application_id = application.id
+        return user
+
     def test_button_requires_menu_parent(self) -> None:
         with self.assertRaises(HTTPException) as ctx:
             self._create("button", "resapp.button.export")
@@ -181,7 +188,8 @@ class ApplicationResourceApiTests(unittest.TestCase):
             RoleResourcesAssign(resource_ids=[leaf["id"], rule["id"]]),
             request=self.request, actor=self.actor, db=self.db,
         )
-        tree = list_my_resources(client_id=self.application.client_id, user=role_user, db=self.db)
+        tree = list_my_resources(client_id=self.application.client_id,
+                                 user=self._oidc(role_user, self.application), db=self.db)
         self.assertEqual(len(tree), 1)
         root_node = tree[0]
         self.assertEqual(root_node["id"], root["id"])
@@ -224,7 +232,8 @@ class ApplicationResourceApiTests(unittest.TestCase):
             self.application.id, role.id, RoleResourcesAssign(resource_ids=[menu["id"]]),
             request=self.request, actor=self.actor, db=self.db,
         )
-        tree = list_my_resources(client_id=self.application.client_id, user=member_user, db=self.db)
+        tree = list_my_resources(client_id=self.application.client_id,
+                                 user=self._oidc(member_user, self.application), db=self.db)
         self.assertEqual([node["id"] for node in tree], [menu["id"]])
 
     def test_my_resources_hides_disabled_and_promotes_orphans(self) -> None:
@@ -243,19 +252,58 @@ class ApplicationResourceApiTests(unittest.TestCase):
             self.application.id, UUID(mid["id"]), ApplicationResourceUpdate(status="disabled"),
             request=self.request, actor=self.actor, db=self.db,
         )
-        tree = list_my_resources(client_id=self.application.client_id, user=role_user, db=self.db)
+        tree = list_my_resources(client_id=self.application.client_id,
+                                 user=self._oidc(role_user, self.application), db=self.db)
         top_ids = {node["id"] for node in tree}
         self.assertIn(root["id"], top_ids)
         self.assertIn(leaf["id"], top_ids)
         self.assertNotIn(mid["id"], top_ids)
 
-    def test_my_resources_unknown_client_404(self) -> None:
+    def test_my_resources_mismatched_client_403(self) -> None:
+        """新契约：清单范围绑定 token 应用；未知/他人的 client_id 与登录应用不一致 → 403
+        （与不存在不可区分，不泄露其他应用是否存在）。"""
         role_user = User(email=f"u-{uuid4().hex}@example.test", password_hash="x", display_name="成员")
         self.db.add(role_user)
         self.db.commit()
         with self.assertRaises(HTTPException) as ctx:
-            list_my_resources(client_id=f"missing-{uuid4().hex[:6]}", user=role_user, db=self.db)
-        self.assertEqual(ctx.exception.status_code, 404)
+            list_my_resources(client_id=f"missing-{uuid4().hex[:6]}",
+                              user=self._oidc(role_user, self.application), db=self.db)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_my_resources_rejects_cross_application_and_management_session(self) -> None:
+        """P1 收口：资源树范围绑定已验证应用身份，不信任客户端传入的 client_id。"""
+        menu = self._create("menu", "resapp.menu.private")
+        role_user = User(email=f"u-{uuid4().hex}@example.test", password_hash="x", display_name="成员")
+        role = self._make_app_role(role_user)
+        assign_role_application_resources(
+            self.application.id, role.id, RoleResourcesAssign(resource_ids=[menu["id"]]),
+            request=self.request, actor=self.actor, db=self.db,
+        )
+        # 同租户另一应用：持本应用 token 查它 → 拒绝，不得返回其任何资源字段。
+        other_app = Application(tenant_id=self.tenant.id, client_id=f"b-{uuid4().hex[:8]}",
+                                name="同租户其他应用", permission_namespace="otherb", redirect_uris=[])
+        self.db.add(other_app)
+        self.db.flush()
+        other_menu = ApplicationResource(application_id=other_app.id, resource_type="menu",
+                                         code="otherb.menu.secret", name="他应用菜单",
+                                         path="/secret", extra={"page": "secret"})
+        self.db.add(other_menu)
+        self.db.flush()
+        with self.assertRaises(HTTPException) as denied:
+            list_my_resources(client_id=other_app.client_id,
+                              user=self._oidc(role_user, self.application), db=self.db)
+        self.assertEqual(denied.exception.status_code, 403)
+        # 管理会话（无已验证 OIDC 应用上下文）→ fail-closed 拒绝。
+        console_user = User(email=f"c-{uuid4().hex}@example.test", password_hash="x", display_name="管理会话")
+        self.db.add(console_user)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as denied_session:
+            list_my_resources(client_id=self.application.client_id, user=console_user, db=self.db)
+        self.assertEqual(denied_session.exception.status_code, 403)
+        # 本应用正常路径不受影响：OIDC 身份仍取回授权子树。
+        tree = list_my_resources(client_id=self.application.client_id,
+                                 user=self._oidc(role_user, self.application), db=self.db)
+        self.assertEqual([node["id"] for node in tree], [menu["id"]])
 
 
 if __name__ == "__main__":

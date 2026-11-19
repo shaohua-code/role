@@ -38,6 +38,7 @@ def _query_audit_events(
     db: Session,
     tenant_scope: set[UUID] | None = None,
     action_prefix: str | None = None,
+    action_category: str | None = None,
     application_ids: set[UUID] | None = None,
 ) -> AuditSearchResponse:
     """执行统一的精确筛选和分页；结束时间用开区间避免相邻范围重叠。
@@ -45,6 +46,8 @@ def _query_audit_events(
     tenant_scope 非 None 时强制把结果限制在这些租户内（L2/L3 范围过滤）：
     请求指定 tenant_id 时取交集且交集为空直接返回空集，未指定时查全部可见租户。
     application_ids 非 None 时（纯 L2）只返回 target_type=application 且 target_id 落在钉住应用上的事件。
+    action_category 是审计页两 Tab 的明确类别口径（auth = auth.* + oidc.*，management = 其余），
+    与 action_prefix 同在 filters 列表构造，天然同源作用于 count 与列表。
     """
     if start_at and (start_at.tzinfo is None or start_at.utcoffset() is None):
         raise HTTPException(status_code=422, detail="start_at 必须包含时区偏移")
@@ -57,6 +60,15 @@ def _query_audit_events(
     filters = []
     if action and action.strip():
         filters.append(AuditEvent.action == action.strip())
+    if action_category:
+        # 登录与认证 Tab 仅含认证类（auth.* ∪ oidc.*）；管理操作 Tab 排除认证类，
+        # 分页计数与列表同一谓词，避免「管理操作」混入登录/刷新/重置事件。
+        if action_category == "auth":
+            filters.append(AuditEvent.action.like("auth.%") | AuditEvent.action.like("oidc.%"))
+        elif action_category == "management":
+            filters.append(AuditEvent.action.notlike("auth.%") & AuditEvent.action.notlike("oidc.%"))
+        else:
+            raise HTTPException(status_code=422, detail="action_category 仅支持 auth 或 management")
     if action_prefix and action_prefix.strip():
         # Wave 3 审计拆 Tab 用：按前缀聚合事件类别（如 auth. = 登录与认证）。
         # LIKE 通配符按字面匹配，避免前缀里的 %/_ 意外扩大结果集。
@@ -221,10 +233,15 @@ def search_audit(
     start_at: datetime | None = None,
     end_at: datetime | None = None,
     action_prefix: str | None = Query(default=None, max_length=30),
+    action_category: str | None = Query(default=None, max_length=20),
     actor: User = Depends(current_user),
     db: Session = Depends(get_db_session),
 ) -> AuditSearchResponse:
-    """按精确字段及 ISO 8601 时间范围查询审计事件；action_prefix 支持类别前缀聚合。"""
+    """按精确字段及 ISO 8601 时间范围查询审计事件；action_prefix 支持类别前缀聚合。
+
+    action_category 提供两 Tab 的明确类别口径（auth / management），在数据库查询与
+    count 中同源应用，保证「管理操作」分页计数不含认证事件。
+    """
     PermissionEnforcer.ensure_codes(actor, db, "menu.audit", detail="缺少管理权限：menu.audit")
     tenant_scope = ActorVisibility.list_actor_management_tenant_ids(actor, db)
     application_ids = None
@@ -245,5 +262,6 @@ def search_audit(
         db=db,
         tenant_scope=tenant_scope,
         action_prefix=action_prefix,
+        action_category=action_category,
         application_ids=application_ids,
     )

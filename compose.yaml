@@ -1,4 +1,4 @@
-﻿name: iam-platform
+name: iam-platform
 
 services:
   postgres:
@@ -89,6 +89,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    # 整文件注入根 .env：新增模型供应商密钥只改 .env 即可，无需在此加透传行
+    # （Docker Compose 语义：下方显式 environment 优先于 env_file，现有映射行为不变）。
+    env_file:
+      - ./.env
     environment:
       APP_NAME: iam-api
       APP_ENV: development
@@ -107,6 +111,8 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${IAM_ADMIN_PASSWORD:?Set IAM_ADMIN_PASSWORD in the root .env file}
       MODEL_USAGE_API_KEY: ${IAM_MODEL_USAGE_API_KEY:-}
       MODEL_QUOTA_ENFORCEMENT_ENABLED: ${IAM_MODEL_QUOTA_ENFORCEMENT_ENABLED:-false}
+      # 模型测试台受控出口：模型凭证引用 secret://env/DEEPSEEK_API_KEY 指向的环境变量。
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       SMTP_HOST: ${IAM_SMTP_HOST:-}
       INVITATION_EMAIL_ENABLED: ${IAM_INVITATION_EMAIL_ENABLED:-false}
       SMTP_PORT: ${IAM_SMTP_PORT:-587}

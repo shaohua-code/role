@@ -1,6 +1,7 @@
 // 模型能力标准标签（与后端 schemas/models.py MODEL_CAPABILITIES 同源）；
 // 网关与业务端按此解释模型特性：是否深度思考、是否有思考过程、是否支持工具调用等。
-export interface ModelCapabilityOption { value: string; label: string; hint: string }
+// 仅本文件内部使用：MODEL_CAPABILITY_OPTIONS 的元素类型。
+interface ModelCapabilityOption { value: string; label: string; hint: string }
 
 export const MODEL_CAPABILITY_OPTIONS: ModelCapabilityOption[] = [
   { value: 'chat', label: '对话', hint: '常规对话补全' },
