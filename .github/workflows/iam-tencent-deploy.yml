@@ -1,0 +1,76 @@
+name: IAM Tencent deployment
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      stage_only:
+        description: Transfer a release for the first, separately approved installation
+        type: boolean
+        default: false
+
+concurrency:
+  group: iam-tencent-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production images
+        run: |
+          docker build -t "iam-platform-api:${GITHUB_SHA}" backend
+          docker build -f frontend/Dockerfile.production -t "iam-platform-console:${GITHUB_SHA}" frontend
+      - name: Bundle immutable release
+        run: |
+          mkdir -p dist-release
+          docker save "iam-platform-api:${GITHUB_SHA}" "iam-platform-console:${GITHUB_SHA}" | gzip -1 > dist-release/images.tar.gz
+          tar -czf dist-release/source.tar.gz compose.production.yaml compose.production.host-nginx.yaml deploy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iam-release
+          path: dist-release/
+          retention-days: 3
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.IAM_AUTO_DEPLOY == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: iam-release
+          path: dist-release
+      - name: Configure pinned SSH access
+        env:
+          IAM_DEPLOY_SSH_KEY: ${{ secrets.IAM_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$IAM_DEPLOY_SSH_KEY"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$IAM_DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          cp deploy/tencent-known_hosts "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+      - name: Transfer immutable release
+        env:
+          IAM_SHA: ${{ github.sha }}
+        run: |
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes iamdeploy@175.178.62.55 \
+            "install -d -m 700 /home/iamdeploy/incoming/${IAM_SHA}"
+          scp -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            dist-release/images.tar.gz dist-release/source.tar.gz \
+            "iamdeploy@175.178.62.55:/home/iamdeploy/incoming/${IAM_SHA}/"
+      - name: Deploy code-only release
+        if: github.event.inputs.stage_only != 'true'
+        env:
+          IAM_SHA: ${{ github.sha }}
+        run: |
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes iamdeploy@175.178.62.55 \
+            "sudo -n /opt/iam/bin/receive-release.sh ${IAM_SHA}"

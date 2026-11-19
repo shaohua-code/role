@@ -1,0 +1,6 @@
+# Tencent single-host deployment: the existing host Nginx owns public 80/443.
+# Start postgres/migrate/api/console only; do not start the Compose caddy service.
+services:
+  console:
+    ports:
+      - "127.0.0.1:18080:8080"
