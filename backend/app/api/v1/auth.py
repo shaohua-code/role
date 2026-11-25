@@ -241,8 +241,8 @@ def verify_registration(body: RegisterVerifyRequest, request: Request, response:
             raise HTTPException(400, "验证码无效或已过期")
         user.email_verified_at = user.email_verified_at or now
     else:
-        if len(body.password) < 12:
-            raise HTTPException(422, "新账号密码至少需要 12 个字符")
+        if len(body.password) < 8:
+            raise HTTPException(422, "新账号密码至少需要 8 个字符")
         user = User(email=email, password_hash=hash_password(body.password),
                     display_name=challenge.display_name, email_verified_at=now)
         db.add(user)
@@ -359,8 +359,8 @@ def accept_invitation(body: AcceptInvitationRequest, request: Request, response:
         if user.status != "active" or not verify_password(body.password, user.password_hash):
             raise HTTPException(401, "账号凭据无效或账号已停用")
     else:
-        if len(body.password) < 12:
-            raise HTTPException(422, "新账号密码至少需要 12 个字符")
+        if len(body.password) < 8:
+            raise HTTPException(422, "新账号密码至少需要 8 个字符")
         user = User(email=invite.email, display_name=invite.display_name,
                     password_hash=hash_password(body.password), email_verified_at=now)
         db.add(user)

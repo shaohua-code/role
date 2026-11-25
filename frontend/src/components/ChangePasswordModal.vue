@@ -11,11 +11,11 @@ const formRef = ref<{ validate: () => Promise<unknown>; resetFields: () => void 
 const saving = ref(false)
 const form = reactive({ current_password: '', new_password: '', confirm_password: '' })
 
-// 校验规则：新密码对齐服务端 12 位下限；确认密码需与新密码一致。
+// 校验规则：新密码对齐服务端 8 位下限；确认密码需与新密码一致。
 const rules = {
   current_password: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
   new_password: [
-    { required: true, min: 12, max: 128, message: '新密码长度须为 12–128 个字符', trigger: 'blur' },
+    { required: true, min: 8, max: 128, message: '新密码长度须为 8–128 个字符', trigger: 'blur' },
   ],
   confirm_password: [
     { required: true, message: '请再次输入新密码', trigger: 'blur' },
@@ -61,7 +61,7 @@ async function submitChange(): Promise<void> {
       <a-form-item label="当前密码" name="current_password">
         <a-input-password v-model:value="form.current_password" autocomplete="current-password" :maxlength="128" />
       </a-form-item>
-      <a-form-item label="新密码（至少 12 位）" name="new_password">
+      <a-form-item label="新密码（至少 8 位）" name="new_password">
         <a-input-password v-model:value="form.new_password" autocomplete="new-password" :maxlength="128" />
       </a-form-item>
       <a-form-item label="确认新密码" name="confirm_password">

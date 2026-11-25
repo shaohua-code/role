@@ -82,7 +82,7 @@ const invitationRules: Record<string, Rule[]> = {
 const resetCompleteRules: Record<string, Rule[]> = {
   password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 12, max: 128, message: '新密码长度须为 12 到 128 位', trigger: 'blur' },
+    { min: 8, max: 128, message: '新密码长度须为 8 到 128 位', trigger: 'blur' },
   ],
   confirmPassword: [
     { required: true, message: '请再次输入新密码', trigger: 'blur' },
@@ -496,7 +496,7 @@ onUnmounted(() => {
         </a-alert>
         <template v-if="invitationToken">
           <p class="eyebrow">TENANT INVITATION</p><h1>接受租户邀请</h1>
-          <a-spin :spinning="invitationLoading"><template v-if="invitationPreview"><p class="login-subtitle">加入 {{ invitationPreview.tenant_name }}，并获得 {{ invitationPreview.role_name }} 角色。</p><a-alert class="invitation-summary" type="info" show-icon :message="invitationPreview.email" :description="`邀请将于 ${new Date(invitationPreview.expires_at).toLocaleString()} 过期`" /><a-form :model="invitationForm" :rules="invitationRules" layout="vertical" @finish="acceptInvitation"><a-form-item label="密码" name="password" help="新账号请设置至少 12 位密码；已有账号请输入当前密码以绑定原身份。"><a-input-password v-model:value="invitationForm.password" size="large" autocomplete="new-password" :maxlength="128" /></a-form-item><a-button type="primary" html-type="submit" size="large" block :loading="invitationAccepting" :disabled="!authActionsAvailable">接受邀请并登录</a-button></a-form></template><template v-else-if="!invitationLoading && authActionsAvailable"><AdminEmpty emoji="✉️" description="邀请链接无效或已过期" /><a-button type="link" block @click="returnToSignIn">返回登录</a-button></template></a-spin>
+          <a-spin :spinning="invitationLoading"><template v-if="invitationPreview"><p class="login-subtitle">加入 {{ invitationPreview.tenant_name }}，并获得 {{ invitationPreview.role_name }} 角色。</p><a-alert class="invitation-summary" type="info" show-icon :message="invitationPreview.email" :description="`邀请将于 ${new Date(invitationPreview.expires_at).toLocaleString()} 过期`" /><a-form :model="invitationForm" :rules="invitationRules" layout="vertical" @finish="acceptInvitation"><a-form-item label="密码" name="password" help="新账号请设置至少 8 位密码；已有账号请输入当前密码以绑定原身份。"><a-input-password v-model:value="invitationForm.password" size="large" autocomplete="new-password" :maxlength="128" /></a-form-item><a-button type="primary" html-type="submit" size="large" block :loading="invitationAccepting" :disabled="!authActionsAvailable">接受邀请并登录</a-button></a-form></template><template v-else-if="!invitationLoading && authActionsAvailable"><AdminEmpty emoji="✉️" description="邀请链接无效或已过期" /><a-button type="link" block @click="returnToSignIn">返回登录</a-button></template></a-spin>
         </template>
         <template v-else-if="consentTicket">
           <p class="eyebrow">应用授权</p><h1>确认应用授权</h1>
@@ -504,10 +504,10 @@ onUnmounted(() => {
         </template>
         <template v-else-if="passwordResetToken">
           <p class="eyebrow">PASSWORD RECOVERY</p><h1>设置新密码</h1>
-          <p class="login-subtitle">设置至少 12 位的新密码。IAM 会立即拒绝旧令牌并撤销 SSO 刷新令牌。已建立的业务系统本地会话需由该系统单独登出；未做 IAM 在线鉴权的服务可能在旧访问令牌到期前仍接受该令牌（开发默认 30 分钟，生产默认 10 分钟）。</p>
+          <p class="login-subtitle">设置至少 8 位的新密码。IAM 会立即拒绝旧令牌并撤销 SSO 刷新令牌。已建立的业务系统本地会话需由该系统单独登出；未做 IAM 在线鉴权的服务可能在旧访问令牌到期前仍接受该令牌（开发默认 30 分钟，生产默认 10 分钟）。</p>
           <a-form :model="resetCompleteForm" :rules="resetCompleteRules" layout="vertical" @finish="completePasswordReset">
-            <a-form-item label="新密码" name="password"><a-input-password v-model:value="resetCompleteForm.password" size="large" autocomplete="new-password" :minlength="12" :maxlength="128" /></a-form-item>
-            <a-form-item label="再次输入新密码" name="confirmPassword"><a-input-password v-model:value="resetCompleteForm.confirmPassword" size="large" autocomplete="new-password" :minlength="12" :maxlength="128" /></a-form-item>
+            <a-form-item label="新密码" name="password"><a-input-password v-model:value="resetCompleteForm.password" size="large" autocomplete="new-password" :minlength="8" :maxlength="128" /></a-form-item>
+            <a-form-item label="再次输入新密码" name="confirmPassword"><a-input-password v-model:value="resetCompleteForm.confirmPassword" size="large" autocomplete="new-password" :minlength="8" :maxlength="128" /></a-form-item>
             <a-button type="primary" html-type="submit" size="large" block :loading="resetCompleteLoading" :disabled="!authActionsAvailable">重置密码</a-button>
           </a-form>
         </template>
@@ -527,9 +527,9 @@ onUnmounted(() => {
             <a-button type="primary" html-type="submit" size="large" block :loading="registrationRequestLoading" :disabled="!authActionsAvailable" :style="{ background: oidcPrimaryColor, borderColor: oidcPrimaryColor }">发送邮箱验证码</a-button>
           </a-form>
           <a-form v-else :model="registrationForm" :rules="registrationVerifyRules" layout="vertical" @finish="verifyRegistrationCode">
-            <a-alert class="invitation-summary" type="info" show-icon message="如果该邮箱可用于注册，验证码会发送到邮箱。" description="请检查垃圾邮件；页面倒计时结束后可重新申请。验证邮箱后，新用户设置至少 12 位密码；已有 IAM 账号输入当前密码，原密码不会被修改。" />
+            <a-alert class="invitation-summary" type="info" show-icon message="如果该邮箱可用于注册，验证码会发送到邮箱。" description="请检查垃圾邮件；页面倒计时结束后可重新申请。验证邮箱后，新用户设置至少 8 位密码；已有 IAM 账号输入当前密码，原密码不会被修改。" />
             <a-form-item label="邮箱验证码" name="code"><a-input v-model:value="registrationForm.code" size="large" inputmode="numeric" autocomplete="one-time-code" :maxlength="6" placeholder="请输入 6 位验证码" /></a-form-item>
-            <a-form-item label="密码" name="password" help="新用户设置至少 12 位密码；已有 IAM 账号输入当前密码，原密码不会被修改。"><a-input-password v-model:value="registrationForm.password" size="large" autocomplete="current-password" :maxlength="128" /></a-form-item>
+            <a-form-item label="密码" name="password" help="新用户设置至少 8 位密码；已有 IAM 账号输入当前密码，原密码不会被修改。"><a-input-password v-model:value="registrationForm.password" size="large" autocomplete="current-password" :maxlength="128" /></a-form-item>
             <a-button type="primary" html-type="submit" size="large" block :loading="registrationVerifyLoading" :disabled="!authActionsAvailable" :style="{ background: oidcPrimaryColor, borderColor: oidcPrimaryColor }">验证并创建账号</a-button>
             <a-button type="link" block :disabled="!authActionsAvailable || registrationResendSeconds > 0 || registrationRequestLoading" :loading="registrationRequestLoading" @click="requestRegistrationCode">{{ registrationResendSeconds ? `${registrationResendSeconds} 秒后重新发送` : '重新发送验证码' }}</a-button>
           </a-form>

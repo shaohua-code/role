@@ -52,7 +52,7 @@ class InvitationTokenRequest(BaseModel):
 
 class AcceptInvitationRequest(InvitationTokenRequest):
     # 对新账号是初始密码；已注册用户需输入当前密码，以把邀请安全绑定到原账号。
-    # 既有账号可能使用较早的口令策略；新账号在服务端单独要求至少 12 位。
+    # 既有账号可能使用较早的口令策略；新账号在服务端单独要求至少 8 位。
     password: str = Field(min_length=1, max_length=128)
 
 
@@ -97,14 +97,14 @@ class PasswordResetComplete(BaseModel):
     """一次性邮件凭证与新密码；Token 只经请求体传输，不放在查询参数。"""
 
     token: str = Field(min_length=40, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
-    new_password: str = Field(min_length=12, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class PasswordChange(BaseModel):
-    """登录态自助修改密码：必须验证当前口令，新口令沿用注册期 12 位下限。"""
+    """登录态自助修改密码：必须验证当前口令，新口令沿用注册期 8 位下限。"""
 
     current_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=12, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class ProfileUpdate(BaseModel):
@@ -119,7 +119,7 @@ class ProfileUpdate(BaseModel):
 class AdminPasswordReset(BaseModel):
     """管理员重置用户密码：新口令仅经受保护管理请求进入，不在响应回显。"""
 
-    new_password: str = Field(min_length=12, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -195,7 +195,7 @@ class ThemeUpdate(BaseModel):
 
 
 class AdminUserCreate(BaseModel):
-    """管理员直建用户：初始密码至少 12 位。
+    """管理员直建用户：初始密码至少 8 位。
 
     tenant_ids 至少一个（前端默认选中一个租户）；organization_ids / application_ids
     为可选多选绑定，组织必须属于所选租户，应用绑定自动补该应用的 app.member。
@@ -207,7 +207,7 @@ class AdminUserCreate(BaseModel):
     application_ids: list[UUID] = Field(default_factory=list, max_length=200)
     email: EmailStr
     display_name: str = Field(min_length=1, max_length=120)
-    initial_password: str = Field(min_length=12, max_length=128)
+    initial_password: str = Field(min_length=8, max_length=128)
     role_id: UUID | None = None
 
 

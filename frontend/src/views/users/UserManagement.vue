@@ -135,7 +135,7 @@ const resetPwUser = ref<UserRecord | null>(null)
 const resetPwFormRef = ref<{ validate: () => Promise<unknown> }>()
 const resetPwForm = reactive({ new_password: '' })
 const resetPwRules = {
-  new_password: [{ required: true, min: 12, max: 128, message: '新密码长度须为 12–128 个字符', trigger: 'blur' }],
+  new_password: [{ required: true, min: 8, max: 128, message: '新密码长度须为 8–128 个字符', trigger: 'blur' }],
 }
 
 function openResetPassword(user: UserRecord): void {
@@ -248,7 +248,7 @@ const createRules = {
     { required: true, whitespace: true, max: 120, message: '请输入不超过 120 个字符的姓名', trigger: 'blur' },
   ],
   initial_password: [
-    { required: true, min: 12, max: 128, message: '初始密码长度须为 12–128 个字符', trigger: 'blur' },
+    { required: true, min: 8, max: 128, message: '初始密码长度须为 8–128 个字符', trigger: 'blur' },
   ],
 }
 
@@ -801,7 +801,7 @@ watch(() => props.active, active => { if (active) void loadUsers() }, { immediat
     <a-modal v-model:open="resetPwOpen" title="重置用户密码" ok-text="重置" cancel-text="取消"
       :confirm-loading="resetPwSaving" @ok="submitResetPassword" @cancel="resetPwForm.new_password = ''">
       <a-form ref="resetPwFormRef" :model="resetPwForm" :rules="resetPwRules" layout="vertical">
-        <a-form-item :label="`为 ${resetPwUser?.display_name || resetPwUser?.email || '用户'} 设置新密码（至少 12 位）`" name="new_password">
+        <a-form-item :label="`为 ${resetPwUser?.display_name || resetPwUser?.email || '用户'} 设置新密码（至少 8 位）`" name="new_password">
           <a-input-password v-model:value="resetPwForm.new_password" autocomplete="new-password" :maxlength="128" />
         </a-form-item>
         <a-alert type="warning" show-icon message="重置后该用户所有登录会话将被撤销，需使用新密码重新登录；密码不会在响应或审计中回显。" />
