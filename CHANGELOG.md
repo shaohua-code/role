@@ -1,5 +1,10 @@
 #﻿##﻿# 变更日志
 
+## 2026-11-26 修复生产 HTTP 回调放行配置未传入 API（任务 ID：DEPLOY-20261126-01）
+
+- **源码完成：** 生产与本地 Compose 均将 `IAM_ALLOW_INSECURE_REDIRECT_URIS` 显式映射为后端所需的 `ALLOW_INSECURE_REDIRECT_URIS`；生产环境示例与部署手册补充默认拒绝、仅受控内网 / 测试环境开启的说明。数据库与迁移未改动。
+- **验证：** `git diff --check` 通过；生产 Compose `config --quiet` 通过，并确认开启变量会生成 `ALLOW_INSECURE_REDIRECT_URIS=true`；后端 `tests.test_redirect_uri_policy` 4/4 通过，`compileall` 通过。镜像构建、目标环境重新发布与应用回调验收尚未运行。
+
 ## 2026-11-24 DeerFlow 对接：IAM 账号密码直登 + 菜单/按钮显隐管控（按用户当次指令执行）
 
 - **口径（用户确认，取代 11-20 的组合登录）：** 登录 = DeerFlow 登录页直接提交 IAM 账号密码（ROPC，不做本地优先回落）；菜单**与按钮**显隐由 IAM 资源树（`my-resources`）管控；接口判权、data_scope、模型可见性等其余能力一律不控制。11-20 的组合登录实现从未提交 git、已随工作区重置丢失，本次按新口径重建。本条属对接改动，按 AGENTS 规则 1「用户当次指令优先」执行，不改变「本阶段默认不做 DeerFlow 联调」的范围声明。

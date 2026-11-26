@@ -34,6 +34,8 @@ services:
       OIDC_SIGNING_KEY_PATH: /run/iam-secrets/oidc-signing-key.pem
       CONSOLE_PUBLIC_URL: https://${IAM_DOMAIN}
       ALLOW_PUBLIC_REGISTRATION: "false"
+      # 默认拒绝明文 HTTP 回调；仅在受控内网/测试环境显式开启。
+      ALLOW_INSECURE_REDIRECT_URIS: ${IAM_ALLOW_INSECURE_REDIRECT_URIS:-false}
       BOOTSTRAP_ADMIN_EMAIL: ${IAM_ADMIN_EMAIL:?Set IAM_ADMIN_EMAIL for the platform admin allow-list}
       CORS_ORIGINS: "[]"
       MODEL_USAGE_API_KEY: ${IAM_MODEL_USAGE_API_KEY:-}
