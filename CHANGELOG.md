@@ -3,7 +3,7 @@
 ## 2026-11-26 修复生产 HTTP 回调放行配置未传入 API（任务 ID：DEPLOY-20261126-01）
 
 - **源码完成：** 生产与本地 Compose 均将 `IAM_ALLOW_INSECURE_REDIRECT_URIS` 显式映射为后端所需的 `ALLOW_INSECURE_REDIRECT_URIS`；生产环境示例与部署手册补充默认拒绝、仅受控内网 / 测试环境开启的说明。数据库与迁移未改动。
-- **验证：** `git diff --check` 通过；生产 Compose `config --quiet` 通过，并确认开启变量会生成 `ALLOW_INSECURE_REDIRECT_URIS=true`；后端 `tests.test_redirect_uri_policy` 4/4 通过，`compileall` 通过。镜像构建、目标环境重新发布与应用回调验收尚未运行。
+- **验证：** `git diff --check` 通过；生产 Compose `config --quiet` 通过，并确认开启变量会生成 `ALLOW_INSECURE_REDIRECT_URIS=true`；后端 `tests.test_redirect_uri_policy` 4/4 通过，`compileall` 通过；API/Console 镜像构建成功。目标环境已切换至 `6058c04e813f3454ba80100f570a486f0cc09442`，服务器 schema gate 通过、readiness 通过且明确未运行迁移；公网 `/api/v1/ready` 与 `/api/v1/auth/public-capabilities` 均返回 200。尚未用真实管理员会话创建应用并验收 HTTP 回调；生产环境是否开启该放行开关仍由服务器 `.env.production.local` 的实际值决定。
 
 ## 2026-11-24 DeerFlow 对接：IAM 账号密码直登 + 菜单/按钮显隐管控（按用户当次指令执行）
 
